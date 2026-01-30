@@ -159,8 +159,104 @@ def categorize_indicators(columns):
     return {k: v for k, v in categories.items() if v}
 
 
+def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
+    """Create side-by-side chart showing both absolute values and percentage difference"""
+    if analysis_df.empty or 'Time_Lag' not in analysis_df.columns:
+        return None
+    
+    df = analysis_df[analysis_df['Time_Lag'] == time_lag].copy()
+    
+    if df.empty:
+        return None
+    
+    # Calculate percentage difference
+    df['Pct_Difference'] = np.where(
+        df['AVG_Grinders'].abs() > 0,
+        ((df['AVG_Spikers'] - df['AVG_Grinders']) / df['AVG_Grinders'].abs()) * 100,
+        0
+    )
+    
+    # Sort by absolute percentage difference
+    df['Abs_Pct_Diff'] = df['Pct_Difference'].abs()
+    df = df.nlargest(top_n, 'Abs_Pct_Diff')
+    df = df.sort_values('Pct_Difference')
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=(
+            '<b>Actual Average Values</b>',
+            '<b>Percentage Difference</b>'
+        ),
+        horizontal_spacing=0.15,
+        column_widths=[0.5, 0.5]
+    )
+    
+    # Left plot: Actual values comparison
+    fig.add_trace(
+        go.Bar(
+            name='Spikers',
+            y=df['Indicator'],
+            x=df['AVG_Spikers'],
+            orientation='h',
+            marker_color='#e74c3c',
+            showlegend=True
+        ),
+        row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Bar(
+            name='Grinders',
+            y=df['Indicator'],
+            x=df['AVG_Grinders'],
+            orientation='h',
+            marker_color='#3498db',
+            showlegend=True
+        ),
+        row=1, col=1
+    )
+    
+    # Right plot: Percentage difference
+    colors = ['#27ae60' if x > 0 else '#e67e22' for x in df['Pct_Difference']]
+    
+    fig.add_trace(
+        go.Bar(
+            y=df['Indicator'],
+            x=df['Pct_Difference'],
+            orientation='h',
+            marker_color=colors,
+            text=[f'{x:+.1f}%' for x in df['Pct_Difference']],
+            textposition='outside',
+            showlegend=False
+        ),
+        row=1, col=2
+    )
+    
+    # Add zero line to right plot
+    fig.add_vline(x=0, line_dash="dash", line_color="gray", row=1, col=2)
+    
+    # Update axes
+    fig.update_xaxes(title_text="Average Value", row=1, col=1)
+    fig.update_xaxes(title_text="% Difference", row=1, col=2)
+    fig.update_yaxes(showticklabels=True, row=1, col=1)
+    fig.update_yaxes(showticklabels=False, row=1, col=2)
+    
+    fig.update_layout(
+        title_text=f"<b>Dual View: Absolute vs Relative Differences ({time_lag})</b><br>" +
+                   "<sub>Left: Compare actual values | Right: Relative difference normalized</sub>",
+        height=max(500, top_n * 30),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        barmode='group',
+        title_x=0.5
+    )
+    
+    return fig
+
+
 def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
-    """Create chart showing top discriminating indicators with percentage difference"""
+    """Create chart showing top discriminating indicators with better context"""
     if analysis_df.empty or 'Time_Lag' not in analysis_df.columns:
         return None
     
@@ -176,6 +272,9 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         0
     )
     
+    # Calculate absolute difference too
+    df['Abs_Difference'] = df['AVG_Spikers'] - df['AVG_Grinders']
+    
     # Sort by absolute percentage difference
     df['Abs_Pct_Diff'] = df['Pct_Difference'].abs()
     df = df.nlargest(top_n, 'Abs_Pct_Diff')
@@ -183,6 +282,15 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
     
     # Create color based on direction
     colors = ['#e74c3c' if x > 0 else '#3498db' for x in df['Pct_Difference']]
+    
+    # Format numbers for display
+    def format_num(x):
+        if abs(x) >= 1_000_000:
+            return f'{x/1_000_000:.1f}M'
+        elif abs(x) >= 1_000:
+            return f'{x/1_000:.1f}K'
+        else:
+            return f'{x:.1f}'
     
     fig = go.Figure()
     
@@ -193,15 +301,23 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         marker_color=colors,
         text=[f'{x:+.1f}%' for x in df['Pct_Difference']],
         textposition='outside',
-        hovertemplate='<b>%{y}</b><br>Difference: %{x:.1f}%<extra></extra>'
+        customdata=np.column_stack((df['AVG_Spikers'], df['AVG_Grinders'], df['Abs_Difference'])),
+        hovertemplate='<b>%{y}</b><br>' +
+                      'Percentage Difference: %{x:.1f}%<br>' +
+                      '<br>' +
+                      'Spiker Avg: %{customdata[0]:.2f}<br>' +
+                      'Grinder Avg: %{customdata[1]:.2f}<br>' +
+                      'Absolute Diff: %{customdata[2]:.2f}' +
+                      '<extra></extra>'
     ))
     
     fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1)
     
     fig.update_layout(
         title=f"<b>Top {top_n} Discriminating Indicators ({time_lag})</b><br>" +
-              "<sub>% Difference: Spikers vs Grinders Baseline</sub>",
-        xaxis_title="% Difference from Grinder Baseline",
+              "<sub>Percentage shows: (Spiker Avg - Grinder Avg) / Grinder Avg × 100<br>" +
+              "Red = Spikers higher than Grinders | Blue = Grinders higher than Spikers</sub>",
+        xaxis_title="Percentage Difference (%)",
         yaxis_title="",
         height=max(500, top_n * 30),
         showlegend=False,
@@ -306,16 +422,23 @@ def create_consistency_heatmap(analysis_df, top_n=20):
     time_lag_order = sorted(pivot_df.columns, key=lambda x: int(x.split('-')[1]))
     pivot_df = pivot_df[time_lag_order]
     
+    # Calculate dynamic color range based on actual data
+    max_abs = np.nanmax(np.abs(pivot_df.values))
+    zmin = -max_abs
+    zmax = max_abs
+    
     fig = go.Figure(data=go.Heatmap(
         z=pivot_df.values,
         x=pivot_df.columns,
         y=pivot_df.index,
         colorscale=[
-            [0, '#3498db'],
-            [0.5, '#ecf0f1'],
-            [1, '#e74c3c']
+            [0, '#2E86DE'],      # Strong blue
+            [0.5, '#EAF0F6'],    # Very light gray-blue
+            [1, '#EE5A6F']       # Strong red
         ],
         zmid=0,
+        zmin=zmin,
+        zmax=zmax,
         colorbar=dict(title="% Diff"),
         hovertemplate='<b>%{y}</b><br>%{x}<br>Difference: %{z:.1f}%<extra></extra>',
         text=[[f'{val:.1f}%' if not pd.isna(val) else '' for val in row] for row in pivot_df.values],
@@ -325,8 +448,8 @@ def create_consistency_heatmap(analysis_df, top_n=20):
     
     fig.update_layout(
         title=f"<b>Indicator Consistency Across Time</b><br>" +
-              "<sub>Red = Spikers higher | Blue = Grinders higher</sub>",
-        xaxis_title="Time Lag",
+              "<sub>Red = Spikers higher | Blue = Grinders higher | Intensity = Magnitude</sub>",
+        xaxis_title="Time Lag (Days Before Event)",
         yaxis_title="",
         height=max(600, top_n * 30),
         title_x=0.5
@@ -536,13 +659,25 @@ def main():
             with col1:
                 selected_lag = st.selectbox("Time Period:", available_lags, index=0)
             with col2:
-                top_n = st.slider("Number of indicators:", 10, 30, 15)
+                top_n = st.slider("Number of indicators:", 10, 50, 20)
             
-            st.info("💡 These indicators show the largest **percentage differences** between Spikers and Grinders, " +
-                   "normalized to account for different scales.")
+            st.info("💡 **How to read:** If RSI shows +50%, it means Spikers have RSI that's 50% higher than Grinders on average. " +
+                   "Hover over bars to see actual values. Larger percentages = stronger discriminators.")
+            
+            # View mode selector
+            view_mode = st.radio(
+                "Chart View:",
+                ["Percentage Only", "Dual View (Absolute + Percentage)"],
+                horizontal=True,
+                help="Dual View shows actual values alongside percentage differences for better context"
+            )
             
             # Main discriminators chart
-            fig = create_top_discriminators_chart(analysis_df, selected_lag, top_n)
+            if view_mode == "Percentage Only":
+                fig = create_top_discriminators_chart(analysis_df, selected_lag, top_n)
+            else:
+                fig = create_dual_comparison_chart(analysis_df, selected_lag, top_n)
+            
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -550,9 +685,10 @@ def main():
             
             # Consistency across time
             st.subheader("⏱️ Pattern Consistency Across Time")
-            st.markdown("Indicators that remain consistently different are more reliable predictors")
+            st.markdown("**Which indicators maintain their differences across all time periods?** " +
+                       "Consistent patterns (same color across columns) are more reliable.")
             
-            consistency_n = st.slider("Indicators to show:", 10, 30, 20, key='consistency_n')
+            consistency_n = st.slider("Indicators to show:", 15, 50, 25, key='consistency_n')
             fig_heatmap = create_consistency_heatmap(analysis_df, consistency_n)
             if fig_heatmap:
                 st.plotly_chart(fig_heatmap, use_container_width=True)
@@ -561,6 +697,30 @@ def main():
             
             # Predictive power table
             st.subheader("📊 Predictive Power Rankings")
+            
+            # Add explanation expander
+            with st.expander("ℹ️ How to Interpret the Percentage Difference"):
+                st.markdown("""
+                The **Percentage Difference** shows how much Spikers differ from Grinders, relative to the Grinder baseline.
+                
+                **Formula:** `(Spiker Average - Grinder Average) / |Grinder Average| × 100`
+                
+                **Examples:**
+                - **RSI: +50%** → Spikers have RSI 50% higher than Grinders  
+                  If Grinders avg RSI = 40, then Spikers avg RSI ≈ 60
+                  
+                - **Volume: +200%** → Spikers have 3× the volume of Grinders  
+                  If Grinders avg 500K volume, then Spikers avg 1.5M volume
+                  
+                - **ADX: -30%** → Spikers have ADX 30% lower than Grinders  
+                  If Grinders avg ADX = 30, then Spikers avg ADX ≈ 21
+                
+                **What to look for:**
+                - **Large percentages** (>30%) = Strong discriminators
+                - **Consistent sign across time lags** = Reliable pattern
+                - **Category trends** = Which indicator types matter most
+                """)
+            
             power_df = calculate_predictive_power(analysis_df, selected_lag)
             
             if not power_df.empty:
