@@ -362,7 +362,7 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         title=f"<b>Top {top_n} Discriminating Indicators ({time_lag})</b><br>" +
               "<sub>Percentage shows: (Spiker Avg - Grinder Avg) / Grinder Avg × 100<br>" +
               "Red = Spikers higher | Blue = Grinders higher | * = Extreme outlier (capped for display)<br>" +
-              "Price change indicators excluded (those are what we're trying to predict)</sub>",
+            
         xaxis_title="Percentage Difference (%)",
         yaxis_title="",
         height=max(500, top_n * 30),
