@@ -169,6 +169,12 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
     if df.empty:
         return None
     
+    # Filter out price change indicators
+    df = filter_predictive_indicators(df)
+    
+    if df.empty:
+        return None
+    
     # Calculate percentage difference
     df['Pct_Difference'] = np.where(
         df['AVG_Grinders'].abs() > 0,
@@ -244,7 +250,8 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
     
     fig.update_layout(
         title_text=f"<b>Dual View: Absolute vs Relative Differences ({time_lag})</b><br>" +
-                   "<sub>Left: Compare actual values | Right: Relative difference normalized</sub>",
+                   "<sub>Left: Compare actual values | Right: Relative difference normalized<br>" +
+                   "Price change indicators excluded</sub>",
         height=max(500, top_n * 30),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
@@ -261,6 +268,12 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         return None
     
     df = analysis_df[analysis_df['Time_Lag'] == time_lag].copy()
+    
+    if df.empty:
+        return None
+    
+    # Filter out price change indicators
+    df = filter_predictive_indicators(df)
     
     if df.empty:
         return None
@@ -316,7 +329,8 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
     fig.update_layout(
         title=f"<b>Top {top_n} Discriminating Indicators ({time_lag})</b><br>" +
               "<sub>Percentage shows: (Spiker Avg - Grinder Avg) / Grinder Avg × 100<br>" +
-              "Red = Spikers higher than Grinders | Blue = Grinders higher than Spikers</sub>",
+              "Red = Spikers higher than Grinders | Blue = Grinders higher than Spikers<br>" +
+              "Price change indicators excluded (those are what we're trying to predict)</sub>",
         xaxis_title="Percentage Difference (%)",
         yaxis_title="",
         height=max(500, top_n * 30),
@@ -333,6 +347,12 @@ def create_indicator_category_comparison(analysis_df, time_lag='T-1'):
         return None
     
     df = analysis_df[analysis_df['Time_Lag'] == time_lag].copy()
+    
+    if df.empty:
+        return None
+    
+    # Filter out price change indicators
+    df = filter_predictive_indicators(df)
     
     if df.empty:
         return None
@@ -377,7 +397,7 @@ def create_indicator_category_comparison(analysis_df, time_lag='T-1'):
     
     fig.update_layout(
         title=f"<b>Indicator Category Predictive Power ({time_lag})</b><br>" +
-              "<sub>Average absolute % difference by indicator type</sub>",
+              "<sub>Average absolute % difference by indicator type (price change excluded)</sub>",
         xaxis_title="Average Absolute % Difference",
         yaxis_title="",
         height=400,
@@ -388,9 +408,75 @@ def create_indicator_category_comparison(analysis_df, time_lag='T-1'):
     return fig
 
 
+def calculate_predictive_power(analysis_df, time_lag='T-1'):
+    """Calculate predictive power score for each indicator"""
+    if analysis_df.empty or 'Time_Lag' not in analysis_df.columns:
+        return pd.DataFrame()
+    
+    df = analysis_df[analysis_df['Time_Lag'] == time_lag].copy()
+    
+    if df.empty:
+        return pd.DataFrame()
+    
+    # Filter out price change indicators
+    df = filter_predictive_indicators(df)
+    
+    if df.empty:
+        return pd.DataFrame()
+    
+    # Calculate normalized difference score
+    df['Pct_Difference'] = np.where(
+        df['AVG_Grinders'].abs() > 0,
+        ((df['AVG_Spikers'] - df['AVG_Grinders']) / df['AVG_Grinders'].abs()) * 100,
+        0
+    )
+    
+    df['Predictive_Score'] = df['Pct_Difference'].abs()
+    
+    # Categorize
+    categories = categorize_indicators(df['Indicator'].tolist())
+    df['Category'] = df['Indicator'].apply(
+        lambda x: next((cat for cat, inds in categories.items() if x in inds), 'Other')
+    )
+    
+    return df[['Indicator', 'Category', 'AVG_Spikers', 'AVG_Grinders', 'Pct_Difference', 'Predictive_Score']].sort_values('Predictive_Score', ascending=False)
+
+
+def filter_predictive_indicators(df):
+    """
+    Filter out indicators that shouldn't be used for prediction
+    (like price change, which is what we're trying to predict)
+    """
+    # Keywords that indicate the indicator is the target variable, not a predictor
+    exclude_keywords = [
+        'change',           # price change
+        'cambio',          # change in Spanish
+        'pct_change',      # percentage change
+        'price_change',    # explicit price change
+        '_change_',        # any change metric
+        'return',          # returns
+        'performance'      # performance metrics
+    ]
+    
+    # Filter out indicators with these keywords (case insensitive)
+    if 'Indicator' in df.columns:
+        mask = df['Indicator'].str.lower().apply(
+            lambda x: not any(keyword in x for keyword in exclude_keywords)
+        )
+        return df[mask].copy()
+    
+    return df
+
+
 def create_consistency_heatmap(analysis_df, top_n=20):
     """Show which indicators are consistently different across time lags"""
     if analysis_df.empty or 'Time_Lag' not in analysis_df.columns:
+        return None
+    
+    # Filter out price change indicators
+    analysis_df = filter_predictive_indicators(analysis_df)
+    
+    if analysis_df.empty:
         return None
     
     # Calculate percentage difference for all indicators
@@ -422,10 +508,23 @@ def create_consistency_heatmap(analysis_df, top_n=20):
     time_lag_order = sorted(pivot_df.columns, key=lambda x: int(x.split('-')[1]))
     pivot_df = pivot_df[time_lag_order]
     
-    # Calculate dynamic color range based on actual data
-    max_abs = np.nanmax(np.abs(pivot_df.values))
-    zmin = -max_abs
-    zmax = max_abs
+    # Use percentile-based color scaling to handle outliers
+    # This ensures that moderate values are visible even with extreme outliers
+    values = pivot_df.values.flatten()
+    values = values[~np.isnan(values)]
+    
+    if len(values) > 0:
+        # Use 5th and 95th percentile to clip extreme outliers
+        p5 = np.percentile(values, 5)
+        p95 = np.percentile(values, 95)
+        
+        # Make it symmetric around zero
+        max_abs = max(abs(p5), abs(p95))
+        zmin = -max_abs
+        zmax = max_abs
+    else:
+        zmin = -10
+        zmax = 10
     
     fig = go.Figure(data=go.Heatmap(
         z=pivot_df.values,
@@ -433,7 +532,7 @@ def create_consistency_heatmap(analysis_df, top_n=20):
         y=pivot_df.index,
         colorscale=[
             [0, '#2E86DE'],      # Strong blue
-            [0.5, '#EAF0F6'],    # Very light gray-blue
+            [0.5, '#F8F9FA'],    # Very light gray
             [1, '#EE5A6F']       # Strong red
         ],
         zmid=0,
@@ -448,7 +547,8 @@ def create_consistency_heatmap(analysis_df, top_n=20):
     
     fig.update_layout(
         title=f"<b>Indicator Consistency Across Time</b><br>" +
-              "<sub>Red = Spikers higher | Blue = Grinders higher | Intensity = Magnitude</sub>",
+              "<sub>Red = Spikers higher | Blue = Grinders higher | Intensity = Magnitude<br>" +
+              "Color scale adjusted to 5-95 percentile to show moderate values</sub>",
         xaxis_title="Time Lag (Days Before Event)",
         yaxis_title="",
         height=max(600, top_n * 30),
