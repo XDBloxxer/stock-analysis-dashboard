@@ -119,7 +119,7 @@ def load_all_time_lags(spreadsheet_id):
     return time_lags
 
 
-def create_top_indicators_comparison(analysis_df, time_lag='T-1', top_n=20):
+def create_top_indicators_comparison(analysis_df, time_lag='T-1', top_n=20, use_percentage=False):
     """Create comprehensive comparison of top indicators showing actual differences"""
     if analysis_df.empty or 'Time_Lag' not in analysis_df.columns:
         return None
@@ -132,14 +132,22 @@ def create_top_indicators_comparison(analysis_df, time_lag='T-1', top_n=20):
     
     # Calculate absolute difference and sort
     df['Abs_Difference'] = df['Difference'].abs()
+    
+    # Calculate percentage difference for better cross-indicator comparison
+    df['Pct_Difference'] = np.where(
+        df['AVG_Grinders'].abs() > 0,
+        (df['Difference'] / df['AVG_Grinders'].abs()) * 100,
+        0
+    )
+    
     df = df.nlargest(top_n, 'Abs_Difference')
     
     # Create side-by-side comparison
     fig = make_subplots(
         rows=1, cols=2,
         subplot_titles=(
-            f'<b>Average Values Comparison ({time_lag})</b>',
-            f'<b>Difference (Spiker - Grinder)</b>'
+            f'<b>{"Percentage Difference" if use_percentage else "Average Values Comparison"} ({time_lag})</b>',
+            f'<b>{"Relative Difference (%)" if use_percentage else "Absolute Difference"}</b>'
         ),
         column_widths=[0.6, 0.4],
         horizontal_spacing=0.12
@@ -148,62 +156,115 @@ def create_top_indicators_comparison(analysis_df, time_lag='T-1', top_n=20):
     # Sort by difference for better visualization
     df = df.sort_values('Difference')
     
-    # Left chart: Side-by-side bars
-    fig.add_trace(
-        go.Bar(
-            name='Spikers',
-            y=df['Indicator'],
-            x=df['AVG_Spikers'],
-            orientation='h',
-            marker_color='#e74c3c',
-            text=df['AVG_Spikers'].round(2),
-            textposition='outside',
-            textfont=dict(size=10)
-        ),
-        row=1, col=1
-    )
-    
-    fig.add_trace(
-        go.Bar(
-            name='Grinders',
-            y=df['Indicator'],
-            x=df['AVG_Grinders'],
-            orientation='h',
-            marker_color='#3498db',
-            text=df['AVG_Grinders'].round(2),
-            textposition='outside',
-            textfont=dict(size=10)
-        ),
-        row=1, col=1
-    )
-    
-    # Right chart: Difference bars (colored by direction)
-    colors = ['#27ae60' if x > 0 else '#e67e22' for x in df['Difference']]
-    fig.add_trace(
-        go.Bar(
-            y=df['Indicator'],
-            x=df['Difference'],
-            orientation='h',
-            marker_color=colors,
-            text=df['Difference'].round(2),
-            textposition='outside',
-            showlegend=False,
-            textfont=dict(size=10)
-        ),
-        row=1, col=2
-    )
+    if use_percentage:
+        # Show percentage difference from grinder baseline
+        spiker_pct = np.where(
+            df['AVG_Grinders'].abs() > 0,
+            ((df['AVG_Spikers'] - df['AVG_Grinders']) / df['AVG_Grinders'].abs()) * 100,
+            0
+        )
+        
+        fig.add_trace(
+            go.Bar(
+                name='% Difference',
+                y=df['Indicator'],
+                x=spiker_pct,
+                orientation='h',
+                marker_color=['#e74c3c' if x > 0 else '#3498db' for x in spiker_pct],
+                text=[f'{x:.1f}%' for x in spiker_pct],
+                textposition='outside',
+                textfont=dict(size=10)
+            ),
+            row=1, col=1
+        )
+        
+        # Right chart: Relative importance score
+        importance = df['Abs_Difference'] / df['AVG_Grinders'].abs() * 100
+        colors = ['#27ae60' if x > 0 else '#e67e22' for x in df['Difference']]
+        
+        fig.add_trace(
+            go.Bar(
+                y=df['Indicator'],
+                x=importance,
+                orientation='h',
+                marker_color=colors,
+                text=[f'{x:.1f}%' for x in importance],
+                textposition='outside',
+                showlegend=False,
+                textfont=dict(size=10)
+            ),
+            row=1, col=2
+        )
+        
+        fig.update_xaxes(title_text="% Difference from Grinder Baseline", row=1, col=1)
+        fig.update_xaxes(title_text="Importance Score (%)", row=1, col=2)
+        
+    else:
+        # Left chart: Side-by-side bars with formatted values
+        spiker_text = []
+        grinder_text = []
+        for s, g in zip(df['AVG_Spikers'], df['AVG_Grinders']):
+            spiker_text.append(format_number(s))
+            grinder_text.append(format_number(g))
+        
+        fig.add_trace(
+            go.Bar(
+                name='Spikers',
+                y=df['Indicator'],
+                x=df['AVG_Spikers'],
+                orientation='h',
+                marker_color='#e74c3c',
+                text=spiker_text,
+                textposition='outside',
+                textfont=dict(size=10)
+            ),
+            row=1, col=1
+        )
+        
+        fig.add_trace(
+            go.Bar(
+                name='Grinders',
+                y=df['Indicator'],
+                x=df['AVG_Grinders'],
+                orientation='h',
+                marker_color='#3498db',
+                text=grinder_text,
+                textposition='outside',
+                textfont=dict(size=10)
+            ),
+            row=1, col=1
+        )
+        
+        # Right chart: Difference bars (colored by direction) with formatted values
+        colors = ['#27ae60' if x > 0 else '#e67e22' for x in df['Difference']]
+        diff_text = [format_number(x) for x in df['Difference']]
+        
+        fig.add_trace(
+            go.Bar(
+                y=df['Indicator'],
+                x=df['Difference'],
+                orientation='h',
+                marker_color=colors,
+                text=diff_text,
+                textposition='outside',
+                showlegend=False,
+                textfont=dict(size=10)
+            ),
+            row=1, col=2
+        )
+        
+        fig.update_xaxes(title_text="Value", row=1, col=1)
+        fig.update_xaxes(title_text="Difference", row=1, col=2)
     
     # Add zero line to difference chart
     fig.add_vline(x=0, line_dash="dash", line_color="gray", row=1, col=2)
     
-    fig.update_xaxes(title_text="Value", row=1, col=1)
-    fig.update_xaxes(title_text="Difference", row=1, col=2)
     fig.update_yaxes(title_text="", row=1, col=1)
     fig.update_yaxes(title_text="", row=1, col=2, showticklabels=False)
     
     fig.update_layout(
         height=max(600, top_n * 25),
-        showlegend=True,
+        showlegend=True if not use_percentage else False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         barmode='group',
         title_text=f"<b>Top {top_n} Most Discriminating Indicators at {time_lag}</b><br>" +
@@ -213,6 +274,23 @@ def create_top_indicators_comparison(analysis_df, time_lag='T-1', top_n=20):
     )
     
     return fig
+
+
+def format_number(num):
+    """Format large numbers with K/M/B suffixes"""
+    if pd.isna(num):
+        return "N/A"
+    
+    num = float(num)
+    
+    if abs(num) >= 1_000_000_000:
+        return f'{num/1_000_000_000:.2f}B'
+    elif abs(num) >= 1_000_000:
+        return f'{num/1_000_000:.2f}M'
+    elif abs(num) >= 1_000:
+        return f'{num/1_000:.2f}K'
+    else:
+        return f'{num:.2f}'
 
 
 def create_pattern_strength_chart(analysis_df, time_lag='T-1', top_n=15):
@@ -308,15 +386,27 @@ def create_time_evolution_heatmap(analysis_df, top_n=25):
                 row_data.append(0)
         heatmap_data.append(row_data)
     
+    # Calculate color scale range
+    all_values = np.array(heatmap_data).flatten()
+    max_abs_val = np.max(np.abs(all_values))
+    
     # Create annotations with values
     for i, row in enumerate(heatmap_data):
         for j, val in enumerate(row):
+            # Format large numbers with K/M suffix
+            if abs(val) >= 1000000:
+                text = f'{val/1000000:.1f}M'
+            elif abs(val) >= 1000:
+                text = f'{val/1000:.1f}K'
+            else:
+                text = f'{val:.1f}'
+            
             annotations.append(
                 dict(
                     x=j, y=i,
-                    text=f'{val:.1f}',
+                    text=text,
                     showarrow=False,
-                    font=dict(size=9, color='white' if abs(val) > np.std(heatmap_data) else 'black')
+                    font=dict(size=9, color='white' if abs(val) > np.std(all_values) else 'black')
                 )
             )
     
@@ -331,11 +421,7 @@ def create_time_evolution_heatmap(analysis_df, top_n=25):
         ],
         zmid=0,
         colorbar=dict(
-            title="Difference<br>(Spiker - Grinder)",
-            titleside="right",
-            tickmode="linear",
-            tick0=-max(abs(np.array(heatmap_data).flatten())),
-            dtick=max(abs(np.array(heatmap_data).flatten())) / 2
+            title=dict(text="Difference<br>(Spiker - Grinder)", side="right")
         ),
         hovertemplate='<b>%{y}</b><br>%{x}<br>Difference: %{z:.2f}<extra></extra>'
     ))
@@ -532,15 +618,23 @@ def create_insight_cards(insights):
         
         color = confidence_colors.get(insight['confidence'], '#95a5a6')
         
+        # Format the numbers appropriately
+        spiker_formatted = format_number(insight['spiker_avg'])
+        grinder_formatted = format_number(insight['grinder_avg'])
+        diff_formatted = format_number(insight['difference'])
+        
         st.markdown(f"""
         <div style="background: linear-gradient(135deg, {color} 0%, {color}dd 100%); 
                     color: white; padding: 20px; border-radius: 10px; margin: 10px 0;">
             <h3 style="margin: 0 0 10px 0;">🎯 {insight['indicator']}</h3>
             <p style="font-size: 1.1em; margin: 5px 0;">
-                <b>Pattern:</b> Spikers show {insight['direction']} values (avg: {insight['spiker_avg']:.2f} vs {insight['grinder_avg']:.2f})
+                <b>Pattern:</b> Spikers show {insight['direction']} values
             </p>
             <p style="margin: 5px 0;">
-                <b>Difference:</b> {insight['difference']:.2f} ({insight['pct_difference']:.1f}% relative)
+                <b>Spikers avg:</b> {spiker_formatted} | <b>Grinders avg:</b> {grinder_formatted}
+            </p>
+            <p style="margin: 5px 0;">
+                <b>Difference:</b> {diff_formatted} ({insight['pct_difference']:.1f}% relative)
             </p>
             <p style="margin: 5px 0;">
                 <b>Confidence:</b> {insight['confidence']} | <b>Strength Score:</b> {insight['strength']:.1f}
@@ -616,14 +710,20 @@ def main():
             available_lags = sorted(analysis_df['Time_Lag'].unique(), 
                                    key=lambda x: int(x.split('-')[1]))
             
-            col1, col2 = st.columns([1, 3])
+            col1, col2, col3 = st.columns([1, 2, 1])
             with col1:
                 selected_lag = st.selectbox("Time Period:", available_lags, index=0)
             with col2:
                 top_n = st.slider("Number of indicators to show:", 10, 50, 20)
+            with col3:
+                view_mode = st.radio("View:", ["Absolute", "Percentage"], horizontal=True)
+            
+            st.info("💡 **Tip:** Use **Percentage view** to compare indicators with different scales (e.g., Volume vs RSI). " +
+                   "Use **Absolute view** to see raw differences.")
             
             # Main comparison chart
-            fig1 = create_top_indicators_comparison(analysis_df, selected_lag, top_n)
+            use_pct = (view_mode == "Percentage")
+            fig1 = create_top_indicators_comparison(analysis_df, selected_lag, top_n, use_pct)
             if fig1:
                 st.plotly_chart(fig1, use_container_width=True)
             
@@ -641,6 +741,43 @@ def main():
             st.subheader("💡 Actionable Trading Insights")
             insights = generate_actionable_insights(analysis_df)
             create_insight_cards(insights)
+            
+            # Add summary table
+            if insights:
+                st.subheader("📋 Quick Reference Table")
+                
+                summary_data = []
+                for insight in insights[:10]:
+                    summary_data.append({
+                        'Indicator': insight['indicator'],
+                        'Direction': '↑ Spikers' if insight['direction'] == 'HIGHER' else '↓ Spikers',
+                        'Spiker Avg': format_number(insight['spiker_avg']),
+                        'Grinder Avg': format_number(insight['grinder_avg']),
+                        'Difference': format_number(insight['difference']),
+                        '% Diff': f"{insight['pct_difference']:.1f}%",
+                        'Confidence': insight['confidence']
+                    })
+                
+                summary_df = pd.DataFrame(summary_data)
+                
+                # Style the dataframe
+                def highlight_confidence(val):
+                    if val == 'STRONG':
+                        return 'background-color: #27ae60; color: white'
+                    elif val == 'MODERATE':
+                        return 'background-color: #f39c12; color: white'
+                    else:
+                        return 'background-color: #95a5a6; color: white'
+                
+                styled_df = summary_df.style.applymap(
+                    highlight_confidence, 
+                    subset=['Confidence']
+                )
+                
+                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                
+                st.caption("💡 **How to use:** Focus on STRONG confidence indicators with high % Diff. " +
+                          "These show the most reliable differences between Spikers and Grinders.")
             
         else:
             st.info("Analysis data not available. Run the pipeline to generate insights.")
