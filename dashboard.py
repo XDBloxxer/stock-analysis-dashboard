@@ -182,10 +182,15 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
         0
     )
     
+    # Cap extreme outliers
+    cap_value = np.percentile(df['Pct_Difference'].abs(), 99)
+    df['Pct_Difference_Display'] = df['Pct_Difference'].clip(-cap_value, cap_value)
+    df['Is_Capped'] = (df['Pct_Difference'].abs() > cap_value)
+    
     # Sort by absolute percentage difference
     df['Abs_Pct_Diff'] = df['Pct_Difference'].abs()
     df = df.nlargest(top_n, 'Abs_Pct_Diff')
-    df = df.sort_values('Pct_Difference')
+    df = df.sort_values('Pct_Difference_Display')
     
     # Create subplots
     fig = make_subplots(
@@ -229,10 +234,10 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
     fig.add_trace(
         go.Bar(
             y=df['Indicator'],
-            x=df['Pct_Difference'],
+            x=df['Pct_Difference_Display'],
             orientation='h',
             marker_color=colors,
-            text=[f'{x:+.1f}%' for x in df['Pct_Difference']],
+            text=[f'{x:+.1f}%{"*" if c else ""}' for x, c in zip(df['Pct_Difference_Display'], df['Is_Capped'])],
             textposition='outside',
             showlegend=False
         ),
@@ -240,18 +245,29 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
     )
     
     # Add zero line to right plot
-    fig.add_vline(x=0, line_dash="dash", line_color="gray", row=1, col=2)
+    fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=2, row=1, col=2)
+    
+    # Calculate symmetric x-axis range for right plot to center zero
+    max_abs_display = df['Pct_Difference_Display'].abs().max()
+    x_range = [-max_abs_display * 1.15, max_abs_display * 1.15]
     
     # Update axes
     fig.update_xaxes(title_text="Average Value", row=1, col=1)
-    fig.update_xaxes(title_text="% Difference", row=1, col=2)
+    fig.update_xaxes(
+        title_text="% Difference", 
+        range=x_range, 
+        zeroline=True, 
+        zerolinewidth=2, 
+        zerolinecolor='gray',
+        row=1, col=2
+    )
     fig.update_yaxes(showticklabels=True, row=1, col=1)
     fig.update_yaxes(showticklabels=False, row=1, col=2)
     
     fig.update_layout(
         title_text=f"<b>Dual View: Absolute vs Relative Differences ({time_lag})</b><br>" +
-                   "<sub>Left: Compare actual values | Right: Relative difference normalized<br>" +
-                   "Price change indicators excluded</sub>",
+                   "<sub>Left: Compare actual values | Right: Relative difference (capped at 99th percentile)<br>" +
+                   "Price change indicators excluded | * = Extreme outlier (capped for display)</sub>",
         height=max(500, top_n * 30),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
@@ -285,13 +301,18 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         0
     )
     
+    # Cap extreme outliers at 99th percentile to prevent one outlier from dominating
+    cap_value = np.percentile(df['Pct_Difference'].abs(), 99)
+    df['Pct_Difference_Display'] = df['Pct_Difference'].clip(-cap_value, cap_value)
+    df['Is_Capped'] = (df['Pct_Difference'].abs() > cap_value)
+    
     # Calculate absolute difference too
     df['Abs_Difference'] = df['AVG_Spikers'] - df['AVG_Grinders']
     
-    # Sort by absolute percentage difference
+    # Sort by absolute percentage difference (using original uncapped values)
     df['Abs_Pct_Diff'] = df['Pct_Difference'].abs()
     df = df.nlargest(top_n, 'Abs_Pct_Diff')
-    df = df.sort_values('Pct_Difference')
+    df = df.sort_values('Pct_Difference_Display')
     
     # Create color based on direction
     colors = ['#e74c3c' if x > 0 else '#3498db' for x in df['Pct_Difference']]
@@ -305,37 +326,49 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         else:
             return f'{x:.1f}'
     
+    # Create hover text with capping indicator
+    hover_texts = []
+    for _, row in df.iterrows():
+        capped_text = " (CAPPED - actual: {:.1f}%)".format(row['Pct_Difference']) if row['Is_Capped'] else ""
+        hover_texts.append(
+            f"<b>{row['Indicator']}</b><br>" +
+            f"Percentage Difference: {row['Pct_Difference_Display']:.1f}%{capped_text}<br>" +
+            f"<br>" +
+            f"Spiker Avg: {row['AVG_Spikers']:.2f}<br>" +
+            f"Grinder Avg: {row['AVG_Grinders']:.2f}<br>" +
+            f"Absolute Diff: {row['Abs_Difference']:.2f}"
+        )
+    
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
         y=df['Indicator'],
-        x=df['Pct_Difference'],
+        x=df['Pct_Difference_Display'],
         orientation='h',
         marker_color=colors,
-        text=[f'{x:+.1f}%' for x in df['Pct_Difference']],
+        text=[f'{x:+.1f}%{"*" if c else ""}' for x, c in zip(df['Pct_Difference_Display'], df['Is_Capped'])],
         textposition='outside',
-        customdata=np.column_stack((df['AVG_Spikers'], df['AVG_Grinders'], df['Abs_Difference'])),
-        hovertemplate='<b>%{y}</b><br>' +
-                      'Percentage Difference: %{x:.1f}%<br>' +
-                      '<br>' +
-                      'Spiker Avg: %{customdata[0]:.2f}<br>' +
-                      'Grinder Avg: %{customdata[1]:.2f}<br>' +
-                      'Absolute Diff: %{customdata[2]:.2f}' +
-                      '<extra></extra>'
+        hovertext=hover_texts,
+        hoverinfo='text'
     ))
     
-    fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1)
+    fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=2)
+    
+    # Calculate symmetric x-axis range to center zero
+    max_abs_display = df['Pct_Difference_Display'].abs().max()
+    x_range = [-max_abs_display * 1.15, max_abs_display * 1.15]  # 15% padding
     
     fig.update_layout(
         title=f"<b>Top {top_n} Discriminating Indicators ({time_lag})</b><br>" +
               "<sub>Percentage shows: (Spiker Avg - Grinder Avg) / Grinder Avg × 100<br>" +
-              "Red = Spikers higher than Grinders | Blue = Grinders higher than Spikers<br>" +
+              "Red = Spikers higher | Blue = Grinders higher | * = Extreme outlier (capped for display)<br>" +
               "Price change indicators excluded (those are what we're trying to predict)</sub>",
         xaxis_title="Percentage Difference (%)",
         yaxis_title="",
         height=max(500, top_n * 30),
         showlegend=False,
-        title_x=0.5
+        title_x=0.5,
+        xaxis=dict(range=x_range, zeroline=True, zerolinewidth=2, zerolinecolor='gray')
     )
     
     return fig
@@ -860,61 +893,76 @@ def main():
             # Detailed category analysis
             st.subheader("Deep Dive by Category")
             
-            # Get categories
+            # Get categories (filter out price change first)
             lag_df = analysis_df[analysis_df['Time_Lag'] == selected_lag_cat].copy()
-            categories = categorize_indicators(lag_df['Indicator'].tolist())
+            lag_df = filter_predictive_indicators(lag_df)
             
-            selected_category = st.selectbox("Select Category:", list(categories.keys()))
-            
-            if selected_category and categories[selected_category]:
-                category_indicators = categories[selected_category]
+            if lag_df.empty:
+                st.warning("No predictive indicators available after filtering.")
+            else:
+                categories = categorize_indicators(lag_df['Indicator'].tolist())
                 
-                col1, col2 = st.columns(2)
+                selected_category = st.selectbox("Select Category:", list(categories.keys()))
                 
-                with col1:
-                    # Top indicators in category
-                    cat_df = lag_df[lag_df['Indicator'].isin(category_indicators)].copy()
-                    cat_df['Pct_Diff'] = np.where(
-                        cat_df['AVG_Grinders'].abs() > 0,
-                        ((cat_df['AVG_Spikers'] - cat_df['AVG_Grinders']) / cat_df['AVG_Grinders'].abs()) * 100,
-                        0
-                    )
-                    cat_df = cat_df.sort_values('Pct_Diff', key=abs, ascending=False).head(10)
+                if selected_category and categories[selected_category]:
+                    category_indicators = categories[selected_category]
                     
-                    fig_cat_detail = go.Figure()
-                    colors = ['#e74c3c' if x > 0 else '#3498db' for x in cat_df['Pct_Diff']]
+                    col1, col2 = st.columns(2)
                     
-                    fig_cat_detail.add_trace(go.Bar(
-                        y=cat_df['Indicator'],
-                        x=cat_df['Pct_Diff'],
-                        orientation='h',
-                        marker_color=colors,
-                        text=[f'{x:+.1f}%' for x in cat_df['Pct_Diff']],
-                        textposition='outside'
-                    ))
-                    
-                    fig_cat_detail.update_layout(
-                        title=f"Top {selected_category} Indicators",
-                        xaxis_title="% Difference",
-                        height=400,
-                        showlegend=False
-                    )
-                    
-                    st.plotly_chart(fig_cat_detail, use_container_width=True)
-                
-                with col2:
-                    # Distribution for selected indicator
-                    if not cat_df.empty and raw_data_dict:
-                        selected_ind = st.selectbox(
-                            "View distribution:",
-                            cat_df['Indicator'].tolist(),
-                            key='dist_ind'
+                    with col1:
+                        # Top indicators in category
+                        cat_df = lag_df[lag_df['Indicator'].isin(category_indicators)].copy()
+                        cat_df['Pct_Diff'] = np.where(
+                            cat_df['AVG_Grinders'].abs() > 0,
+                            ((cat_df['AVG_Spikers'] - cat_df['AVG_Grinders']) / cat_df['AVG_Grinders'].abs()) * 100,
+                            0
                         )
                         
-                        if selected_ind:
-                            fig_dist = create_distribution_comparison(raw_data_dict, selected_ind)
-                            if fig_dist:
-                                st.plotly_chart(fig_dist, use_container_width=True)
+                        # Cap extreme outliers
+                        cap_value = np.percentile(cat_df['Pct_Diff'].abs(), 99)
+                        cat_df['Pct_Diff_Display'] = cat_df['Pct_Diff'].clip(-cap_value, cap_value)
+                        
+                        cat_df = cat_df.sort_values('Pct_Diff_Display', key=abs, ascending=False).head(10)
+                        
+                        fig_cat_detail = go.Figure()
+                        colors = ['#e74c3c' if x > 0 else '#3498db' for x in cat_df['Pct_Diff']]
+                        
+                        fig_cat_detail.add_trace(go.Bar(
+                            y=cat_df['Indicator'],
+                            x=cat_df['Pct_Diff_Display'],
+                            orientation='h',
+                            marker_color=colors,
+                            text=[f'{x:+.1f}%' for x in cat_df['Pct_Diff_Display']],
+                            textposition='outside'
+                        ))
+                        
+                        # Center zero line
+                        max_abs = cat_df['Pct_Diff_Display'].abs().max()
+                        x_range = [-max_abs * 1.15, max_abs * 1.15]
+                        
+                        fig_cat_detail.update_layout(
+                            title=f"Top {selected_category} Indicators",
+                            xaxis_title="% Difference",
+                            height=400,
+                            showlegend=False,
+                            xaxis=dict(range=x_range, zeroline=True, zerolinewidth=2, zerolinecolor='gray')
+                        )
+                        
+                        st.plotly_chart(fig_cat_detail, use_container_width=True)
+                    
+                    with col2:
+                        # Distribution for selected indicator
+                        if not cat_df.empty and raw_data_dict:
+                            selected_ind = st.selectbox(
+                                "View distribution:",
+                                cat_df['Indicator'].tolist(),
+                                key='dist_ind'
+                            )
+                            
+                            if selected_ind:
+                                fig_dist = create_distribution_comparison(raw_data_dict, selected_ind)
+                                if fig_dist:
+                                    st.plotly_chart(fig_dist, use_container_width=True)
         else:
             st.info("Analysis data not available.")
     
