@@ -80,7 +80,7 @@ def get_google_sheets_client():
 
 @st.cache_data(ttl=300)
 def load_sheet_data(spreadsheet_id, sheet_name):
-    """Load data from Google Sheets"""
+    """Load data from Google Sheets with robust error handling"""
     try:
         client = get_google_sheets_client()
         spreadsheet = client.open_by_key(spreadsheet_id)
@@ -90,22 +90,71 @@ def load_sheet_data(spreadsheet_id, sheet_name):
         if not data:
             return pd.DataFrame()
         
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        
+        # Remove completely empty rows
+        df = df.dropna(how='all')
+        
+        # Remove completely empty columns
+        df = df.dropna(axis=1, how='all')
+        
+        return df
+    except gspread.exceptions.WorksheetNotFound:
+        # This is fine - sheet might not exist yet
+        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Error loading {sheet_name}: {str(e)}")
+        st.warning(f"⚠️ Could not load {sheet_name}: {str(e)}")
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_all_time_lags(spreadsheet_id):
-    """Load all time lag sheets"""
+    """Load all time lag sheets dynamically"""
     time_lags = {}
-    for lag in [1, 3, 5, 10, 30]:
+    
+    # Try common time lags
+    common_lags = [1, 3, 5, 10, 30]
+    
+    for lag in common_lags:
         sheet_name = f"Raw Data_T-{lag}"
         df = load_sheet_data(spreadsheet_id, sheet_name)
         if not df.empty:
             time_lags[f"T-{lag}"] = df
+    
     return time_lags
+
+
+def validate_analysis_df(df):
+    """
+    Validate that analysis dataframe has required columns
+    Returns validated df or empty df if invalid
+    """
+    if df.empty:
+        return df
+    
+    required_cols = ['Indicator', 'Time_Lag', 'AVG_Spikers', 'AVG_Grinders']
+    
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        st.error(f"❌ Analysis sheet is missing required columns: {', '.join(missing_cols)}")
+        st.info("💡 The Analysis sheet needs these columns: Indicator, Time_Lag, AVG_Spikers, AVG_Grinders")
+        return pd.DataFrame()
+    
+    # Remove rows where Indicator is empty/null
+    df = df[df['Indicator'].notna() & (df['Indicator'].astype(str).str.strip() != '')]
+    
+    # Ensure numeric columns are actually numeric
+    for col in ['AVG_Spikers', 'AVG_Grinders']:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Remove rows where both averages are null or both are 0
+    df = df[
+        (df['AVG_Spikers'].notna() | df['AVG_Grinders'].notna()) &
+        ~((df['AVG_Spikers'] == 0) & (df['AVG_Grinders'] == 0))
+    ]
+    
+    return df
 
 
 def normalize_indicator_values(df, indicator_col):
@@ -173,6 +222,7 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
     df = filter_predictive_indicators(df)
     
     if df.empty:
+        st.warning(f"⚠️ No indicators available for {time_lag} after filtering")
         return None
     
     # Calculate percentage difference
@@ -182,15 +232,32 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
         0
     )
     
+    # Remove infinite and NaN values
+    df = df[np.isfinite(df['Pct_Difference'])]
+    
+    if df.empty:
+        st.warning(f"⚠️ No valid data for {time_lag} after calculations")
+        return None
+    
     # Cap extreme outliers
-    cap_value = np.percentile(df['Pct_Difference'].abs(), 99)
+    if len(df) > 1:
+        cap_value = np.percentile(df['Pct_Difference'].abs(), 99)
+    else:
+        cap_value = df['Pct_Difference'].abs().max()
+    
     df['Pct_Difference_Display'] = df['Pct_Difference'].clip(-cap_value, cap_value)
     df['Is_Capped'] = (df['Pct_Difference'].abs() > cap_value)
     
     # Sort by absolute percentage difference
     df['Abs_Pct_Diff'] = df['Pct_Difference'].abs()
-    df = df.nlargest(top_n, 'Abs_Pct_Diff')
+    
+    # Limit to available indicators
+    actual_n = min(top_n, len(df))
+    df = df.nlargest(actual_n, 'Abs_Pct_Diff')
     df = df.sort_values('Pct_Difference_Display')
+    
+    if df.empty:
+        return None
     
     # Create subplots
     fig = make_subplots(
@@ -268,7 +335,7 @@ def create_dual_comparison_chart(analysis_df, time_lag='T-1', top_n=15):
         title_text=f"<b>Dual View: Absolute vs Relative Differences ({time_lag})</b><br>" +
                    "<sub>Left: Compare actual values | Right: Relative difference (capped at 99th percentile)<br>" +
                    "Price change indicators excluded | * = Extreme outlier (capped for display)</sub>",
-        height=max(500, top_n * 30),
+        height=max(500, actual_n * 30),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         barmode='group',
@@ -292,6 +359,7 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
     df = filter_predictive_indicators(df)
     
     if df.empty:
+        st.warning(f"⚠️ No indicators available for {time_lag} after filtering")
         return None
     
     # Calculate percentage difference from grinder baseline
@@ -301,8 +369,19 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
         0
     )
     
+    # Remove infinite and NaN values
+    df = df[np.isfinite(df['Pct_Difference'])]
+    
+    if df.empty:
+        st.warning(f"⚠️ No valid data for {time_lag} after calculations")
+        return None
+    
     # Cap extreme outliers at 99th percentile to prevent one outlier from dominating
-    cap_value = np.percentile(df['Pct_Difference'].abs(), 99)
+    if len(df) > 1:
+        cap_value = np.percentile(df['Pct_Difference'].abs(), 99)
+    else:
+        cap_value = df['Pct_Difference'].abs().max()
+    
     df['Pct_Difference_Display'] = df['Pct_Difference'].clip(-cap_value, cap_value)
     df['Is_Capped'] = (df['Pct_Difference'].abs() > cap_value)
     
@@ -311,8 +390,14 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
     
     # Sort by absolute percentage difference (using original uncapped values)
     df['Abs_Pct_Diff'] = df['Pct_Difference'].abs()
-    df = df.nlargest(top_n, 'Abs_Pct_Diff')
+    
+    # Limit to available indicators if top_n exceeds what we have
+    actual_n = min(top_n, len(df))
+    df = df.nlargest(actual_n, 'Abs_Pct_Diff')
     df = df.sort_values('Pct_Difference_Display')
+    
+    if df.empty:
+        return None
     
     # Create color based on direction
     colors = ['#e74c3c' if x > 0 else '#3498db' for x in df['Pct_Difference']]
@@ -359,13 +444,13 @@ def create_top_discriminators_chart(analysis_df, time_lag='T-1', top_n=15):
     x_range = [-max_abs_display * 1.15, max_abs_display * 1.15]  # 15% padding
     
     fig.update_layout(
-        title=f"<b>Top {top_n} Discriminating Indicators ({time_lag})</b><br>" +
+        title=f"<b>Top {actual_n} Discriminating Indicators ({time_lag})</b><br>" +
               "<sub>Percentage shows: (Spiker Avg - Grinder Avg) / Grinder Avg × 100<br>" +
               "Red = Spikers higher | Blue = Grinders higher | * = Extreme outlier (capped for display)<br>" +
               "Price change indicators excluded (those are what we're trying to predict)</sub>",
         xaxis_title="Percentage Difference (%)",
         yaxis_title="",
-        height=max(500, top_n * 30),
+        height=max(500, actual_n * 30),
         showlegend=False,
         title_x=0.5,
         xaxis=dict(range=x_range, zeroline=True, zerolinewidth=2, zerolinecolor='gray')
@@ -510,6 +595,7 @@ def create_consistency_heatmap(analysis_df, top_n=20):
     analysis_df = filter_predictive_indicators(analysis_df)
     
     if analysis_df.empty:
+        st.warning("⚠️ No indicators available after filtering")
         return None
     
     # Calculate percentage difference for all indicators
@@ -519,12 +605,25 @@ def create_consistency_heatmap(analysis_df, top_n=20):
         0
     )
     
+    # Remove infinite and NaN values
+    analysis_df = analysis_df[np.isfinite(analysis_df['Pct_Difference'])]
+    
+    if analysis_df.empty:
+        st.warning("⚠️ No valid data after calculations")
+        return None
+    
     # Find indicators with highest average absolute difference across all time lags
     indicator_scores = analysis_df.groupby('Indicator')['Pct_Difference'].apply(
         lambda x: x.abs().mean()
-    ).sort_values(ascending=False).head(top_n)
+    ).sort_values(ascending=False)
     
-    top_indicators = indicator_scores.index.tolist()
+    # Limit to available indicators
+    actual_n = min(top_n, len(indicator_scores))
+    top_indicators = indicator_scores.head(actual_n).index.tolist()
+    
+    if not top_indicators:
+        st.warning("⚠️ No indicators to display")
+        return None
     
     # Build pivot table
     pivot_df = analysis_df[analysis_df['Indicator'].isin(top_indicators)].pivot(
@@ -533,7 +632,10 @@ def create_consistency_heatmap(analysis_df, top_n=20):
         values='Pct_Difference'
     )
     
-    # Sort by T-1 values
+    if pivot_df.empty:
+        return None
+    
+    # Sort by T-1 values if available
     if 'T-1' in pivot_df.columns:
         pivot_df = pivot_df.sort_values('T-1', ascending=False)
     
@@ -584,7 +686,7 @@ def create_consistency_heatmap(analysis_df, top_n=20):
               "Color scale adjusted to 5-95 percentile to show moderate values</sub>",
         xaxis_title="Time Lag (Days Before Event)",
         yaxis_title="",
-        height=max(600, top_n * 30),
+        height=max(600, actual_n * 30),
         title_x=0.5
     )
     
@@ -745,12 +847,16 @@ def main():
     # Load data
     with st.spinner("Loading data..."):
         candidates_df = load_sheet_data(spreadsheet_id, "Candidates")
-        analysis_df = load_sheet_data(spreadsheet_id, "Analysis")
+        analysis_df_raw = load_sheet_data(spreadsheet_id, "Analysis")
         summary_df = load_sheet_data(spreadsheet_id, "Summary Stats")
         raw_data_dict = load_all_time_lags(spreadsheet_id)
     
+    # Validate and clean analysis data
+    analysis_df = validate_analysis_df(analysis_df_raw)
+    
     if analysis_df.empty and candidates_df.empty:
         st.warning("⚠️ No data found. Run the analysis pipeline first: `python main.py --all`")
+        st.info("💡 If you just added or removed indicators from sheets, try clicking '🔄 Refresh Data' above.")
         return
     
     # Summary metrics
