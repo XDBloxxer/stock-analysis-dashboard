@@ -17,3 +17,6 @@ google-auth-oauthlib>=1.1.0
 google-auth-httplib2>=0.1.1
 
 scipy>=1.17.0
+
+#Supabase
+supabase>=1.26.01
