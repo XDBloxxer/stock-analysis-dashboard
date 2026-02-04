@@ -68,13 +68,16 @@ def main():
         from tab_spike_grinder import render_spike_grinder_tab
         
         # Create tabs
-        tab1, tab2 = st.tabs(["Daily Winners", "Spike/Grinder Analysis"])
+        tab1, tab2, tab3 = st.tabs(["Daily Winners", "Spike/Grinder Analysis", "Backtesting"])
         
         with tab1:
             render_daily_winners_tab()
         
         with tab2:
             render_spike_grinder_tab()
+        
+        with tab3:
+            render_backtesting_tab()  # NEW
             
     except ImportError as e:
         st.error(f"Error importing tab modules: {e}")
