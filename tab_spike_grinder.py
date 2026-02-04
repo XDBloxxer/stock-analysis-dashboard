@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import os
 from supabase import create_client, Client
 
@@ -29,7 +30,7 @@ def get_supabase_client():
 
 
 @st.cache_data(ttl=300)
-def load_supabase_data(table_name: str, filters: dict = None):
+def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
     """Load data from Supabase with optional filters"""
     try:
         client = get_supabase_client()
@@ -162,6 +163,210 @@ def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None)
     return fig
 
 
+def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
+    """Create heatmap showing indicator values across time lags"""
+    if analysis_df.empty or 'indicator' not in analysis_df.columns:
+        return None
+    
+    # Filter to selected indicators
+    df = analysis_df[analysis_df['indicator'].isin(selected_indicators)].copy()
+    
+    if df.empty:
+        return None
+    
+    # Pivot the data
+    pivot_df = df.pivot_table(
+        values=value_type,
+        index='indicator',
+        columns='time_lag',
+        aggfunc='mean'
+    )
+    
+    # Reorder columns by time lag
+    available_lags = [lag for lag in TIME_LAG_ORDER if lag in pivot_df.columns]
+    pivot_df = pivot_df[available_lags]
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_df.values,
+        x=pivot_df.columns,
+        y=pivot_df.index,
+        colorscale='RdYlGn' if value_type == 'difference' else 'Viridis',
+        colorbar=dict(title=value_type.replace('_', ' ').title()),
+        text=pivot_df.values.round(2),
+        texttemplate='%{text}',
+        textfont={"size": 10},
+        hoverongaps=False
+    ))
+    
+    title_map = {
+        'difference': 'Difference (Spikers - Grinders)',
+        'avg_spikers': 'Average Spiker Values',
+        'avg_grinders': 'Average Grinder Values'
+    }
+    
+    fig.update_layout(
+        title=f"<b>{title_map.get(value_type, value_type)}</b> Across Time Lags",
+        xaxis_title="Time Lag",
+        yaxis_title="Indicator",
+        height=max(400, len(selected_indicators) * 40)
+    )
+    
+    return fig
+
+
+def create_correlation_matrix(analysis_df, selected_lag):
+    """Create correlation matrix for indicators at a specific time lag"""
+    # Load raw data for the selected lag
+    raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag})
+    
+    if raw_df.empty or 'event_type' not in raw_df.columns:
+        return None
+    
+    # Get numeric columns (exclude metadata)
+    exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at']
+    numeric_cols = [col for col in raw_df.columns if col not in exclude_cols]
+    
+    if len(numeric_cols) < 2:
+        return None
+    
+    # Calculate correlation matrix
+    corr_df = raw_df[numeric_cols].corr()
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_df.values,
+        x=corr_df.columns,
+        y=corr_df.index,
+        colorscale='RdBu',
+        zmid=0,
+        colorbar=dict(title="Correlation"),
+        text=corr_df.values.round(2),
+        texttemplate='%{text}',
+        textfont={"size": 8},
+        hoverongaps=False
+    ))
+    
+    fig.update_layout(
+        title=f"<b>Indicator Correlation Matrix</b> at {selected_lag}",
+        xaxis_title="",
+        yaxis_title="",
+        height=max(600, len(numeric_cols) * 30),
+        width=max(600, len(numeric_cols) * 30)
+    )
+    
+    return fig
+
+
+def create_box_plot(analysis_df, selected_indicators):
+    """Create box plot comparing spikers vs grinders for selected indicators"""
+    if analysis_df.empty:
+        return None
+    
+    # We need raw data for box plots
+    all_data = []
+    
+    for lag in TIME_LAG_ORDER:
+        raw_df = load_supabase_data("raw_data", {"time_lag": lag})
+        if not raw_df.empty and 'event_type' in raw_df.columns:
+            raw_df['time_lag'] = lag
+            all_data.append(raw_df)
+    
+    if not all_data:
+        return None
+    
+    combined_df = pd.concat(all_data, ignore_index=True)
+    
+    # Create subplots for each indicator
+    from plotly.subplots import make_subplots
+    
+    n_indicators = len(selected_indicators)
+    rows = (n_indicators + 1) // 2
+    
+    fig = make_subplots(
+        rows=rows,
+        cols=2,
+        subplot_titles=selected_indicators,
+        vertical_spacing=0.12,
+        horizontal_spacing=0.1
+    )
+    
+    for idx, indicator in enumerate(selected_indicators):
+        if indicator not in combined_df.columns:
+            continue
+        
+        row = idx // 2 + 1
+        col = idx % 2 + 1
+        
+        # Spikers
+        spiker_data = combined_df[combined_df['event_type'] == 'Spiker'][indicator].dropna()
+        fig.add_trace(
+            go.Box(y=spiker_data, name='Spikers', marker_color='#e74c3c', showlegend=(idx == 0)),
+            row=row,
+            col=col
+        )
+        
+        # Grinders
+        grinder_data = combined_df[combined_df['event_type'] == 'Grinder'][indicator].dropna()
+        fig.add_trace(
+            go.Box(y=grinder_data, name='Grinders', marker_color='#3498db', showlegend=(idx == 0)),
+            row=row,
+            col=col
+        )
+    
+    fig.update_layout(
+        title="<b>Distribution Comparison: Spikers vs Grinders</b>",
+        height=300 * rows,
+        showlegend=True
+    )
+    
+    return fig
+
+
+def create_time_series_comparison(analysis_df, selected_indicators):
+    """Create line chart showing how differences evolve across time lags"""
+    if analysis_df.empty:
+        return None
+    
+    df = analysis_df[analysis_df['indicator'].isin(selected_indicators)].copy()
+    
+    if df.empty:
+        return None
+    
+    # Sort by time lag
+    df['time_lag_order'] = df['time_lag'].map(
+        {lag: i for i, lag in enumerate(TIME_LAG_ORDER)}
+    )
+    df = df.sort_values(['indicator', 'time_lag_order'])
+    
+    fig = go.Figure()
+    
+    for indicator in selected_indicators:
+        ind_data = df[df['indicator'] == indicator]
+        
+        fig.add_trace(go.Scatter(
+            x=ind_data['time_lag'],
+            y=ind_data['difference'],
+            mode='lines+markers',
+            name=indicator,
+            marker=dict(size=8),
+            line=dict(width=2)
+        ))
+    
+    # Add zero line
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    
+    fig.update_layout(
+        title="<b>Indicator Differences Across Time Lags</b>",
+        xaxis_title="Time Lag",
+        yaxis_title="Difference (Spikers - Grinders)",
+        height=500,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
 # ============================================================================
 # MAIN TAB FUNCTION
 # ============================================================================
@@ -169,11 +374,17 @@ def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None)
 def render_spike_grinder_tab():
     """Main Spike/Grinder analysis tab rendering function"""
     
-    # Load data
+    # Initialize refresh counter in session state
+    if 'spike_grinder_refresh_counter' not in st.session_state:
+        st.session_state.spike_grinder_refresh_counter = 0
+    
+    # Load data with refresh key
+    refresh_key = st.session_state.spike_grinder_refresh_counter
+    
     with st.spinner("Loading analysis data..."):
-        candidates_df = load_supabase_data("candidates")
-        analysis_df = load_supabase_data("analysis")
-        summary_df = load_supabase_data("summary_stats")
+        candidates_df = load_supabase_data("candidates", None, refresh_key)
+        analysis_df = load_supabase_data("analysis", None, refresh_key)
+        summary_df = load_supabase_data("summary_stats", None, refresh_key)
     
     if analysis_df.empty and candidates_df.empty:
         st.warning("⚠️ No analysis data available yet.")
@@ -195,7 +406,15 @@ def render_spike_grinder_tab():
     
     # Summary metrics
     if not summary_df.empty:
-        st.subheader("Summary Statistics")
+        col_header1, col_header2 = st.columns([4, 1])
+        
+        with col_header1:
+            st.subheader("Summary Statistics")
+        with col_header2:
+            if st.button("Refresh Data", use_container_width=True, key="spike_grinder_refresh"):
+                st.session_state.spike_grinder_refresh_counter += 1
+                st.rerun()
+        
         summary_dict = dict(zip(summary_df['metric'], summary_df['value']))
         
         col1, col2, col3, col4, col5 = st.columns(5)
@@ -240,43 +459,96 @@ def render_spike_grinder_tab():
         if not analysis_df.empty:
             chart_type = st.selectbox(
                 "Select chart type:",
-                ["Time Lag Comparison", "Indicator Distribution", "Scatter Plot"],
+                ["Heatmap", "Time Series", "Box Plot", "Correlation Matrix", "Indicator Distribution", "Scatter Plot"],
                 key="spike_grinder_chart_type"
             )
             
-            if chart_type == "Time Lag Comparison":
+            if chart_type == "Heatmap":
+                st.markdown("**Create a heatmap showing indicator values across time lags**")
+                
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    available_indicators = sorted(analysis_df['indicator'].unique())
+                    selected_indicators = st.multiselect(
+                        "Select indicators:",
+                        available_indicators,
+                        default=available_indicators[:10] if len(available_indicators) >= 10 else available_indicators,
+                        key="heatmap_indicators"
+                    )
+                
+                with col2:
+                    value_type = st.selectbox(
+                        "Value type:",
+                        ["difference", "avg_spikers", "avg_grinders"],
+                        format_func=lambda x: {
+                            "difference": "Difference",
+                            "avg_spikers": "Spiker Avg",
+                            "avg_grinders": "Grinder Avg"
+                        }[x],
+                        key="heatmap_value_type"
+                    )
+                
+                if selected_indicators:
+                    fig = create_heatmap(analysis_df, selected_indicators, value_type)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("Could not create heatmap with selected indicators")
+            
+            elif chart_type == "Time Series":
+                st.markdown("**Show how indicator differences evolve across time lags**")
+                
                 available_indicators = sorted(analysis_df['indicator'].unique())
                 selected_indicators = st.multiselect(
                     "Select indicators:",
                     available_indicators,
-                    default=available_indicators[:3] if len(available_indicators) >= 3 else available_indicators,
-                    key="time_lag_indicators"
+                    default=available_indicators[:5] if len(available_indicators) >= 5 else available_indicators,
+                    key="timeseries_indicators"
                 )
                 
                 if selected_indicators:
-                    df_filtered = analysis_df[analysis_df['indicator'].isin(selected_indicators)]
-                    
-                    df_filtered['time_lag_order'] = df_filtered['time_lag'].map(
-                        {lag: i for i, lag in enumerate(TIME_LAG_ORDER)}
-                    )
-                    df_filtered = df_filtered.sort_values(['indicator', 'time_lag_order'])
-                    
-                    fig = px.line(
-                        df_filtered,
-                        x='time_lag',
-                        y='difference',
-                        color='indicator',
-                        markers=True,
-                        title="Indicator Differences Across Time Lags"
-                    )
-                    fig.update_layout(height=500)
-                    st.plotly_chart(fig, use_container_width=True)
+                    fig = create_time_series_comparison(analysis_df, selected_indicators)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Box Plot":
+                st.markdown("**Compare distributions of spikers vs grinders**")
+                
+                available_indicators = sorted(analysis_df['indicator'].unique())
+                selected_indicators = st.multiselect(
+                    "Select indicators:",
+                    available_indicators,
+                    default=available_indicators[:4] if len(available_indicators) >= 4 else available_indicators,
+                    key="boxplot_indicators"
+                )
+                
+                if selected_indicators:
+                    with st.spinner("Loading raw data for box plots..."):
+                        fig = create_box_plot(analysis_df, selected_indicators)
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("Could not create box plots - raw data may be unavailable")
+            
+            elif chart_type == "Correlation Matrix":
+                st.markdown("**Explore correlations between indicators at a specific time lag**")
+                
+                available_lags = sorted(analysis_df['time_lag'].unique())
+                selected_lag = st.selectbox("Select time lag:", available_lags, key="corr_lag")
+                
+                with st.spinner("Calculating correlations..."):
+                    fig = create_correlation_matrix(analysis_df, selected_lag)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("Could not create correlation matrix - data may be unavailable")
             
             elif chart_type == "Indicator Distribution":
                 available_lags = sorted(analysis_df['time_lag'].unique())
                 selected_lag = st.selectbox("Select time lag:", available_lags, key="dist_lag")
                 
-                raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag})
+                raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag}, refresh_key)
                 
                 if not raw_df.empty and 'event_type' in raw_df.columns:
                     exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at']
@@ -315,7 +587,7 @@ def render_spike_grinder_tab():
                 st.info("Select two indicators to plot against each other")
                 
                 raw_lag = st.selectbox("Select time lag:", sorted(analysis_df['time_lag'].unique()), key='scatter_lag')
-                raw_df = load_supabase_data("raw_data", {"time_lag": raw_lag})
+                raw_df = load_supabase_data("raw_data", {"time_lag": raw_lag}, refresh_key)
                 
                 if not raw_df.empty:
                     exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at']
