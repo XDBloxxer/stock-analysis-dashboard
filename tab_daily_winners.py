@@ -30,7 +30,7 @@ def get_supabase_client():
 
 
 @st.cache_data(ttl=300)
-def load_supabase_data(table_name: str, filters: dict = None):
+def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
     """Load data from Supabase with optional filters"""
     try:
         client = get_supabase_client()
@@ -202,6 +202,10 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_df):
 def render_daily_winners_tab():
     """Main Daily Winners tab rendering function"""
     
+    # Initialize refresh counter in session state
+    if 'daily_winners_refresh_counter' not in st.session_state:
+        st.session_state.daily_winners_refresh_counter = 0
+    
     # Load available dates
     with st.spinner("Loading available dates..."):
         client = get_supabase_client()
@@ -232,19 +236,20 @@ def render_daily_winners_tab():
     
     with col2:
         if st.button("Refresh Data", use_container_width=True, key="daily_winners_refresh"):
-            st.cache_data.clear()
+            st.session_state.daily_winners_refresh_counter += 1
             st.rerun()
     
     with col3:
         date_obj = datetime.fromisoformat(selected_date)
         st.metric("Day of Week", date_obj.strftime("%A"))
     
-    # Load data for selected date
+    # Load data for selected date with refresh key
+    refresh_key = st.session_state.daily_winners_refresh_counter
     with st.spinner(f"Loading data for {selected_date}..."):
-        winners_df = load_supabase_data("daily_winners", {"detection_date": selected_date})
-        market_open_df = load_supabase_data("winners_market_open", {"detection_date": selected_date})
-        market_close_df = load_supabase_data("winners_market_close", {"detection_date": selected_date})
-        day_prior_df = load_supabase_data("winners_day_prior", {"detection_date": selected_date})
+        winners_df = load_supabase_data("daily_winners", {"detection_date": selected_date}, refresh_key)
+        market_open_df = load_supabase_data("winners_market_open", {"detection_date": selected_date}, refresh_key)
+        market_close_df = load_supabase_data("winners_market_close", {"detection_date": selected_date}, refresh_key)
+        day_prior_df = load_supabase_data("winners_day_prior", {"detection_date": selected_date}, refresh_key)
     
     if winners_df.empty:
         st.warning(f"No winners data found for {selected_date}")
