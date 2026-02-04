@@ -1,6 +1,6 @@
 """
 Stock Event Analysis Dashboard - Enhanced Version
-Comprehensive analysis with customizable charts, heatmaps, and indicator filtering
+Comprehensive analysis with customizable charts, heatmaps, and per-graph filtering
 """
 
 import streamlit as st
@@ -26,7 +26,7 @@ st.set_page_config(
     page_title="Stock Pattern Analysis",
     page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS
@@ -100,7 +100,7 @@ INDICATOR_CATEGORIES = {
         "default_enabled": True,
         "description": "Absolute and relative price levels"
     },
-    "Price Changes (Exclude by Default)": {
+    "Price Changes (Contaminating)": {
         "indicators": ["gap_%", "gap_up", "gap_down",
                       "price_change_1d", "price_change_3d", "price_change_5d", 
                       "price_change_10d", "price_change_20d"],
@@ -108,6 +108,9 @@ INDICATOR_CATEGORIES = {
         "description": "Recent price changes (may contaminate pre-event analysis)"
     }
 }
+
+# Time lag order
+TIME_LAG_ORDER = ["T-1", "T-3", "T-5", "T-10", "T-30"]
 
 
 def get_indicator_category(indicator):
@@ -133,6 +136,51 @@ def filter_indicators_by_categories(df, enabled_categories):
     df_filtered = df[df['indicator'].str.lower().isin(enabled_indicators)].copy()
     
     return df_filtered
+
+
+def sort_time_lags(time_lags):
+    """Sort time lags in correct order"""
+    ordered = []
+    for lag in TIME_LAG_ORDER:
+        if lag in time_lags:
+            ordered.append(lag)
+    # Add any other lags not in the standard order
+    for lag in time_lags:
+        if lag not in ordered:
+            ordered.append(lag)
+    return ordered
+
+
+def create_category_selector(key_prefix, include_all_option=True):
+    """Create a category selector widget"""
+    categories = list(INDICATOR_CATEGORIES.keys())
+    
+    if include_all_option:
+        options = ["All Categories"] + categories
+        default_selected = ["All Categories"] + [
+            cat for cat, info in INDICATOR_CATEGORIES.items() 
+            if info["default_enabled"]
+        ]
+    else:
+        options = categories
+        default_selected = [
+            cat for cat, info in INDICATOR_CATEGORIES.items() 
+            if info["default_enabled"]
+        ]
+    
+    selected = st.multiselect(
+        "Filter by Category:",
+        options=options,
+        default=default_selected,
+        key=f"{key_prefix}_categories",
+        help="Select which indicator categories to include in this chart"
+    )
+    
+    # If "All Categories" is selected, return all
+    if "All Categories" in selected:
+        return categories
+    
+    return selected
 
 
 # ============================================================================
@@ -190,7 +238,8 @@ def load_all_time_lags():
         response = client.table("raw_data").select("time_lag").execute()
         
         if response.data:
-            unique_lags = sorted(list(set(row["time_lag"] for row in response.data)))
+            unique_lags = list(set(row["time_lag"] for row in response.data))
+            unique_lags = sort_time_lags(unique_lags)
             
             for lag in unique_lags:
                 df = load_supabase_data("raw_data", time_lag=lag)
@@ -248,7 +297,7 @@ def create_percentage_difference_chart(analysis_df, time_lag='T-1', top_n=20, en
     
     # Calculate percentage difference
     df['pct_difference'] = np.where(
-        df['avg_grinders'].abs() > 0.01,  # Avoid division by near-zero
+        df['avg_grinders'].abs() > 0.01,
         ((df['avg_spikers'] - df['avg_grinders']) / df['avg_grinders'].abs()) * 100,
         0
     )
@@ -267,7 +316,7 @@ def create_percentage_difference_chart(analysis_df, time_lag='T-1', top_n=20, en
     # Add category info
     df['category'] = df['indicator'].apply(get_indicator_category)
     
-    # Color by direction and category
+    # Color by direction
     colors = ['#e74c3c' if x > 0 else '#3498db' for x in df['pct_difference']]
     
     # Create hover text
@@ -431,6 +480,11 @@ def create_heatmap_across_time_lags(analysis_df, metric='pct_difference', top_n=
     
     # Pivot for heatmap
     pivot_df = df.pivot(index='indicator', columns='time_lag', values='value')
+    
+    # Sort columns in correct time lag order
+    available_lags = [lag for lag in TIME_LAG_ORDER if lag in pivot_df.columns]
+    other_lags = [lag for lag in pivot_df.columns if lag not in TIME_LAG_ORDER]
+    pivot_df = pivot_df[available_lags + other_lags]
     
     # Sort by average absolute value
     pivot_df['_sort'] = pivot_df.abs().mean(axis=1)
@@ -651,30 +705,17 @@ def main():
     st.title("🎯 Stock Pattern Analysis Dashboard")
     st.markdown("**Discover what distinguishes explosive movers from steady grinders**")
     
-    # Sidebar - Filters and Settings
+    # Sidebar - Global settings only
     with st.sidebar:
         st.header("⚙️ Settings")
-        
-        # Category selector
-        st.subheader("📊 Indicator Categories")
-        enabled_categories = []
-        
-        for category, info in INDICATOR_CATEGORIES.items():
-            default = info["default_enabled"]
-            enabled = st.checkbox(
-                category,
-                value=default,
-                help=info["description"]
-            )
-            if enabled:
-                enabled_categories.append(category)
-        
-        st.markdown("---")
         
         # Refresh button
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+        
+        st.markdown("---")
+        st.markdown("**💡 Tip:** Each chart has its own category filters")
     
     # Load data
     with st.spinner("Loading data from Supabase..."):
@@ -717,7 +758,7 @@ def main():
     
     # Main visualizations
     if not analysis_df.empty and 'time_lag' in analysis_df.columns:
-        available_lags = sorted(analysis_df['time_lag'].unique())
+        available_lags = sort_time_lags(analysis_df['time_lag'].unique().tolist())
         
         # Tab layout
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -732,21 +773,25 @@ def main():
         with tab1:
             st.header("Top Discriminating Indicators")
             
+            # Controls
             col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
-                selected_lag = st.selectbox("Time Period:", available_lags, index=0, key='disc_lag')
+                selected_lag_disc = st.selectbox("Time Period:", available_lags, index=0, key='disc_lag')
             with col2:
-                top_n = st.slider("Number of indicators:", 10, 50, 20, key='disc_n')
+                top_n_disc = st.slider("Number of indicators:", 10, 50, 20, key='disc_n')
             with col3:
                 chart_type = st.selectbox("Metric:", ["% Difference", "Absolute Difference"], key='disc_metric')
             
+            # Category filter for this chart
+            enabled_categories_disc = create_category_selector("disc")
+            
             if chart_type == "% Difference":
                 fig = create_percentage_difference_chart(
-                    analysis_df, selected_lag, top_n, enabled_categories
+                    analysis_df, selected_lag_disc, top_n_disc, enabled_categories_disc
                 )
             else:
                 fig = create_absolute_difference_chart(
-                    analysis_df, selected_lag, top_n, enabled_categories
+                    analysis_df, selected_lag_disc, top_n_disc, enabled_categories_disc
                 )
             
             if fig:
@@ -756,7 +801,9 @@ def main():
             
             # Scatter plot
             st.subheader("Spiker vs Grinder Comparison")
-            fig_scatter = create_scatter_comparison(analysis_df, selected_lag, enabled_categories)
+            enabled_categories_scatter = create_category_selector("scatter")
+            
+            fig_scatter = create_scatter_comparison(analysis_df, selected_lag_disc, enabled_categories_scatter)
             if fig_scatter:
                 st.plotly_chart(fig_scatter, use_container_width=True)
         
@@ -774,6 +821,9 @@ def main():
             with col2:
                 heatmap_n = st.slider("Number of indicators:", 10, 50, 25, key='heatmap_n')
             
+            # Category filter for heatmap
+            enabled_categories_heatmap = create_category_selector("heatmap")
+            
             metric_map = {
                 "% Difference": "pct_difference",
                 "Absolute Difference": "absolute_difference",
@@ -784,7 +834,7 @@ def main():
                 analysis_df,
                 metric=metric_map[heatmap_metric],
                 top_n=heatmap_n,
-                enabled_categories=enabled_categories
+                enabled_categories=enabled_categories_heatmap
             )
             
             if fig_heatmap:
@@ -800,6 +850,10 @@ def main():
                 col1, col2 = st.columns([1, 1])
                 with col1:
                     dist_lag = st.selectbox("Time Period:", list(raw_data_dict.keys()), key='dist_lag')
+                
+                # Category filter for distributions
+                enabled_categories_dist = create_category_selector("dist")
+                
                 with col2:
                     # Get available indicators for selected lag
                     if dist_lag in raw_data_dict:
@@ -808,10 +862,10 @@ def main():
                         available_indicators = [col for col in lag_df.columns if col not in exclude_cols]
                         
                         # Filter by enabled categories
-                        if enabled_categories:
+                        if enabled_categories_dist:
                             enabled_indicators = []
                             for category, info in INDICATOR_CATEGORIES.items():
-                                if category in enabled_categories:
+                                if category in enabled_categories_dist:
                                     enabled_indicators.extend([ind.lower() for ind in info["indicators"]])
                             available_indicators = [ind for ind in available_indicators if ind.lower() in enabled_indicators]
                         
@@ -859,7 +913,10 @@ def main():
             
             cat_lag = st.selectbox("Time Period:", available_lags, key='cat_lag')
             
-            fig_cat = create_category_summary(analysis_df, cat_lag, enabled_categories)
+            # Category filter for category analysis
+            enabled_categories_cat = create_category_selector("cat")
+            
+            fig_cat = create_category_summary(analysis_df, cat_lag, enabled_categories_cat)
             if fig_cat:
                 st.plotly_chart(fig_cat, use_container_width=True)
             else:
@@ -883,15 +940,10 @@ def main():
             
             with subtab2:
                 if not analysis_df.empty:
-                    # Filter by categories
-                    display_df = analysis_df.copy()
-                    if enabled_categories:
-                        display_df = filter_indicators_by_categories(display_df, enabled_categories)
-                    
-                    st.dataframe(display_df, use_container_width=True, height=600)
+                    st.dataframe(analysis_df, use_container_width=True, height=600)
                     st.download_button(
                         "📥 Download Analysis CSV",
-                        display_df.to_csv(index=False),
+                        analysis_df.to_csv(index=False),
                         "analysis.csv",
                         "text/csv"
                     )
