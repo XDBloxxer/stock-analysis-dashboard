@@ -94,36 +94,97 @@ def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
         return pd.DataFrame(), pd.DataFrame()
 
 
-def run_backtest_async(strategy_config: dict):
+def run_backtest_in_thread(strategy_id: int, strategy_config: dict):
     """
-    Run backtest asynchronously
-    Note: In production, this should trigger a background job
-    For now, we'll show instructions to run via command line
+    Run backtest in a background thread
+    Updates Supabase as it progresses
     """
-    st.info("🚀 Backtest created! Running in background...")
+    import sys
+    import threading
+    from pathlib import Path
     
-    # In a real implementation, you would:
-    # 1. Submit to a job queue (Celery, RQ, etc.)
-    # 2. Or use Streamlit's experimental rerun with state
-    # 3. Or provide CLI command to run
+    # Import backtesting modules
+    # Add tradingview-analysis path to system path
+    # This assumes both repos are in the same parent directory
+    parent_dir = Path(__file__).parent.parent
+    analysis_repo = parent_dir / "tradingview-analysis"
     
-    # For now, show the command to run
-    criteria_json = json.dumps(strategy_config['indicator_criteria'])
+    if analysis_repo.exists():
+        sys.path.insert(0, str(analysis_repo))
     
-    cmd = f"""
-    python backtest_runner.py \\
-        --name "{strategy_config['name']}" \\
-        --start-date {strategy_config['start_date']} \\
-        --end-date {strategy_config['end_date']} \\
-        --target-gain {strategy_config['target_min_gain_pct']} \\
-        --target-days {strategy_config['target_days']} \\
-        --criteria '{criteria_json}' \\
-        --min-price {strategy_config.get('min_price', 0.50)} \\
-        --min-volume {strategy_config.get('min_volume', 100000)}
+    try:
+        from backtesting.strategy_backtester import StrategyBacktester
+        from backtesting.backtest_supabase_client import BacktestSupabaseClient
+        
+        # Load minimal config
+        config = {'backtesting': {}}
+        
+        # Initialize components
+        backtester = StrategyBacktester(config)
+        supabase_client = BacktestSupabaseClient(config)
+        
+        # Update status to running
+        supabase_client.update_strategy_status(strategy_id, 'running')
+        
+        # Define progress callback
+        def progress_callback(current, total, date):
+            # Could update database with progress here
+            pass
+        
+        # Run backtest
+        results = backtester.run_backtest(strategy_config, progress_callback)
+        
+        # Write results
+        supabase_client.write_daily_results(strategy_id, results['daily_results'])
+        supabase_client.write_trades(strategy_id, results['trades'])
+        supabase_client.update_strategy_summary(strategy_id, results['overall_stats'])
+        supabase_client.update_strategy_status(strategy_id, 'completed')
+        
+    except Exception as e:
+        # Update status to failed
+        try:
+            supabase_client = BacktestSupabaseClient({'backtesting': {}})
+            supabase_client.update_strategy_status(strategy_id, 'failed')
+        except:
+            pass
+        raise e
+
+
+def run_backtest_direct(strategy_id: int, strategy_config: dict):
     """
+    Run backtest directly from dashboard
+    Uses threading to avoid blocking the UI
+    """
+    import threading
     
-    st.code(cmd, language="bash")
-    st.info("💡 Run this command in your terminal to execute the backtest")
+    # Create and start background thread
+    thread = threading.Thread(
+        target=run_backtest_in_thread,
+        args=(strategy_id, strategy_config),
+        daemon=True
+    )
+    thread.start()
+    
+    st.success(f"✅ Backtest started! Strategy ID: {strategy_id}")
+    st.info("🔄 The backtest is running in the background. Refresh this page in a few moments to see results.")
+    st.info("⏱️ Depending on the date range, this may take 1-10 minutes.")
+    
+    # Show progress instructions
+    with st.expander("📊 How to monitor progress"):
+        st.write("""
+        The backtest is now running. To see results:
+        
+        1. **Wait** 1-5 minutes (depends on date range)
+        2. **Click 'Refresh'** button or reload page
+        3. **Check 'View Results'** tab
+        4. Look for strategy status changing from 'running' to 'completed'
+        
+        **Status indicators:**
+        - `pending` - Strategy created, not started
+        - `running` - Currently backtesting (wait for completion)
+        - `completed` - Done! Results available
+        - `failed` - Error occurred (check logs)
+        """)
 
 
 # ============================================================================
@@ -479,11 +540,44 @@ def render_backtesting_tab():
                 )
             
             # Target
+            st.markdown("#### Target Performance")
+            st.markdown("Define what you're looking for: how much gain and over what timeframe")
+            
             col1, col2 = st.columns(2)
             with col1:
-                target_gain = st.number_input("Target Gain %*", min_value=0.1, value=5.0, step=0.1)
+                target_gain = st.number_input(
+                    "Target Gain %*",
+                    min_value=0.1,
+                    value=5.0,
+                    step=0.1,
+                    help="Minimum % gain to consider a successful trade"
+                )
             with col2:
-                target_days = st.number_input("Days to Hold*", min_value=1, max_value=30, value=1)
+                target_days = st.number_input(
+                    "Days to Hold*",
+                    min_value=1,
+                    max_value=30,
+                    value=1,
+                    help="How long to hold the position. 1 = same day (intraday), 2 = sell next day, etc."
+                )
+            
+            # Explanation of holding period
+            st.info(f"""
+            **📅 Holding Period Explained:**
+            
+            You're testing if a stock that meets your criteria on Day 0 will gain {target_gain}% or more 
+            by Day {target_days}.
+            
+            - **Day 0**: Stock meets your indicator criteria (e.g., RSI < 30)
+            - **Day {target_days}**: Check if stock gained {target_gain}% or more
+            
+            Examples:
+            - **1 day** = Same-day trading (buy at signal, sell at close)
+            - **2 days** = Hold overnight (buy on Day 0, sell on Day 1)
+            - **5 days** = Hold for a week (buy on Day 0, sell on Day 4)
+            
+            The backtest will check if stocks matching your criteria hit this target within this timeframe.
+            """)
             
             # Filters
             st.markdown("#### Stock Filters")
@@ -553,7 +647,7 @@ def render_backtesting_tab():
                 })
             
             # Submit
-            submitted = st.form_submit_button("Create & Run Backtest", type="primary")
+            submitted = st.form_submit_button("🚀 Create & Run Backtest", type="primary")
             
             if submitted:
                 # Validate
@@ -602,8 +696,8 @@ def render_backtesting_tab():
                         
                         st.success(f"✓ Strategy created! ID: {strategy_id}")
                         
-                        # Show how to run it
-                        run_backtest_async(strategy_config)
+                        # Run backtest directly
+                        run_backtest_direct(strategy_id, strategy_config)
                         
                         # Refresh
                         st.session_state.backtest_refresh_counter += 1
@@ -643,7 +737,8 @@ def render_backtesting_tab():
             strategy_to_delete = st.selectbox(
                 "Select strategy to delete:",
                 options=strategies_df['id'].tolist(),
-                format_func=lambda x: strategies_df[strategies_df['id'] == x]['name'].iloc[0]
+                format_func=lambda x: strategies_df[strategies_df['id'] == x]['name'].iloc[0],
+                key="delete_strategy_select"
             )
             
             if st.button("🗑️ Delete Strategy", type="secondary"):
@@ -655,3 +750,47 @@ def render_backtesting_tab():
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error deleting strategy: {e}")
+            
+            st.markdown("---")
+            
+            # Run pending strategies
+            st.markdown("### Run Pending Strategies")
+            pending_strategies = strategies_df[strategies_df['run_status'] == 'pending']
+            
+            if pending_strategies.empty:
+                st.info("No pending strategies. All strategies have been run or are running.")
+            else:
+                strategy_to_run = st.selectbox(
+                    "Select pending strategy to run:",
+                    options=pending_strategies['id'].tolist(),
+                    format_func=lambda x: pending_strategies[pending_strategies['id'] == x]['name'].iloc[0],
+                    key="run_strategy_select"
+                )
+                
+                if st.button("▶️ Run Backtest", type="primary"):
+                    try:
+                        # Get strategy details
+                        strategy = strategies_df[strategies_df['id'] == strategy_to_run].iloc[0]
+                        
+                        # Build config
+                        strategy_config = {
+                            'name': strategy['name'],
+                            'description': strategy.get('description', ''),
+                            'start_date': strategy['start_date'],
+                            'end_date': strategy['end_date'],
+                            'target_min_gain_pct': strategy['target_min_gain_pct'],
+                            'target_days': strategy.get('target_days', 1),
+                            'indicator_criteria': strategy['indicator_criteria'],
+                            'min_price': strategy.get('min_price', 0.50),
+                            'max_price': strategy.get('max_price'),
+                            'min_volume': strategy.get('min_volume', 100000),
+                            'exchanges': strategy.get('exchanges', ['NASDAQ', 'NYSE', 'AMEX'])
+                        }
+                        
+                        # Run backtest
+                        run_backtest_direct(strategy_to_run, strategy_config)
+                        
+                        st.session_state.backtest_refresh_counter += 1
+                        
+                    except Exception as e:
+                        st.error(f"Error running backtest: {e}")
