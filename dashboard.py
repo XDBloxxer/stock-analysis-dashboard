@@ -1,7 +1,6 @@
 """
 Stock Analysis Dashboard
 Professional multi-tab dashboard with modular components
-NOW WITH STRATEGY BACKTESTING!
 """
 
 import streamlit as st
@@ -67,27 +66,19 @@ def main():
     try:
         from tab_daily_winners import render_daily_winners_tab
         from tab_spike_grinder import render_spike_grinder_tab
-        from tab_strategy_backtest import render_strategy_backtest_tab
         
         # Create tabs
-        tab1, tab2, tab3 = st.tabs([
-            "Daily Winners", 
-            "Spike/Grinder Analysis",
-            "Strategy Backtest"
-        ])
+        tab1, tab2 = st.tabs(["Daily Winners", "Spike/Grinder Analysis"])
         
         with tab1:
             render_daily_winners_tab()
         
         with tab2:
             render_spike_grinder_tab()
-        
-        with tab3:
-            render_strategy_backtest_tab()
             
     except ImportError as e:
         st.error(f"Error importing tab modules: {e}")
-        st.info("Make sure all tab modules are in the same directory as dashboard.py")
+        st.info("Make sure tab_daily_winners.py and tab_spike_grinder.py are in the same directory as dashboard.py")
 
 
 if __name__ == "__main__":
