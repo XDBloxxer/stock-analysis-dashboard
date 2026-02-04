@@ -1,6 +1,6 @@
 """
-Stock Event Analysis Dashboard - Enhanced Version
-Comprehensive analysis with customizable charts, heatmaps, and per-graph filtering
+Stock Event Analysis Dashboard - Improved Version
+Clear, actionable visualizations for discovering what distinguishes spikers from grinders
 """
 
 import streamlit as st
@@ -15,11 +15,6 @@ from scipy import stats
 
 # Supabase
 from supabase import create_client, Client
-
-# Google Sheets (fallback)
-import gspread
-from google.oauth2.service_account import Credentials
-from pathlib import Path
 
 # Page config
 st.set_page_config(
@@ -278,15 +273,15 @@ def validate_analysis_df(df):
 
 
 # ============================================================================
-# VISUALIZATION FUNCTIONS
+# NEW VISUALIZATION FUNCTIONS (Based on Sample)
 # ============================================================================
 
-def create_percentage_difference_chart(analysis_df, time_lag='T-1', top_n=20, enabled_categories=None):
-    """Create horizontal bar chart showing percentage differences"""
-    if analysis_df.empty or 'time_lag' not in analysis_df.columns:
+def create_top_spikers_outperform(analysis_df, top_n=10, enabled_categories=None):
+    """Chart 1: Top indicators where spikers outperform (vertical bar)"""
+    if analysis_df.empty or 'difference' not in analysis_df.columns:
         return None
     
-    df = analysis_df[analysis_df['time_lag'] == time_lag].copy()
+    df = analysis_df.copy()
     
     # Filter by categories
     if enabled_categories:
@@ -295,77 +290,201 @@ def create_percentage_difference_chart(analysis_df, time_lag='T-1', top_n=20, en
     if df.empty:
         return None
     
-    # Calculate percentage difference
-    df['pct_difference'] = np.where(
-        df['avg_grinders'].abs() > 0.01,
-        ((df['avg_spikers'] - df['avg_grinders']) / df['avg_grinders'].abs()) * 100,
-        0
-    )
+    # Group by indicator and get average difference
+    df_grouped = df.groupby('indicator').agg({
+        'difference': 'mean',
+        'avg_spikers': 'mean',
+        'avg_grinders': 'mean'
+    }).reset_index()
     
-    # Remove infinite and NaN values
-    df = df[np.isfinite(df['pct_difference'])]
+    # Get top N where spikers outperform
+    df_top = df_grouped.nlargest(top_n, 'difference')
     
-    if df.empty:
+    if df_top.empty:
         return None
     
-    # Sort and take top N
-    df['abs_pct_diff'] = df['pct_difference'].abs()
-    actual_n = min(top_n, len(df))
-    df = df.nlargest(actual_n, 'abs_pct_diff').sort_values('pct_difference')
-    
-    # Add category info
-    df['category'] = df['indicator'].apply(get_indicator_category)
-    
-    # Color by direction
-    colors = ['#e74c3c' if x > 0 else '#3498db' for x in df['pct_difference']]
+    # Add category
+    df_top['category'] = df_top['indicator'].apply(get_indicator_category)
     
     # Create hover text
     hover_texts = []
-    for _, row in df.iterrows():
+    for _, row in df_top.iterrows():
         hover_texts.append(
             f"<b>{row['indicator']}</b> ({row['category']})<br>" +
-            f"% Difference: {row['pct_difference']:.1f}%<br><br>" +
-            f"Spiker Avg: {row['avg_spikers']:.3f}<br>" +
-            f"Grinder Avg: {row['avg_grinders']:.3f}<br>"
+            f"Avg Difference: {row['difference']:.2f}<br>" +
+            f"Spiker Avg: {row['avg_spikers']:.2f}<br>" +
+            f"Grinder Avg: {row['avg_grinders']:.2f}"
         )
     
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        y=df['indicator'],
-        x=df['pct_difference'],
-        orientation='h',
-        marker_color=colors,
-        text=[f'{x:+.1f}%' for x in df['pct_difference']],
+        x=df_top['indicator'],
+        y=df_top['difference'],
+        marker_color='steelblue',
+        marker_line_color='black',
+        marker_line_width=1,
+        text=[f'{x:.1f}' for x in df_top['difference']],
         textposition='outside',
         hovertext=hover_texts,
         hoverinfo='text'
     ))
     
-    fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=2)
-    
-    max_abs = df['pct_difference'].abs().max()
-    x_range = [-max_abs * 1.15, max_abs * 1.15]
-    
     fig.update_layout(
-        title=f"<b>Top {actual_n} Discriminating Indicators ({time_lag})</b><br>" +
-              "<sub>Red = Spikers Higher | Blue = Grinders Higher</sub>",
-        xaxis_title="Percentage Difference (%)",
-        yaxis_title="",
-        height=max(500, actual_n * 30),
+        title=f"<b>Top {top_n} Indicators Where Spikers Outperform Grinders</b><br>" +
+              "<sub>Average difference across all time periods</sub>",
+        xaxis_title="Indicator",
+        yaxis_title="Avg Difference (Spikers - Grinders)",
+        height=500,
         showlegend=False,
-        xaxis=dict(range=x_range, zeroline=True, zerolinewidth=2, zerolinecolor='gray')
+        xaxis={'tickangle': 45}
     )
     
     return fig
 
 
-def create_absolute_difference_chart(analysis_df, time_lag='T-1', top_n=20, enabled_categories=None):
-    """Create chart showing absolute value differences"""
+def create_top_grinders_outperform(analysis_df, top_n=10, enabled_categories=None):
+    """Chart 2: Top indicators where grinders outperform (horizontal bar)"""
+    if analysis_df.empty or 'difference' not in analysis_df.columns:
+        return None
+    
+    df = analysis_df.copy()
+    
+    # Filter by categories
+    if enabled_categories:
+        df = filter_indicators_by_categories(df, enabled_categories)
+    
+    if df.empty:
+        return None
+    
+    # Group by indicator and get average difference
+    df_grouped = df.groupby('indicator').agg({
+        'difference': 'mean',
+        'avg_spikers': 'mean',
+        'avg_grinders': 'mean'
+    }).reset_index()
+    
+    # Get top N where grinders outperform (most negative)
+    df_top = df_grouped.nsmallest(top_n, 'difference').sort_values('difference')
+    
+    if df_top.empty:
+        return None
+    
+    # Add category
+    df_top['category'] = df_top['indicator'].apply(get_indicator_category)
+    
+    # Create hover text
+    hover_texts = []
+    for _, row in df_top.iterrows():
+        hover_texts.append(
+            f"<b>{row['indicator']}</b> ({row['category']})<br>" +
+            f"Avg Difference: {row['difference']:.2f}<br>" +
+            f"Spiker Avg: {row['avg_spikers']:.2f}<br>" +
+            f"Grinder Avg: {row['avg_grinders']:.2f}"
+        )
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        y=df_top['indicator'],
+        x=df_top['difference'],
+        orientation='h',
+        marker_color='coral',
+        marker_line_color='black',
+        marker_line_width=1,
+        text=[f'{x:.1f}' for x in df_top['difference']],
+        textposition='outside',
+        hovertext=hover_texts,
+        hoverinfo='text'
+    ))
+    
+    fig.update_layout(
+        title=f"<b>Top {top_n} Indicators Where Grinders Outperform Spikers</b><br>" +
+              "<sub>Average difference across all time periods</sub>",
+        xaxis_title="Avg Difference (Spikers - Grinders)",
+        yaxis_title="",
+        height=max(400, top_n * 35),
+        showlegend=False
+    )
+    
+    return fig
+
+
+def create_time_lag_line_chart(analysis_df, indicators=None, enabled_categories=None):
+    """Chart 3: Average values across time lags - line chart"""
+    if analysis_df.empty:
+        return None
+    
+    df = analysis_df.copy()
+    
+    # Filter by categories
+    if enabled_categories:
+        df = filter_indicators_by_categories(df, enabled_categories)
+    
+    if df.empty:
+        return None
+    
+    # If specific indicators provided, filter to those
+    if indicators:
+        df = df[df['indicator'].isin(indicators)]
+    
+    # Group by time lag
+    df_grouped = df.groupby('time_lag').agg({
+        'avg_spikers': 'mean',
+        'avg_grinders': 'mean'
+    }).reset_index()
+    
+    # Sort by time lag
+    df_grouped['time_lag_order'] = df_grouped['time_lag'].map(
+        {lag: i for i, lag in enumerate(TIME_LAG_ORDER)}
+    )
+    df_grouped = df_grouped.sort_values('time_lag_order')
+    
+    if df_grouped.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=df_grouped['time_lag'],
+        y=df_grouped['avg_spikers'],
+        mode='lines+markers',
+        name='Spikers',
+        line=dict(color='blue', width=2),
+        marker=dict(size=10, symbol='circle')
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=df_grouped['time_lag'],
+        y=df_grouped['avg_grinders'],
+        mode='lines+markers',
+        name='Grinders',
+        line=dict(color='orange', width=2),
+        marker=dict(size=10, symbol='square')
+    ))
+    
+    fig.update_layout(
+        title="<b>Average Indicator Values Across Time Lags</b><br>" +
+              "<sub>Spikers vs Grinders comparison</sub>",
+        xaxis_title="Time Lag",
+        yaxis_title="Average Value",
+        height=500,
+        legend=dict(x=0.02, y=0.98),
+        hovermode='x unified'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    
+    return fig
+
+
+def create_leading_indicators_t1(analysis_df, top_n=10, enabled_categories=None):
+    """Chart 4: Leading indicators at T-1 with color coding"""
     if analysis_df.empty or 'time_lag' not in analysis_df.columns:
         return None
     
-    df = analysis_df[analysis_df['time_lag'] == time_lag].copy()
+    df = analysis_df[analysis_df['time_lag'] == 'T-1'].copy()
     
     # Filter by categories
     if enabled_categories:
@@ -374,322 +493,172 @@ def create_absolute_difference_chart(analysis_df, time_lag='T-1', top_n=20, enab
     if df.empty or 'difference' not in df.columns:
         return None
     
-    # Remove NaN
-    df = df[df['difference'].notna()]
+    # Sort by absolute difference and take top N
+    df['abs_diff'] = df['difference'].abs()
+    df_top = df.nlargest(top_n, 'abs_diff').sort_values('difference', ascending=False)
     
-    if df.empty:
+    if df_top.empty:
         return None
     
-    # Sort by absolute difference
-    df['abs_diff'] = df['difference'].abs()
-    actual_n = min(top_n, len(df))
-    df = df.nlargest(actual_n, 'abs_diff').sort_values('difference')
+    # Color code: green if positive (spikers higher), red if negative
+    colors = ['#2ecc71' if x > 0 else '#e74c3c' for x in df_top['difference']]
     
     # Add category
-    df['category'] = df['indicator'].apply(get_indicator_category)
+    df_top['category'] = df_top['indicator'].apply(get_indicator_category)
     
-    colors = ['#e74c3c' if x > 0 else '#3498db' for x in df['difference']]
-    
+    # Create hover text
     hover_texts = []
-    for _, row in df.iterrows():
+    for _, row in df_top.iterrows():
         hover_texts.append(
             f"<b>{row['indicator']}</b> ({row['category']})<br>" +
-            f"Difference: {row['difference']:.3f}<br><br>" +
-            f"Spiker Avg: {row['avg_spikers']:.3f}<br>" +
-            f"Grinder Avg: {row['avg_grinders']:.3f}<br>"
+            f"Difference: {row['difference']:.2f}<br>" +
+            f"Spiker Avg: {row['avg_spikers']:.2f}<br>" +
+            f"Grinder Avg: {row['avg_grinders']:.2f}"
         )
     
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        y=df['indicator'],
-        x=df['difference'],
-        orientation='h',
+        x=df_top['indicator'],
+        y=df_top['difference'],
         marker_color=colors,
-        text=[f'{x:+.3f}' for x in df['difference']],
+        marker_line_color='black',
+        marker_line_width=1,
+        text=[f'{x:+.2f}' for x in df_top['difference']],
         textposition='outside',
         hovertext=hover_texts,
         hoverinfo='text'
     ))
     
-    fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=2)
-    
-    max_abs = df['difference'].abs().max()
-    x_range = [-max_abs * 1.15, max_abs * 1.15]
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
     
     fig.update_layout(
-        title=f"<b>Top {actual_n} by Absolute Difference ({time_lag})</b><br>" +
-              "<sub>Red = Spikers Higher | Blue = Grinders Higher</sub>",
-        xaxis_title="Absolute Difference",
-        yaxis_title="",
-        height=max(500, actual_n * 30),
+        title=f"<b>Top {top_n} Leading Indicators at T-1 (Day Before Event)</b><br>" +
+              "<sub>Green = Spikers Higher | Red = Grinders Higher</sub>",
+        xaxis_title="Indicator",
+        yaxis_title="Difference (Spikers - Grinders)",
+        height=500,
         showlegend=False,
-        xaxis=dict(range=x_range)
+        xaxis={'tickangle': 45}
     )
     
     return fig
 
 
-def create_heatmap_across_time_lags(analysis_df, metric='pct_difference', top_n=20, enabled_categories=None):
-    """Create heatmap showing indicator behavior across all time lags"""
-    if analysis_df.empty:
+def create_price_change_comparison(analysis_df, indicator='price_change_20d', enabled_categories=None):
+    """Chart 5: Grouped bar chart comparing specific indicator across time lags"""
+    if analysis_df.empty or indicator not in analysis_df['indicator'].values:
         return None
     
-    # Filter by categories
-    if enabled_categories:
-        df = filter_indicators_by_categories(analysis_df, enabled_categories)
-    else:
-        df = analysis_df.copy()
+    df = analysis_df[analysis_df['indicator'] == indicator].copy()
     
     if df.empty:
         return None
     
-    # Calculate metric
-    if metric == 'pct_difference':
-        df['value'] = np.where(
-            df['avg_grinders'].abs() > 0.01,
-            ((df['avg_spikers'] - df['avg_grinders']) / df['avg_grinders'].abs()) * 100,
-            0
-        )
-        title = "Percentage Difference Heatmap Across Time Lags"
-        colorbar_title = "% Diff"
-    elif metric == 'absolute_difference':
-        if 'difference' not in df.columns:
-            return None
-        df['value'] = df['difference']
-        title = "Absolute Difference Heatmap Across Time Lags"
-        colorbar_title = "Abs Diff"
-    elif metric == 'ratio':
-        if 'ratio' not in df.columns:
-            return None
-        df['value'] = df['ratio']
-        title = "Ratio Heatmap Across Time Lags (Spiker/Grinder)"
-        colorbar_title = "Ratio"
-    
-    # Remove infinite values
-    df = df[np.isfinite(df['value'])]
-    
-    if df.empty:
-        return None
-    
-    # Find top indicators by average absolute value across lags
-    indicator_scores = df.groupby('indicator')['value'].apply(lambda x: x.abs().mean())
-    top_indicators = indicator_scores.nlargest(top_n).index.tolist()
-    
-    df = df[df['indicator'].isin(top_indicators)]
-    
-    # Pivot for heatmap
-    pivot_df = df.pivot(index='indicator', columns='time_lag', values='value')
-    
-    # Sort columns in correct time lag order
-    available_lags = [lag for lag in TIME_LAG_ORDER if lag in pivot_df.columns]
-    other_lags = [lag for lag in pivot_df.columns if lag not in TIME_LAG_ORDER]
-    pivot_df = pivot_df[available_lags + other_lags]
-    
-    # Sort by average absolute value
-    pivot_df['_sort'] = pivot_df.abs().mean(axis=1)
-    pivot_df = pivot_df.sort_values('_sort', ascending=False).drop(columns=['_sort'])
-    
-    if pivot_df.empty:
-        return None
-    
-    # Create heatmap
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot_df.values,
-        x=pivot_df.columns,
-        y=pivot_df.index,
-        colorscale='RdBu_r',
-        zmid=0,
-        text=pivot_df.values,
-        texttemplate='%{text:.1f}',
-        textfont={"size": 10},
-        colorbar=dict(title=colorbar_title),
-        hovertemplate='<b>%{y}</b><br>%{x}<br>Value: %{z:.2f}<extra></extra>'
-    ))
-    
-    fig.update_layout(
-        title=f"<b>{title}</b><br><sub>Top {len(pivot_df)} indicators</sub>",
-        xaxis_title="Time Lag",
-        yaxis_title="Indicator",
-        height=max(600, len(pivot_df) * 25),
-        xaxis={'side': 'top'}
+    # Sort by time lag
+    df['time_lag_order'] = df['time_lag'].map(
+        {lag: i for i, lag in enumerate(TIME_LAG_ORDER)}
     )
-    
-    return fig
-
-
-def create_scatter_comparison(analysis_df, time_lag='T-1', enabled_categories=None):
-    """Create scatter plot comparing spiker vs grinder averages"""
-    if analysis_df.empty or 'time_lag' not in analysis_df.columns:
-        return None
-    
-    df = analysis_df[analysis_df['time_lag'] == time_lag].copy()
-    
-    # Filter by categories
-    if enabled_categories:
-        df = filter_indicators_by_categories(df, enabled_categories)
-    
-    if df.empty:
-        return None
-    
-    # Remove rows where either value is null
-    df = df[df['avg_spikers'].notna() & df['avg_grinders'].notna()]
-    
-    if df.empty:
-        return None
-    
-    # Add category
-    df['category'] = df['indicator'].apply(get_indicator_category)
-    
-    # Create scatter
-    fig = px.scatter(
-        df,
-        x='avg_grinders',
-        y='avg_spikers',
-        hover_data=['indicator', 'category'],
-        color='category',
-        title=f"<b>Spiker vs Grinder Averages ({time_lag})</b>",
-        labels={
-            'avg_grinders': 'Grinder Average',
-            'avg_spikers': 'Spiker Average'
-        }
-    )
-    
-    # Add diagonal line (where spiker = grinder)
-    min_val = min(df['avg_grinders'].min(), df['avg_spikers'].min())
-    max_val = max(df['avg_grinders'].max(), df['avg_spikers'].max())
-    
-    fig.add_trace(go.Scatter(
-        x=[min_val, max_val],
-        y=[min_val, max_val],
-        mode='lines',
-        line=dict(color='gray', dash='dash'),
-        showlegend=False,
-        hoverinfo='skip'
-    ))
-    
-    fig.update_layout(
-        height=600,
-        xaxis_title="Grinder Average",
-        yaxis_title="Spiker Average"
-    )
-    
-    return fig
-
-
-def create_category_summary(analysis_df, time_lag='T-1', enabled_categories=None):
-    """Create summary chart by category"""
-    if analysis_df.empty or 'time_lag' not in analysis_df.columns:
-        return None
-    
-    df = analysis_df[analysis_df['time_lag'] == time_lag].copy()
-    
-    # Filter by categories
-    if enabled_categories:
-        df = filter_indicators_by_categories(df, enabled_categories)
-    
-    if df.empty:
-        return None
-    
-    # Add category
-    df['category'] = df['indicator'].apply(get_indicator_category)
-    
-    # Calculate average percentage difference per category
-    df['pct_difference'] = np.where(
-        df['avg_grinders'].abs() > 0.01,
-        ((df['avg_spikers'] - df['avg_grinders']) / df['avg_grinders'].abs()) * 100,
-        0
-    )
-    
-    df = df[np.isfinite(df['pct_difference'])]
-    
-    if df.empty:
-        return None
-    
-    category_summary = df.groupby('category').agg({
-        'pct_difference': ['mean', 'std', 'count'],
-        'indicator': 'count'
-    }).reset_index()
-    
-    category_summary.columns = ['category', 'avg_pct_diff', 'std_pct_diff', 'count', 'num_indicators']
-    category_summary = category_summary.sort_values('avg_pct_diff', key=abs, ascending=False)
-    
-    # Create bar chart
-    colors = ['#e74c3c' if x > 0 else '#3498db' for x in category_summary['avg_pct_diff']]
+    df = df.sort_values('time_lag_order')
     
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        x=category_summary['category'],
-        y=category_summary['avg_pct_diff'],
-        error_y=dict(type='data', array=category_summary['std_pct_diff']),
-        marker_color=colors,
-        text=[f'{x:+.1f}%' for x in category_summary['avg_pct_diff']],
-        textposition='outside',
-        hovertemplate='<b>%{x}</b><br>Avg % Diff: %{y:.1f}%<br>Std Dev: %{error_y.array:.1f}%<br>Indicators: %{customdata}<extra></extra>',
-        customdata=category_summary['num_indicators']
+        name='Spikers',
+        x=df['time_lag'],
+        y=df['avg_spikers'],
+        marker_color='steelblue',
+        text=[f'{x:.1f}' for x in df['avg_spikers']],
+        textposition='outside'
     ))
     
-    fig.add_hline(y=0, line_dash="dash", line_color="gray", line_width=2)
+    fig.add_trace(go.Bar(
+        name='Grinders',
+        x=df['time_lag'],
+        y=df['avg_grinders'],
+        marker_color='coral',
+        text=[f'{x:.1f}' for x in df['avg_grinders']],
+        textposition='outside'
+    ))
     
     fig.update_layout(
-        title=f"<b>Average % Difference by Indicator Category ({time_lag})</b><br>" +
-              "<sub>Error bars show standard deviation | Red = Spikers Higher | Blue = Grinders Higher</sub>",
-        xaxis_title="Category",
-        yaxis_title="Average % Difference",
+        title=f"<b>{indicator}: Spikers vs Grinders by Time Lag</b>",
+        xaxis_title="Time Lag",
+        yaxis_title=f"{indicator} Value",
+        barmode='group',
         height=500,
-        showlegend=False
+        legend=dict(x=0.02, y=0.98)
     )
+    
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
     
     return fig
 
 
-def create_distribution_comparison(raw_data_df, indicator, time_lag='T-1'):
-    """Create distribution comparison for a specific indicator"""
-    if raw_data_df.empty or indicator not in raw_data_df.columns:
+def create_best_predictive_indicators(analysis_df, top_n=10, enabled_categories=None):
+    """Chart 6: Best predictive indicators (horizontal bars)"""
+    if analysis_df.empty or 'difference' not in analysis_df.columns:
         return None
     
-    df = raw_data_df.copy()
+    df = analysis_df.copy()
     
-    # Remove nulls
-    df = df[df[indicator].notna()]
+    # Filter by categories
+    if enabled_categories:
+        df = filter_indicators_by_categories(df, enabled_categories)
     
-    if df.empty or 'event_type' not in df.columns:
+    if df.empty:
         return None
     
-    spikers = df[df['event_type'] == 'Spiker'][indicator]
-    grinders = df[df['event_type'] == 'Grinder'][indicator]
+    # Calculate average metrics per indicator
+    df_grouped = df.groupby('indicator').agg({
+        'difference': 'mean',
+        'ratio': 'mean',
+        'avg_spikers': 'mean',
+        'avg_grinders': 'mean'
+    }).reset_index()
     
-    if len(spikers) == 0 and len(grinders) == 0:
+    # Get top N by average difference
+    df_top = df_grouped.nlargest(top_n, 'difference').sort_values('difference')
+    
+    if df_top.empty:
         return None
+    
+    # Add category
+    df_top['category'] = df_top['indicator'].apply(get_indicator_category)
+    
+    # Create hover text
+    hover_texts = []
+    for _, row in df_top.iterrows():
+        hover_texts.append(
+            f"<b>{row['indicator']}</b> ({row['category']})<br>" +
+            f"Avg Difference: {row['difference']:.2f}<br>" +
+            f"Avg Ratio: {row['ratio']:.2f}<br>" +
+            f"Spiker Avg: {row['avg_spikers']:.2f}<br>" +
+            f"Grinder Avg: {row['avg_grinders']:.2f}"
+        )
     
     fig = go.Figure()
     
-    if len(spikers) > 0:
-        fig.add_trace(go.Histogram(
-            x=spikers,
-            name='Spikers',
-            opacity=0.7,
-            marker_color='#e74c3c',
-            nbinsx=30
-        ))
-    
-    if len(grinders) > 0:
-        fig.add_trace(go.Histogram(
-            x=grinders,
-            name='Grinders',
-            opacity=0.7,
-            marker_color='#3498db',
-            nbinsx=30
-        ))
+    fig.add_trace(go.Bar(
+        y=df_top['indicator'],
+        x=df_top['difference'],
+        orientation='h',
+        marker_color='teal',
+        marker_line_color='black',
+        marker_line_width=1,
+        text=[f'{x:.2f}' for x in df_top['difference']],
+        textposition='outside',
+        hovertext=hover_texts,
+        hoverinfo='text'
+    ))
     
     fig.update_layout(
-        title=f"<b>Distribution Comparison: {indicator} ({time_lag})</b>",
-        xaxis_title=indicator,
-        yaxis_title="Count",
-        barmode='overlay',
-        height=500,
-        legend=dict(x=0.8, y=0.95)
+        title=f"<b>Top {top_n} Predictive Indicators for Spikers</b><br>" +
+              "<sub>Averaged across all time lags</sub>",
+        xaxis_title="Average Difference",
+        yaxis_title="",
+        height=max(400, top_n * 35),
+        showlegend=False
     )
     
     return fig
@@ -705,7 +674,7 @@ def main():
     st.title("🎯 Stock Pattern Analysis Dashboard")
     st.markdown("**Discover what distinguishes explosive movers from steady grinders**")
     
-    # Sidebar - Global settings only
+    # Sidebar - Global settings
     with st.sidebar:
         st.header("⚙️ Settings")
         
@@ -757,173 +726,214 @@ def main():
     st.markdown("---")
     
     # Main visualizations
-    if not analysis_df.empty and 'time_lag' in analysis_df.columns:
-        available_lags = sort_time_lags(analysis_df['time_lag'].unique().tolist())
+    if not analysis_df.empty:
         
         # Tab layout
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "🎯 Key Discriminators",
-            "🔥 Heatmaps",
-            "📊 Distributions",
-            "📈 Category Analysis",
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📊 Key Insights",
+            "🔍 Deep Dive",
+            "📈 Time Analysis",
             "📋 Data Explorer"
         ])
         
-        # TAB 1: Key Discriminators
+        # TAB 1: Key Insights (New clear visualizations)
         with tab1:
-            st.header("Top Discriminating Indicators")
+            st.header("Key Insights: What Distinguishes Spikers from Grinders")
             
-            # Controls
-            col1, col2, col3 = st.columns([2, 1, 1])
+            # Chart 1: Top Spikers Outperform
+            st.subheader("1️⃣ Where Spikers Excel")
+            col1, col2 = st.columns([3, 1])
             with col1:
-                selected_lag_disc = st.selectbox("Time Period:", available_lags, index=0, key='disc_lag')
+                enabled_cat_1 = create_category_selector("chart1")
             with col2:
-                top_n_disc = st.slider("Number of indicators:", 10, 50, 20, key='disc_n')
-            with col3:
-                chart_type = st.selectbox("Metric:", ["% Difference", "Absolute Difference"], key='disc_metric')
+                top_n_1 = st.slider("Top N:", 5, 20, 10, key='top_n_1')
             
-            # Category filter for this chart
-            enabled_categories_disc = create_category_selector("disc")
+            fig1 = create_top_spikers_outperform(analysis_df, top_n_1, enabled_cat_1)
+            if fig1:
+                st.plotly_chart(fig1, use_container_width=True)
             
-            if chart_type == "% Difference":
-                fig = create_percentage_difference_chart(
-                    analysis_df, selected_lag_disc, top_n_disc, enabled_categories_disc
-                )
-            else:
-                fig = create_absolute_difference_chart(
-                    analysis_df, selected_lag_disc, top_n_disc, enabled_categories_disc
-                )
+            st.markdown("---")
             
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No data available for selected filters")
+            # Chart 2: Top Grinders Outperform
+            st.subheader("2️⃣ Where Grinders Excel")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                enabled_cat_2 = create_category_selector("chart2")
+            with col2:
+                top_n_2 = st.slider("Top N:", 5, 20, 10, key='top_n_2')
             
-            # Scatter plot
-            st.subheader("Spiker vs Grinder Comparison")
-            enabled_categories_scatter = create_category_selector("scatter")
+            fig2 = create_top_grinders_outperform(analysis_df, top_n_2, enabled_cat_2)
+            if fig2:
+                st.plotly_chart(fig2, use_container_width=True)
             
-            fig_scatter = create_scatter_comparison(analysis_df, selected_lag_disc, enabled_categories_scatter)
-            if fig_scatter:
-                st.plotly_chart(fig_scatter, use_container_width=True)
+            st.markdown("---")
+            
+            # Chart 4: Leading Indicators at T-1
+            st.subheader("3️⃣ Most Predictive Indicators (Day Before Event)")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                enabled_cat_4 = create_category_selector("chart4")
+            with col2:
+                top_n_4 = st.slider("Top N:", 5, 20, 10, key='top_n_4')
+            
+            fig4 = create_leading_indicators_t1(analysis_df, top_n_4, enabled_cat_4)
+            if fig4:
+                st.plotly_chart(fig4, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Chart 6: Best Overall Predictive
+            st.subheader("4️⃣ Best Overall Predictive Indicators")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                enabled_cat_6 = create_category_selector("chart6")
+            with col2:
+                top_n_6 = st.slider("Top N:", 5, 15, 10, key='top_n_6')
+            
+            fig6 = create_best_predictive_indicators(analysis_df, top_n_6, enabled_cat_6)
+            if fig6:
+                st.plotly_chart(fig6, use_container_width=True)
         
-        # TAB 2: Heatmaps
+        # TAB 2: Deep Dive
         with tab2:
-            st.header("Indicator Behavior Across Time Lags")
+            st.header("Deep Dive Analysis")
             
-            col1, col2 = st.columns([1, 1])
+            # Time lag comparison
+            st.subheader("Indicator Trends Across Time")
+            enabled_cat_3 = create_category_selector("chart3")
+            
+            fig3 = create_time_lag_line_chart(analysis_df, enabled_categories=enabled_cat_3)
+            if fig3:
+                st.plotly_chart(fig3, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Specific indicator comparison
+            st.subheader("Specific Indicator Deep Dive")
+            
+            # Get unique indicators
+            unique_indicators = sorted(analysis_df['indicator'].unique())
+            
+            col1, col2 = st.columns([2, 1])
             with col1:
-                heatmap_metric = st.selectbox(
-                    "Metric:",
-                    ["% Difference", "Absolute Difference", "Ratio"],
-                    key='heatmap_metric'
+                selected_indicator = st.selectbox(
+                    "Select Indicator:",
+                    unique_indicators,
+                    index=unique_indicators.index('price_change_20d') if 'price_change_20d' in unique_indicators else 0,
+                    key='specific_ind'
                 )
-            with col2:
-                heatmap_n = st.slider("Number of indicators:", 10, 50, 25, key='heatmap_n')
             
-            # Category filter for heatmap
-            enabled_categories_heatmap = create_category_selector("heatmap")
+            fig5 = create_price_change_comparison(analysis_df, selected_indicator)
+            if fig5:
+                st.plotly_chart(fig5, use_container_width=True)
             
-            metric_map = {
-                "% Difference": "pct_difference",
-                "Absolute Difference": "absolute_difference",
-                "Ratio": "ratio"
-            }
-            
-            fig_heatmap = create_heatmap_across_time_lags(
-                analysis_df,
-                metric=metric_map[heatmap_metric],
-                top_n=heatmap_n,
-                enabled_categories=enabled_categories_heatmap
-            )
-            
-            if fig_heatmap:
-                st.plotly_chart(fig_heatmap, use_container_width=True)
-            else:
-                st.info("No data available for selected filters")
-        
-        # TAB 3: Distributions
-        with tab3:
-            st.header("Indicator Distribution Comparison")
-            
-            if raw_data_dict:
-                col1, col2 = st.columns([1, 1])
+            # Show detailed stats for selected indicator
+            ind_data = analysis_df[analysis_df['indicator'] == selected_indicator]
+            if not ind_data.empty:
+                st.subheader(f"Statistics for {selected_indicator}")
+                
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    dist_lag = st.selectbox("Time Period:", list(raw_data_dict.keys()), key='dist_lag')
-                
-                # Category filter for distributions
-                enabled_categories_dist = create_category_selector("dist")
-                
+                    st.metric("Avg Spiker Value", f"{ind_data['avg_spikers'].mean():.2f}")
                 with col2:
-                    # Get available indicators for selected lag
-                    if dist_lag in raw_data_dict:
-                        lag_df = raw_data_dict[dist_lag]
-                        exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at', 'updated_at']
-                        available_indicators = [col for col in lag_df.columns if col not in exclude_cols]
+                    st.metric("Avg Grinder Value", f"{ind_data['avg_grinders'].mean():.2f}")
+                with col3:
+                    st.metric("Avg Difference", f"{ind_data['difference'].mean():.2f}")
+                with col4:
+                    if 'ratio' in ind_data.columns:
+                        st.metric("Avg Ratio", f"{ind_data['ratio'].mean():.2f}")
+        
+        # TAB 3: Time Analysis
+        with tab3:
+            st.header("Time-Based Pattern Analysis")
+            
+            available_lags = sort_time_lags(analysis_df['time_lag'].unique().tolist())
+            
+            selected_lag = st.selectbox("Select Time Period:", available_lags, key='time_lag_sel')
+            
+            # Show distributions for this time lag
+            if selected_lag in raw_data_dict:
+                st.subheader(f"Indicator Distributions at {selected_lag}")
+                
+                lag_df = raw_data_dict[selected_lag]
+                
+                # Category filter
+                enabled_cat_dist = create_category_selector("dist_time")
+                
+                # Get available indicators
+                exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at', 'updated_at']
+                available_indicators = [col for col in lag_df.columns if col not in exclude_cols]
+                
+                # Filter by enabled categories
+                if enabled_cat_dist:
+                    enabled_indicators = []
+                    for category, info in INDICATOR_CATEGORIES.items():
+                        if category in enabled_cat_dist:
+                            enabled_indicators.extend([ind.lower() for ind in info["indicators"]])
+                    available_indicators = [ind for ind in available_indicators if ind.lower() in enabled_indicators]
+                
+                if available_indicators:
+                    selected_ind_dist = st.selectbox("Select Indicator:", sorted(available_indicators), key='ind_dist_time')
+                    
+                    # Create distribution plot
+                    if selected_ind_dist in lag_df.columns and 'event_type' in lag_df.columns:
+                        spikers = lag_df[lag_df['event_type'] == 'Spiker'][selected_ind_dist].dropna()
+                        grinders = lag_df[lag_df['event_type'] == 'Grinder'][selected_ind_dist].dropna()
                         
-                        # Filter by enabled categories
-                        if enabled_categories_dist:
-                            enabled_indicators = []
-                            for category, info in INDICATOR_CATEGORIES.items():
-                                if category in enabled_categories_dist:
-                                    enabled_indicators.extend([ind.lower() for ind in info["indicators"]])
-                            available_indicators = [ind for ind in available_indicators if ind.lower() in enabled_indicators]
+                        fig = go.Figure()
                         
-                        if available_indicators:
-                            dist_indicator = st.selectbox("Indicator:", sorted(available_indicators), key='dist_ind')
+                        if len(spikers) > 0:
+                            fig.add_trace(go.Histogram(
+                                x=spikers,
+                                name='Spikers',
+                                opacity=0.7,
+                                marker_color='#e74c3c',
+                                nbinsx=30
+                            ))
+                        
+                        if len(grinders) > 0:
+                            fig.add_trace(go.Histogram(
+                                x=grinders,
+                                name='Grinders',
+                                opacity=0.7,
+                                marker_color='#3498db',
+                                nbinsx=30
+                            ))
+                        
+                        fig.update_layout(
+                            title=f"<b>Distribution: {selected_ind_dist} at {selected_lag}</b>",
+                            xaxis_title=selected_ind_dist,
+                            yaxis_title="Count",
+                            barmode='overlay',
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Statistics
+                        if len(spikers) > 0 and len(grinders) > 0:
+                            col1, col2, col3 = st.columns(3)
                             
-                            fig_dist = create_distribution_comparison(lag_df, dist_indicator, dist_lag)
-                            if fig_dist:
-                                st.plotly_chart(fig_dist, use_container_width=True)
+                            with col1:
+                                st.metric("Spiker Mean", f"{spikers.mean():.3f}")
+                                st.metric("Spiker Std Dev", f"{spikers.std():.3f}")
+                            
+                            with col2:
+                                st.metric("Grinder Mean", f"{grinders.mean():.3f}")
+                                st.metric("Grinder Std Dev", f"{grinders.std():.3f}")
+                            
+                            with col3:
+                                t_stat, p_value = stats.ttest_ind(spikers, grinders, equal_var=False)
+                                st.metric("T-Statistic", f"{t_stat:.3f}")
+                                st.metric("P-Value", f"{p_value:.4f}")
                                 
-                                # Show statistics
-                                spikers = lag_df[lag_df['event_type'] == 'Spiker'][dist_indicator].dropna()
-                                grinders = lag_df[lag_df['event_type'] == 'Grinder'][dist_indicator].dropna()
-                                
-                                if len(spikers) > 0 and len(grinders) > 0:
-                                    st.subheader("Statistical Summary")
-                                    col1, col2, col3 = st.columns(3)
-                                    
-                                    with col1:
-                                        st.metric("Spiker Mean", f"{spikers.mean():.3f}")
-                                        st.metric("Spiker Median", f"{spikers.median():.3f}")
-                                    
-                                    with col2:
-                                        st.metric("Grinder Mean", f"{grinders.mean():.3f}")
-                                        st.metric("Grinder Median", f"{grinders.median():.3f}")
-                                    
-                                    with col3:
-                                        # T-test
-                                        t_stat, p_value = stats.ttest_ind(spikers, grinders, equal_var=False)
-                                        st.metric("T-Statistic", f"{t_stat:.3f}")
-                                        st.metric("P-Value", f"{p_value:.4f}")
-                                        
-                                        if p_value < 0.05:
-                                            st.success("✓ Statistically significant (p < 0.05)")
-                                        else:
-                                            st.info("Not statistically significant")
-                        else:
-                            st.info("No indicators available for selected categories")
-            else:
-                st.info("Raw data not available")
+                                if p_value < 0.05:
+                                    st.success("✓ Statistically significant")
+                                else:
+                                    st.info("Not significant")
         
-        # TAB 4: Category Analysis
+        # TAB 4: Data Explorer
         with tab4:
-            st.header("Analysis by Indicator Category")
-            
-            cat_lag = st.selectbox("Time Period:", available_lags, key='cat_lag')
-            
-            # Category filter for category analysis
-            enabled_categories_cat = create_category_selector("cat")
-            
-            fig_cat = create_category_summary(analysis_df, cat_lag, enabled_categories_cat)
-            if fig_cat:
-                st.plotly_chart(fig_cat, use_container_width=True)
-            else:
-                st.info("No data available for selected filters")
-        
-        # TAB 5: Data Explorer
-        with tab5:
             st.header("Raw Data Explorer")
             
             subtab1, subtab2, subtab3 = st.tabs(["Candidates", "Analysis", "Raw Data"])
@@ -932,7 +942,7 @@ def main():
                 if not candidates_df.empty:
                     st.dataframe(candidates_df, use_container_width=True, height=600)
                     st.download_button(
-                        "📥 Download Candidates CSV",
+                        "📥 Download CSV",
                         candidates_df.to_csv(index=False),
                         "candidates.csv",
                         "text/csv"
@@ -942,7 +952,7 @@ def main():
                 if not analysis_df.empty:
                     st.dataframe(analysis_df, use_container_width=True, height=600)
                     st.download_button(
-                        "📥 Download Analysis CSV",
+                        "📥 Download CSV",
                         analysis_df.to_csv(index=False),
                         "analysis.csv",
                         "text/csv"
@@ -950,7 +960,7 @@ def main():
             
             with subtab3:
                 if raw_data_dict:
-                    raw_lag = st.selectbox("Select time lag:", list(raw_data_dict.keys()), key='raw_lag')
+                    raw_lag = st.selectbox("Select time lag:", list(raw_data_dict.keys()), key='raw_lag_exp')
                     if raw_lag in raw_data_dict:
                         st.dataframe(raw_data_dict[raw_lag], use_container_width=True, height=600)
                         st.download_button(
