@@ -269,8 +269,7 @@ def render_daily_winners_tab():
 def render_indicator_snapshot(data_row, title):
     """Render a single indicator snapshot"""
     st.markdown(f"**{title}**")
-    
-    # Define indicator groups
+
     indicator_groups = {
         "Price & Volume": ["close", "open", "high", "low", "volume"],
         "Momentum": ["rsi", "stoch.k", "stoch.d", "mom", "w.r"],
@@ -278,36 +277,42 @@ def render_indicator_snapshot(data_row, title):
         "Volatility": ["atr", "bb.upper", "bb.lower", "bb_width", "volatility_20d"],
         "Other": ["cci20", "ao", "uo", "vwap"]
     }
-    
+
     tabs = st.tabs(list(indicator_groups.keys()))
-    
+
     for i, (group_name, indicators) in enumerate(indicator_groups.items()):
         with tabs[i]:
-            # Filter to available indicators
-            available = [ind for ind in indicators if ind in data_row.index and pd.notna(data_row[ind])]
-            
+
+            available = [
+                ind for ind in indicators
+                if ind in data_row.index and pd.notna(data_row[ind])
+            ]
+
             if not available:
                 st.info(f"No {group_name} indicators available")
                 continue
-            
-            # Create columns for metrics
+
             cols = st.columns(min(4, len(available)))
-            
+
             for j, indicator in enumerate(available):
                 with cols[j % 4]:
-                    value = data_row[ind]
-                    
+                    value = data_row[indicator]
+
                     # Format value
-                    if indicator == 'volume':
+                    if indicator == "volume":
                         display_val = f"{value/1e6:.1f}M"
-                    elif abs(value) > 1000:
+                    elif abs(value) >= 1000:
                         display_val = f"{value:.0f}"
-                    elif abs(value) > 10:
+                    elif abs(value) >= 10:
                         display_val = f"{value:.2f}"
                     else:
                         display_val = f"{value:.3f}"
-                    
-                    st.metric(indicator.upper(), display_val)
+
+                    # Clean label
+                    label = indicator.replace(".", " ").replace("_", " ").upper()
+
+                    st.metric(label, display_val)
+
 
 
 def render_indicator_evolution(symbol, open_df, close_df, prior_df):
