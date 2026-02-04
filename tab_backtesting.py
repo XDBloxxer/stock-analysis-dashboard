@@ -113,8 +113,8 @@ def run_backtest_in_thread(strategy_id: int, strategy_config: dict):
         sys.path.insert(0, str(analysis_repo))
     
     try:
-        from tradingview-analysis.backtesting.strategy_backtester import StrategyBacktester
-        from tradingview-analysis.backtesting.backtest_supabase_client import BacktestSupabaseClient
+        from tradingview-analysis/backtesting.strategy_backtester import StrategyBacktester
+        from tradingview-analysis/backtesting.backtest_supabase_client import BacktestSupabaseClient
         
         # Load minimal config
         config = {'backtesting': {}}
