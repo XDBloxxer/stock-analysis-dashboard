@@ -66,6 +66,7 @@ def main():
     try:
         from tab_daily_winners import render_daily_winners_tab
         from tab_spike_grinder import render_spike_grinder_tab
+        from tab_backtesting  import render_backtesting_tab
         
         # Create tabs
         tab1, tab2, tab3 = st.tabs(["Daily Winners", "Spike/Grinder Analysis", "Backtesting"])
