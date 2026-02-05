@@ -15,7 +15,7 @@ enableXsrfProtection = true
 gatherUsageStats = false
 
 
-env_variables:
+env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   GITHUB_REPO_OWNER: "XDBloxxer"
   GITHUB_REPO_NAME: "tradingview-analysis"
