@@ -33,12 +33,7 @@ def run_backtest_via_github(strategy_id: int, strategy_config: dict):
     github_token = None
     try:
         github_token = (
-            os.environ.get("GITHUB_TOKEN") or 
-            os.environ.get("G_TOKEN") or
-            os.environ.get("GH_TOKEN") or
-            st.secrets.get("G_TOKEN") or
-            st.secrets.get("GITHUB_TOKEN") or
-            st.secrets.get("GH_TOKEN")
+            os.environ.get("G_TOKEN") or st.secrets.get("secrets", {}).get("G_TOKEN")
         )
     except Exception as e:
         st.warning(f"Error accessing secrets: {e}")
