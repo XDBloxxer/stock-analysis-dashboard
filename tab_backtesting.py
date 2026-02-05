@@ -818,7 +818,7 @@ def render_backtesting_tab():
                         }
                         
                         # Run backtest
-                        run_backtest_direct(strategy_to_run, strategy_config)
+                        run_backtest_via_github(strategy_to_run, strategy_config)
                         
                         st.session_state.backtest_refresh_counter += 1
                         
