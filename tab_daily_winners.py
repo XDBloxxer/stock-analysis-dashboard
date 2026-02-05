@@ -1,6 +1,7 @@
 """
 Daily Winners Tab Module
 Handles all Daily Winners functionality
+FIXED: Better symbol matching and debugging for indicator snapshots
 """
 
 import streamlit as st
@@ -47,6 +48,11 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
+        
+        # Normalize symbol column if it exists (strip whitespace, uppercase)
+        if 'symbol' in df.columns:
+            df['symbol'] = df['symbol'].str.strip().str.upper()
+        
         return df
     except Exception as e:
         st.warning(f"⚠️ Could not load from {table_name}: {str(e)}")
@@ -104,12 +110,23 @@ def render_indicator_snapshot(data_row, title):
 def render_indicator_evolution(symbol, open_df, close_df, prior_df):
     """Show how indicators evolved from T-1 to market open to market close"""
     
+    # Normalize symbol for comparison
+    symbol = symbol.strip().upper()
+    
     if open_df.empty or 'symbol' not in open_df.columns:
         open_df = pd.DataFrame()
     if close_df.empty or 'symbol' not in close_df.columns:
         close_df = pd.DataFrame()
     if prior_df.empty or 'symbol' not in prior_df.columns:
         prior_df = pd.DataFrame()
+    
+    # Normalize symbols in dataframes
+    if not open_df.empty:
+        open_df['symbol'] = open_df['symbol'].str.strip().str.upper()
+    if not close_df.empty:
+        close_df['symbol'] = close_df['symbol'].str.strip().str.upper()
+    if not prior_df.empty:
+        prior_df['symbol'] = prior_df['symbol'].str.strip().str.upper()
     
     open_data = open_df[open_df['symbol'] == symbol] if not open_df.empty else pd.DataFrame()
     close_data = close_df[close_df['symbol'] == symbol] if not close_df.empty else pd.DataFrame()
@@ -255,6 +272,10 @@ def render_daily_winners_tab():
         st.warning(f"No winners data found for {selected_date}")
         return
     
+    # Normalize symbols in winners_df
+    if 'symbol' in winners_df.columns:
+        winners_df['symbol'] = winners_df['symbol'].str.strip().str.upper()
+    
     # Display winners summary
     st.subheader(f"Top {len(winners_df)} Winners - {selected_date}")
     
@@ -292,6 +313,25 @@ def render_daily_winners_tab():
     
     st.markdown("---")
     
+    # DEBUG INFO (expandable)
+    with st.expander("🔍 Debug Info - Data Availability"):
+        st.write(f"**Winners table:** {len(winners_df)} rows")
+        st.write(f"**Market Open table:** {len(market_open_df)} rows")
+        st.write(f"**Market Close table:** {len(market_close_df)} rows")
+        st.write(f"**Day Prior table:** {len(day_prior_df)} rows")
+        
+        if not winners_df.empty:
+            st.write(f"**Winners symbols:** {', '.join(sorted(winners_df['symbol'].unique()[:10]))}")
+        
+        if not market_open_df.empty and 'symbol' in market_open_df.columns:
+            st.write(f"**Market Open symbols:** {', '.join(sorted(market_open_df['symbol'].unique()[:10]))}")
+        
+        if not market_close_df.empty and 'symbol' in market_close_df.columns:
+            st.write(f"**Market Close symbols:** {', '.join(sorted(market_close_df['symbol'].unique()[:10]))}")
+        
+        if not day_prior_df.empty and 'symbol' in day_prior_df.columns:
+            st.write(f"**Day Prior symbols:** {', '.join(sorted(day_prior_df['symbol'].unique()[:10]))}")
+    
     # Stock selector for detailed analysis
     st.subheader("Detailed Stock Analysis")
     
@@ -299,6 +339,9 @@ def render_daily_winners_tab():
     selected_symbol = st.selectbox("Select a stock to analyze:", symbols, key="daily_winners_symbol")
     
     if selected_symbol:
+        # Normalize selected symbol
+        selected_symbol = selected_symbol.strip().upper()
+        
         winner_info = winners_df[winners_df['symbol'] == selected_symbol].iloc[0]
         
         col1, col2, col3, col4 = st.columns(4)
@@ -319,31 +362,43 @@ def render_daily_winners_tab():
         
         with snapshot_tabs[0]:
             if not market_open_df.empty and 'symbol' in market_open_df.columns:
+                # Normalize symbols in dataframe
+                market_open_df['symbol'] = market_open_df['symbol'].str.strip().str.upper()
                 symbol_open = market_open_df[market_open_df['symbol'] == selected_symbol]
+                
                 if not symbol_open.empty:
                     render_indicator_snapshot(symbol_open.iloc[0], "Market Open - 9:30 AM")
                 else:
                     st.warning(f"No market open data for {selected_symbol}")
+                    st.write(f"**Available symbols in market_open:** {', '.join(sorted(market_open_df['symbol'].unique()[:5]))}")
             else:
                 st.warning("No market open data available")
         
         with snapshot_tabs[1]:
             if not market_close_df.empty and 'symbol' in market_close_df.columns:
+                # Normalize symbols in dataframe
+                market_close_df['symbol'] = market_close_df['symbol'].str.strip().str.upper()
                 symbol_close = market_close_df[market_close_df['symbol'] == selected_symbol]
+                
                 if not symbol_close.empty:
                     render_indicator_snapshot(symbol_close.iloc[0], "Market Close - 4:00 PM")
                 else:
                     st.warning(f"No market close data for {selected_symbol}")
+                    st.write(f"**Available symbols in market_close:** {', '.join(sorted(market_close_df['symbol'].unique()[:5]))}")
             else:
                 st.warning("No market close data available")
         
         with snapshot_tabs[2]:
             if not day_prior_df.empty and 'symbol' in day_prior_df.columns:
+                # Normalize symbols in dataframe
+                day_prior_df['symbol'] = day_prior_df['symbol'].str.strip().str.upper()
                 symbol_prior = day_prior_df[day_prior_df['symbol'] == selected_symbol]
+                
                 if not symbol_prior.empty:
                     render_indicator_snapshot(symbol_prior.iloc[0], "Day Prior (T-1) - 4:00 PM")
                 else:
                     st.warning(f"No day prior data for {selected_symbol}")
+                    st.write(f"**Available symbols in day_prior:** {', '.join(sorted(day_prior_df['symbol'].unique()[:5]))}")
             else:
                 st.warning("No day prior data available")
         
