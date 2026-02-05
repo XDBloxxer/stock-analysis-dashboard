@@ -23,3 +23,6 @@ supabase>=1.26.01
 
 #matplotlib
 matplotlib>=3.10
+
+# HTTP requests (for GitHub API)
+requests>=2.31.0
