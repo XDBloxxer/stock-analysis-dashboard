@@ -1,4 +1,0 @@
-env_variables:
-  GITHUB_TOKEN: ${G_TOKEN}
-  GITHUB_REPO_OWNER: "XDBloxxer"
-  GITHUB_REPO_NAME: "tradingview-analysis"
