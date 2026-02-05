@@ -150,41 +150,71 @@ def run_backtest_in_thread(strategy_id: int, strategy_config: dict):
         raise e
 
 
-def run_backtest_direct(strategy_id: int, strategy_config: dict):
+def run_backtest_via_github(strategy_id: int, strategy_config: dict):
     """
-    Run backtest directly from dashboard
-    Uses threading to avoid blocking the UI
+    Trigger backtest via GitHub Actions workflow
     """
-    import threading
+    import os
     
-    # Create and start background thread
-    thread = threading.Thread(
-        target=run_backtest_in_thread,
-        args=(strategy_id, strategy_config),
-        daemon=True
-    )
-    thread.start()
+    # Check if GitHub token is available
+    github_token = os.environ.get("GITHUB_TOKEN")
     
-    st.success(f"✅ Backtest started! Strategy ID: {strategy_id}")
-    st.info("🔄 The backtest is running in the background. Refresh this page in a few moments to see results.")
-    st.info("⏱️ Depending on the date range, this may take 1-10 minutes.")
+    if not github_token:
+        st.error("❌ GitHub token not configured. Cannot trigger workflow.")
+        st.info("To enable automatic workflow triggering, set GITHUB_TOKEN in your environment.")
+        st.info("Alternative: Run manually in GitHub Actions → 'Run workflow'")
+        return
     
-    # Show progress instructions
-    with st.expander("📊 How to monitor progress"):
-        st.write("""
-        The backtest is now running. To see results:
+    try:
+        # Import the trigger class
+        import sys
+        from pathlib import Path
         
-        1. **Wait** 1-5 minutes (depends on date range)
-        2. **Click 'Refresh'** button or reload page
-        3. **Check 'View Results'** tab
-        4. Look for strategy status changing from 'running' to 'completed'
+        # Add backend repo to path if running locally
+        backend_path = Path(__file__).parent.parent / "tradingview-analysis"
+        if backend_path.exists():
+            sys.path.insert(0, str(backend_path))
         
-        **Status indicators:**
-        - `pending` - Strategy created, not started
-        - `running` - Currently backtesting (wait for completion)
-        - `completed` - Done! Results available
-        - `failed` - Error occurred (check logs)
-        """)
+        from src.github_workflow_trigger import GitHubWorkflowTrigger
+        
+        # Trigger workflow
+        trigger = GitHubWorkflowTrigger()
+        success = trigger.trigger_backtest(strategy_id, verbose=True)
+        
+        if success:
+            st.success(f"✅ Backtest workflow triggered! Strategy ID: {strategy_id}")
+            st.info("🔄 The backtest is running in GitHub Actions. Check status below:")
+            
+            # Show recent runs
+            with st.expander("📊 Recent Workflow Runs"):
+                runs = trigger.get_workflow_runs(limit=5)
+                if runs:
+                    for run in runs:
+                        status_emoji = {
+                            "completed": "✅",
+                            "in_progress": "🔄",
+                            "queued": "⏳",
+                            "failed": "❌"
+                        }.get(run.get("status"), "❓")
+                        
+                        st.write(
+                            f"{status_emoji} **{run.get('name')}** - "
+                            f"{run.get('status')} - "
+                            f"{run.get('created_at')}"
+                        )
+                        st.write(f"[View Run]({run.get('html_url')})")
+                else:
+                    st.write("No recent runs found")
+            
+            st.info("⏱️ Refresh this page in a few minutes to see results in the 'View Results' tab.")
+        else:
+            st.error("❌ Failed to trigger workflow. Check logs for details.")
+            
+    except ImportError:
+        st.error("❌ GitHub workflow trigger not available.")
+        st.info("Make sure the tradingview-analysis repo is accessible.")
+    except Exception as e:
+        st.error(f"❌ Error triggering workflow: {e}")
 
 
 # ============================================================================
