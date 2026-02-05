@@ -1,5 +1,5 @@
 """
-Strategy Backtesting Tab Module - UPDATED WITH GITHUB WORKFLOW TRIGGER
+Strategy Backtesting Tab Module - FIXED VERSION
 Handles the backtesting UI and visualizations
 """
 
@@ -19,12 +19,12 @@ from supabase import create_client, Client
 
 
 # ============================================================================
-# GITHUB WORKFLOW TRIGGER - NEW ADDITION
+# GITHUB WORKFLOW TRIGGER - FIXED
 # ============================================================================
 
 def run_backtest_via_github(strategy_id: int, strategy_config: dict):
     """
-    Trigger backtest via GitHub Actions workflow
+    Trigger backtest via GitHub Actions workflow - WORKING VERSION
     """
     import os
     import sys
@@ -40,8 +40,8 @@ def run_backtest_via_github(strategy_id: int, strategy_config: dict):
             st.secrets.get("GITHUB_TOKEN") or
             st.secrets.get("GH_TOKEN")
         )
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Error accessing secrets: {e}")
     
     github_owner = None
     try:
@@ -49,8 +49,11 @@ def run_backtest_via_github(strategy_id: int, strategy_config: dict):
             os.environ.get("GITHUB_REPO_OWNER") or
             st.secrets.get("GITHUB_REPO_OWNER", "")
         )
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Error accessing owner: {e}")
+    
+    # DEBUG INFO
+    st.info(f"🔍 Debug: Token found: {bool(github_token)}, Owner found: {bool(github_owner)}")
     
     if not github_token:
         st.warning("⚠️ GitHub token not configured. Running locally...")
@@ -89,6 +92,7 @@ def run_backtest_via_github(strategy_id: int, strategy_config: dict):
             }
         }
         
+        st.info(f"🔄 Triggering workflow at: {url}")
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         
         if response.status_code == 204:
@@ -312,73 +316,6 @@ def run_backtest_in_thread(strategy_id: int, strategy_config: dict):
         raise e
 
 
-def run_backtest_via_github(strategy_id: int, strategy_config: dict):
-    """
-    Trigger backtest via GitHub Actions workflow
-    """
-    import os
-    
-    # Check if GitHub token is available
-    github_token = os.environ.get("GITHUB_TOKEN")
-    
-    if not github_token:
-        st.error("❌ GitHub token not configured. Cannot trigger workflow.")
-        st.info("To enable automatic workflow triggering, set GITHUB_TOKEN in your environment.")
-        st.info("Alternative: Run manually in GitHub Actions → 'Run workflow'")
-        return
-    
-    try:
-        # Import the trigger class
-        import sys
-        from pathlib import Path
-        
-        # Add backend repo to path if running locally
-        backend_path = Path(__file__).parent.parent / "tradingview-analysis"
-        if backend_path.exists():
-            sys.path.insert(0, str(backend_path))
-        
-        from src.github_workflow_trigger import GitHubWorkflowTrigger
-        
-        # Trigger workflow
-        trigger = GitHubWorkflowTrigger()
-        success = trigger.trigger_backtest(strategy_id, verbose=True)
-        
-        if success:
-            st.success(f"✅ Backtest workflow triggered! Strategy ID: {strategy_id}")
-            st.info("🔄 The backtest is running in GitHub Actions. Check status below:")
-            
-            # Show recent runs
-            with st.expander("📊 Recent Workflow Runs"):
-                runs = trigger.get_workflow_runs(limit=5)
-                if runs:
-                    for run in runs:
-                        status_emoji = {
-                            "completed": "✅",
-                            "in_progress": "🔄",
-                            "queued": "⏳",
-                            "failed": "❌"
-                        }.get(run.get("status"), "❓")
-                        
-                        st.write(
-                            f"{status_emoji} **{run.get('name')}** - "
-                            f"{run.get('status')} - "
-                            f"{run.get('created_at')}"
-                        )
-                        st.write(f"[View Run]({run.get('html_url')})")
-                else:
-                    st.write("No recent runs found")
-            
-            st.info("⏱️ Refresh this page in a few minutes to see results in the 'View Results' tab.")
-        else:
-            st.error("❌ Failed to trigger workflow. Check logs for details.")
-            
-    except ImportError:
-        st.error("❌ GitHub workflow trigger not available.")
-        st.info("Make sure the tradingview-analysis repo is accessible.")
-    except Exception as e:
-        st.error(f"❌ Error triggering workflow: {e}")
-
-
 # ============================================================================
 # VISUALIZATION FUNCTIONS
 # ============================================================================
@@ -589,6 +526,7 @@ def render_backtesting_tab():
     
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["📊 View Results", "🆕 Create Strategy", "📋 Manage Strategies"])
+    
     
     # ========================================================================
     # TAB 1: VIEW RESULTS
