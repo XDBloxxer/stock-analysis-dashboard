@@ -42,7 +42,7 @@ def run_backtest_via_github(strategy_id: int, strategy_config: dict):
     try:
         github_owner = (
             os.environ.get("GITHUB_REPO_OWNER") or
-            st.secrets.get("GITHUB_REPO_OWNER", "")
+            st.secrets.get("secrets", {}).get("GITHUB_REPO_OWNER")
         )
     except Exception as e:
         st.warning(f"Error accessing owner: {e}")
