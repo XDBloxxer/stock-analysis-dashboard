@@ -722,15 +722,15 @@ def render_backtesting_tab():
                         }
                         
                         response = client.table("backtest_strategies").insert(data).execute()
-                                strategy_id = response.data[0]['id']
+                        strategy_id = response.data[0]['id']
                                 
-                                st.success(f"✓ Strategy created! ID: {strategy_id}")
+                        st.success(f"✓ Strategy created! ID: {strategy_id}")
                                 
                                 # TRIGGER VIA GITHUB ACTIONS
-                                run_backtest_via_github(strategy_id, strategy_config)
+                        run_backtest_via_github(strategy_id, strategy_config)
                                 
                                 # Refresh
-                                st.session_state.backtest_refresh_counter += 1
+                        st.session_state.backtest_refresh_counter += 1
                                 
                     except Exception as e:
                         st.error(f"Error creating strategy: {e}")
