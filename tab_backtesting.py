@@ -1,6 +1,6 @@
 """
-Strategy Backtesting Tab Module - FIXED VERSION
-No duplicate strategy creation - creates once, then runs
+Strategy Backtesting Tab Module - ENHANCED VERSION
+Now includes exit analysis and advanced metrics
 """
 
 import streamlit as st
@@ -185,7 +185,7 @@ def run_backtest_via_github(strategy_id: int):
 
 
 # ============================================================================
-# VISUALIZATION FUNCTIONS
+# ENHANCED VISUALIZATION FUNCTIONS
 # ============================================================================
 
 def create_performance_chart(daily_df: pd.DataFrame):
@@ -282,6 +282,103 @@ def create_gain_distribution(trades_df: pd.DataFrame):
     return fig
 
 
+def create_exit_analysis_chart(trades_df: pd.DataFrame):
+    """NEW: Create exit analysis showing close vs high/low"""
+    if trades_df.empty:
+        return None
+    
+    # Filter to matched trades only
+    matched = trades_df[trades_df['matched_criteria'] == True].copy()
+    
+    if matched.empty or 'max_possible_gain_pct' not in matched.columns:
+        return None
+    
+    matched = matched.sort_values('signal_date')
+    matched['trade_num'] = range(len(matched))
+    
+    fig = go.Figure()
+    
+    # Actual gain (at close)
+    fig.add_trace(go.Scatter(
+        x=matched['trade_num'],
+        y=matched['actual_gain_pct'],
+        mode='markers',
+        name='Actual Gain (Close)',
+        marker=dict(size=8, color='blue'),
+        text=matched['symbol'],
+        hovertemplate='<b>%{text}</b><br>Actual: %{y:.2f}%'
+    ))
+    
+    # Max possible (at high)
+    fig.add_trace(go.Scatter(
+        x=matched['trade_num'],
+        y=matched['max_possible_gain_pct'],
+        mode='markers',
+        name='Max Possible (High)',
+        marker=dict(size=8, color='green', symbol='triangle-up'),
+        text=matched['symbol'],
+        hovertemplate='<b>%{text}</b><br>Max: %{y:.2f}%'
+    ))
+    
+    # Max drawdown (at low)
+    fig.add_trace(go.Scatter(
+        x=matched['trade_num'],
+        y=matched['max_drawdown_pct'],
+        mode='markers',
+        name='Max Drawdown (Low)',
+        marker=dict(size=8, color='red', symbol='triangle-down'),
+        text=matched['symbol'],
+        hovertemplate='<b>%{text}</b><br>Drawdown: %{y:.2f}%'
+    ))
+    
+    fig.update_layout(
+        title="<b>Exit Analysis: Close vs High/Low</b>",
+        xaxis_title="Trade Number",
+        yaxis_title="Gain %",
+        height=500,
+        hovermode='closest'
+    )
+    
+    return fig
+
+
+def create_cumulative_pnl(trades_df: pd.DataFrame):
+    """NEW: Create cumulative P&L curve"""
+    if trades_df.empty:
+        return None
+    
+    matched = trades_df[trades_df['matched_criteria'] == True].copy()
+    
+    if matched.empty:
+        return None
+    
+    matched = matched.sort_values('signal_date')
+    matched['cumulative_pnl'] = matched['actual_gain_pct'].cumsum()
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=matched['signal_date'],
+        y=matched['cumulative_pnl'],
+        mode='lines',
+        name='Cumulative P&L',
+        line=dict(color='purple', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(128,0,128,0.1)'
+    ))
+    
+    fig.add_hline(y=0, line_dash="dash", line_color="gray")
+    
+    fig.update_layout(
+        title="<b>Cumulative P&L Curve</b>",
+        xaxis_title="Date",
+        yaxis_title="Cumulative Gain %",
+        height=400
+    )
+    
+    return fig
+
+
 # ============================================================================
 # AVAILABLE INDICATORS - EXPANDED LIST
 # ============================================================================
@@ -320,7 +417,7 @@ AVAILABLE_INDICATORS = [
 # ============================================================================
 
 def render_backtesting_tab():
-    """Main backtesting tab rendering function"""
+    """Main backtesting tab rendering function - ENHANCED"""
     
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
@@ -338,7 +435,7 @@ def render_backtesting_tab():
     tab1, tab2, tab3 = st.tabs(["📊 View Results", "🆕 Create Strategy", "📋 Manage Strategies"])
     
     # ========================================================================
-    # TAB 1: VIEW RESULTS
+    # TAB 1: VIEW RESULTS - ENHANCED
     # ========================================================================
     with tab1:
         st.markdown("### Strategy Results")
@@ -358,7 +455,6 @@ def render_backtesting_tab():
         else:
             strategy_names = dict(zip(strategies_df['id'], strategies_df['name']))
             
-            # Use a unique key that doesn't cause re-selection issues
             selected_id = st.selectbox(
                 "Select Strategy:",
                 options=list(strategy_names.keys()),
@@ -393,6 +489,7 @@ def render_backtesting_tab():
                     st.markdown("---")
                     st.markdown("### Results Summary")
                     
+                    # ENHANCED: Show new metrics
                     col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
                         st.metric("Total Matches", strategy.get('total_matches', 0))
@@ -405,6 +502,40 @@ def render_backtesting_tab():
                     with col5:
                         acc = strategy.get('accuracy_pct', 0)
                         st.metric("Accuracy", f"{acc}%" if acc else "N/A")
+                    
+                    # NEW: Additional metrics row
+                    if not trades_df.empty and 'actual_gain_pct' in trades_df.columns:
+                        matched_trades = trades_df[trades_df['matched_criteria'] == True]
+                        
+                        if not matched_trades.empty:
+                            winners = matched_trades[matched_trades['actual_gain_pct'] > 0]
+                            losers = matched_trades[matched_trades['actual_gain_pct'] < 0]
+                            
+                            win_rate = (len(winners) / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
+                            avg_winner = winners['actual_gain_pct'].mean() if len(winners) > 0 else 0
+                            avg_loser = losers['actual_gain_pct'].mean() if len(losers) > 0 else 0
+                            
+                            total_gains = winners['actual_gain_pct'].sum() if len(winners) > 0 else 0
+                            total_losses = abs(losers['actual_gain_pct'].sum()) if len(losers) > 0 else 0
+                            profit_factor = (total_gains / total_losses) if total_losses > 0 else None
+                            
+                            # Intraday hit rate
+                            intraday_hits = matched_trades.get('target_hit_intraday', pd.Series([False])).sum()
+                            intraday_rate = (intraday_hits / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
+                            
+                            st.markdown("#### 📈 Advanced Metrics")
+                            col1, col2, col3, col4, col5 = st.columns(5)
+                            with col1:
+                                st.metric("Win Rate", f"{win_rate:.1f}%")
+                            with col2:
+                                st.metric("Avg Winner", f"{avg_winner:.2f}%")
+                            with col3:
+                                st.metric("Avg Loser", f"{avg_loser:.2f}%")
+                            with col4:
+                                pf_text = f"{profit_factor:.2f}" if profit_factor else "N/A"
+                                st.metric("Profit Factor", pf_text)
+                            with col5:
+                                st.metric("Intraday Hit Rate", f"{intraday_rate:.1f}%")
                     
                     st.markdown("### Performance Charts")
                     
@@ -422,6 +553,20 @@ def render_backtesting_tab():
                         fig3 = create_gain_distribution(trades_df)
                         if fig3:
                             st.plotly_chart(fig3, use_container_width=True)
+                    
+                    # NEW: Exit Analysis Charts
+                    st.markdown("### 🎯 Exit Analysis")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig4 = create_exit_analysis_chart(trades_df)
+                        if fig4:
+                            st.plotly_chart(fig4, use_container_width=True)
+                    
+                    with col2:
+                        fig5 = create_cumulative_pnl(trades_df)
+                        if fig5:
+                            st.plotly_chart(fig5, use_container_width=True)
                     
                     st.markdown("### Trade Details")
                     
@@ -441,7 +586,8 @@ def render_backtesting_tab():
                         elif trade_type_filter == 'Missed Opportunities':
                             filtered_trades = filtered_trades[filtered_trades['trade_type'] == 'false_negative']
                         
-                        display_cols = ['symbol', 'signal_date', 'entry_price', 'exit_price', 'actual_gain_pct', 'trade_type', 'matched_criteria', 'hit_target']
+                        display_cols = ['symbol', 'signal_date', 'entry_price', 'exit_price', 'actual_gain_pct', 
+                                       'max_possible_gain_pct', 'max_drawdown_pct', 'trade_type', 'matched_criteria', 'hit_target']
                         available_cols = [col for col in display_cols if col in filtered_trades.columns]
                         
                         st.dataframe(
@@ -464,7 +610,7 @@ def render_backtesting_tab():
                     st.error("❌ Backtest failed. Check logs for details.")
     
     # ========================================================================
-    # TAB 2: CREATE STRATEGY - DYNAMIC CRITERIA WITHOUT FORM
+    # TAB 2: CREATE STRATEGY - UNCHANGED
     # ========================================================================
     with tab2:
         st.markdown("### Create New Strategy")
@@ -475,11 +621,11 @@ def render_backtesting_tab():
                 {'indicator': 'rsi', 'operator': '>', 'comparison_type': 'value', 'value': 50.0, 'compare_to': None}
             ]
         
-        # Basic info (no form needed)
+        # Basic info
         strategy_name = st.text_input("Strategy Name*", placeholder="e.g., High RSI Momentum", key="strategy_name_input")
         strategy_desc = st.text_area("Description", placeholder="Optional description", key="strategy_desc_input")
         
-        # Date range with validation
+        # Date range
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input(
@@ -520,7 +666,7 @@ def render_backtesting_tab():
         with col3:
             min_volume = st.number_input("Min Volume", min_value=1000, value=100000, step=10000, key="min_volume_input")
         
-        # Indicator criteria with dynamic addition
+        # Indicator criteria
         st.markdown("#### Indicator Criteria")
         st.markdown("Add conditions that stocks must meet")
         
@@ -578,11 +724,11 @@ def render_backtesting_tab():
                     st.session_state.criteria_list[i]['value'] = None
             
             with col5:
-                if len(st.session_state.criteria_list) > 1:  # Only show delete if more than 1 criterion
+                if len(st.session_state.criteria_list) > 1:
                     if st.button("🗑️", key=f"remove_{i}", help="Remove this criterion"):
                         criteria_to_remove.append(i)
         
-        # Remove criteria (outside the loop to avoid index issues)
+        # Remove criteria
         for idx in reversed(criteria_to_remove):
             st.session_state.criteria_list.pop(idx)
             st.rerun()
@@ -602,14 +748,13 @@ def render_backtesting_tab():
         
         st.markdown("---")
         
-        # Submit button (NOT in a form, so Enter won't trigger it)
+        # Submit button
         col1, col2, col3 = st.columns([1, 2, 2])
         with col1:
             submitted = st.button("🚀 Create & Run", type="primary", key="create_backtest_btn", use_container_width=True)
         
         # Handle submission
         if submitted:
-            # Validate
             if not strategy_name:
                 st.error("Please enter a strategy name")
             elif not st.session_state.criteria_list:
@@ -619,7 +764,7 @@ def render_backtesting_tab():
             elif start_date < min_date or end_date > max_date:
                 st.error(f"Dates must be between {min_date} and {max_date}")
             else:
-                # Build criteria from session state
+                # Build criteria
                 criteria = []
                 for crit in st.session_state.criteria_list:
                     if crit['comparison_type'] == 'value':
@@ -637,7 +782,7 @@ def render_backtesting_tab():
                             'compare_to': crit['compare_to']
                         })
                 
-                # Create strategy in database (ONLY ONCE)
+                # Create strategy
                 try:
                     client = get_supabase_client()
                     data = {
@@ -660,10 +805,10 @@ def render_backtesting_tab():
                     
                     st.success(f"✅ Strategy created! ID: {strategy_id}")
                     
-                    # Trigger workflow to RUN (not create) the strategy
+                    # Trigger workflow
                     run_backtest_via_github(strategy_id)
                     
-                    # Reset criteria list
+                    # Reset criteria
                     st.session_state.criteria_list = [
                         {'indicator': 'rsi', 'operator': '>', 'comparison_type': 'value', 'value': 50.0, 'compare_to': None}
                     ]
@@ -678,7 +823,7 @@ def render_backtesting_tab():
                     st.error(f"Error creating strategy: {e}")
     
     # ========================================================================
-    # TAB 3: MANAGE STRATEGIES
+    # TAB 3: MANAGE STRATEGIES - UNCHANGED
     # ========================================================================
     with tab3:
         st.markdown("### Manage Strategies")
