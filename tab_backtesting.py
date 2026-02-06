@@ -19,6 +19,46 @@ from supabase import create_client, Client
 
 
 # ============================================================================
+# CHART THEME CONFIGURATION
+# ============================================================================
+
+CHART_THEME = {
+    'plot_bgcolor': 'rgba(26, 29, 41, 0.6)',
+    'paper_bgcolor': 'rgba(0,0,0,0)',
+    'font': dict(color='#e8eaf0', family='sans-serif'),
+    'title_font': dict(size=18, color='#ffffff', family='sans-serif'),
+    'xaxis': dict(
+        gridcolor='rgba(255, 255, 255, 0.1)',
+        color='#b8bcc8',
+        linecolor='rgba(255, 255, 255, 0.2)'
+    ),
+    'yaxis': dict(
+        gridcolor='rgba(255, 255, 255, 0.1)',
+        color='#b8bcc8',
+        linecolor='rgba(255, 255, 255, 0.2)'
+    ),
+    'legend': dict(
+        bgcolor='rgba(45, 49, 66, 0.8)',
+        bordercolor='rgba(255, 255, 255, 0.2)',
+        borderwidth=1,
+        font=dict(color='#e8eaf0')
+    )
+}
+
+# Enhanced color palette
+COLORS = {
+    'primary': '#667eea',
+    'secondary': '#764ba2',
+    'success': '#10b981',
+    'danger': '#ef4444',
+    'warning': '#f59e0b',
+    'info': '#3b82f6',
+    'purple': '#a855f7',
+    'pink': '#ec4899'
+}
+
+
+# ============================================================================
 # SUPABASE CONNECTION
 # ============================================================================
 
@@ -149,7 +189,7 @@ def run_backtest_via_github(strategy_id: int):
         pass
     
     if not github_token or not github_owner:
-        st.warning("⚠️ GitHub not configured. Strategy created but not running.")
+        st.warning("GitHub not configured. Strategy created but not running.")
         st.info("Set G_TOKEN and GITHUB_REPO_OWNER in secrets to run via GitHub Actions")
         return
     
@@ -178,10 +218,10 @@ def run_backtest_via_github(strategy_id: int):
         if response.status_code == 204:
             st.success(f"✅ Backtest workflow triggered! Strategy ID: {strategy_id}")
         else:
-            st.error(f"❌ Failed to trigger workflow: {response.status_code}")
+            st.error(f"Failed to trigger workflow: {response.status_code}")
             
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.error(f"Error: {e}")
 
 
 # ============================================================================
@@ -201,31 +241,46 @@ def create_performance_chart(daily_df: pd.DataFrame):
     )
     
     fig.add_trace(
-        go.Bar(x=daily_df['test_date'], y=daily_df['criteria_matches'], name='Total Matches', marker_color='lightblue'),
+        go.Bar(x=daily_df['test_date'], y=daily_df['criteria_matches'], name='Total Matches', 
+               marker_color=COLORS['info'], opacity=0.7),
         row=1, col=1
     )
     
     fig.add_trace(
-        go.Bar(x=daily_df['test_date'], y=daily_df['true_positives'], name='True Positives', marker_color='green'),
+        go.Bar(x=daily_df['test_date'], y=daily_df['true_positives'], name='True Positives', 
+               marker_color=COLORS['success']),
         row=1, col=1
     )
     
     fig.add_trace(
-        go.Bar(x=daily_df['test_date'], y=daily_df['false_positives'], name='False Positives', marker_color='red'),
+        go.Bar(x=daily_df['test_date'], y=daily_df['false_positives'], name='False Positives', 
+               marker_color=COLORS['danger']),
         row=1, col=1
     )
     
     fig.add_trace(
-        go.Scatter(x=daily_df['test_date'], y=daily_df['missed_opportunities'], name='Missed', mode='lines+markers', line=dict(color='orange', dash='dot')),
+        go.Scatter(x=daily_df['test_date'], y=daily_df['missed_opportunities'], name='Missed', 
+                  mode='lines+markers', line=dict(color=COLORS['warning'], dash='dot', width=2)),
         row=1, col=1
     )
     
     fig.add_trace(
-        go.Scatter(x=daily_df['test_date'], y=daily_df['avg_match_gain_pct'], name='Avg Match Gain %', mode='lines+markers', line=dict(color='green')),
+        go.Scatter(x=daily_df['test_date'], y=daily_df['avg_match_gain_pct'], name='Avg Match Gain %', 
+                  mode='lines+markers', line=dict(color=COLORS['primary'], width=3),
+                  marker=dict(size=6)),
         row=2, col=1
     )
     
-    fig.update_layout(height=700, title_text="<b>Backtest Performance Over Time</b>", showlegend=True, hovermode='x unified')
+    fig.update_layout(
+        height=700, 
+        title_text="<b>Backtest Performance Over Time</b>", 
+        showlegend=True, 
+        hovermode='x unified',
+        **CHART_THEME
+    )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
@@ -243,20 +298,25 @@ def create_confusion_matrix(trades_df: pd.DataFrame):
     true_neg = type_counts.get('true_negative', 0)
     
     matrix = [[true_pos, false_pos], [false_neg, true_neg]]
-    labels = [[f"True Positive<br>{true_pos}", f"False Positive<br>{false_pos}"], [f"False Negative<br>{false_neg}", f"True Negative<br>{true_neg}"]]
+    labels = [[f"True Positive<br>{true_pos}", f"False Positive<br>{false_pos}"], 
+              [f"False Negative<br>{false_neg}", f"True Negative<br>{true_neg}"]]
     
     fig = go.Figure(data=go.Heatmap(
         z=matrix,
         text=labels,
         texttemplate="%{text}",
-        textfont={"size": 14},
+        textfont={"size": 14, "color": "#ffffff"},
         x=['Hit Target', 'Missed Target'],
         y=['Matched Criteria', 'Missed Criteria'],
-        colorscale='RdYlGn',
+        colorscale=[[0, '#ef4444'], [0.5, '#f59e0b'], [1, '#10b981']],
         showscale=False
     ))
     
-    fig.update_layout(title="<b>Confusion Matrix</b>", height=400)
+    fig.update_layout(
+        title="<b>Confusion Matrix</b>", 
+        height=400,
+        **CHART_THEME
+    )
     
     return fig
 
@@ -272,22 +332,33 @@ def create_gain_distribution(trades_df: pd.DataFrame):
     fig = go.Figure()
     
     if not matched_gains.empty:
-        fig.add_trace(go.Histogram(x=matched_gains, name='Matched Criteria', opacity=0.7, marker_color='green', nbinsx=30))
+        fig.add_trace(go.Histogram(x=matched_gains, name='Matched Criteria', opacity=0.75, 
+                                   marker_color=COLORS['success'], nbinsx=30))
     
     if not unmatched_gains.empty:
-        fig.add_trace(go.Histogram(x=unmatched_gains, name='Missed Criteria', opacity=0.7, marker_color='orange', nbinsx=30))
+        fig.add_trace(go.Histogram(x=unmatched_gains, name='Missed Criteria', opacity=0.75, 
+                                   marker_color=COLORS['warning'], nbinsx=30))
     
-    fig.update_layout(title="<b>Gain Distribution</b>", xaxis_title="Gain %", yaxis_title="Frequency", barmode='overlay', height=400)
+    fig.update_layout(
+        title="<b>Gain Distribution</b>", 
+        xaxis_title="Gain %", 
+        yaxis_title="Frequency", 
+        barmode='overlay', 
+        height=400,
+        **CHART_THEME
+    )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
 
 def create_exit_analysis_chart(trades_df: pd.DataFrame):
-    """NEW: Create exit analysis showing close vs high/low"""
+    """Create exit analysis showing close vs high/low"""
     if trades_df.empty:
         return None
     
-    # Filter to matched trades only
     matched = trades_df[trades_df['matched_criteria'] == True].copy()
     
     if matched.empty or 'max_possible_gain_pct' not in matched.columns:
@@ -298,35 +369,32 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
     
     fig = go.Figure()
     
-    # Actual gain (at close)
     fig.add_trace(go.Scatter(
         x=matched['trade_num'],
         y=matched['actual_gain_pct'],
         mode='markers',
         name='Actual Gain (Close)',
-        marker=dict(size=8, color='blue'),
+        marker=dict(size=8, color=COLORS['info']),
         text=matched['symbol'],
         hovertemplate='<b>%{text}</b><br>Actual: %{y:.2f}%'
     ))
     
-    # Max possible (at high)
     fig.add_trace(go.Scatter(
         x=matched['trade_num'],
         y=matched['max_possible_gain_pct'],
         mode='markers',
         name='Max Possible (High)',
-        marker=dict(size=8, color='green', symbol='triangle-up'),
+        marker=dict(size=8, color=COLORS['success'], symbol='triangle-up'),
         text=matched['symbol'],
         hovertemplate='<b>%{text}</b><br>Max: %{y:.2f}%'
     ))
     
-    # Max drawdown (at low)
     fig.add_trace(go.Scatter(
         x=matched['trade_num'],
         y=matched['max_drawdown_pct'],
         mode='markers',
         name='Max Drawdown (Low)',
-        marker=dict(size=8, color='red', symbol='triangle-down'),
+        marker=dict(size=8, color=COLORS['danger'], symbol='triangle-down'),
         text=matched['symbol'],
         hovertemplate='<b>%{text}</b><br>Drawdown: %{y:.2f}%'
     ))
@@ -336,14 +404,18 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
         xaxis_title="Trade Number",
         yaxis_title="Gain %",
         height=500,
-        hovermode='closest'
+        hovermode='closest',
+        **CHART_THEME
     )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
 
 def create_cumulative_pnl(trades_df: pd.DataFrame):
-    """NEW: Create cumulative P&L curve"""
+    """Create cumulative P&L curve"""
     if trades_df.empty:
         return None
     
@@ -362,51 +434,42 @@ def create_cumulative_pnl(trades_df: pd.DataFrame):
         y=matched['cumulative_pnl'],
         mode='lines',
         name='Cumulative P&L',
-        line=dict(color='purple', width=2),
+        line=dict(color=COLORS['purple'], width=3),
         fill='tozeroy',
-        fillcolor='rgba(128,0,128,0.1)'
+        fillcolor=f"rgba(168, 85, 247, 0.2)"
     ))
     
-    fig.add_hline(y=0, line_dash="dash", line_color="gray")
+    fig.add_hline(y=0, line_dash="dash", line_color=COLORS['warning'], line_width=1)
     
     fig.update_layout(
         title="<b>Cumulative P&L Curve</b>",
         xaxis_title="Date",
         yaxis_title="Cumulative Gain %",
-        height=400
+        height=400,
+        **CHART_THEME
     )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
 
 # ============================================================================
-# AVAILABLE INDICATORS - EXPANDED LIST
+# AVAILABLE INDICATORS
 # ============================================================================
 
 AVAILABLE_INDICATORS = [
-    # Momentum
     'rsi', 'stoch_k', 'stoch_d', 'macd', 'macd_signal', 'mom', 'w.r', 'uo', 'ao', 'cci20',
-    
-    # Trend
     'adx', 'adx+di', 'adx-di',
     'ema5', 'ema10', 'ema20', 'ema50', 'ema100', 'ema200',
     'sma5', 'sma10', 'sma20', 'sma50', 'sma100', 'sma200',
-    
-    # Volatility
     'atr', 'bb.upper', 'bb.lower', 'bb.middle', 'bb_width', 'bbpower', 'volatility_20d',
-    
-    # Volume
     'volume', 'volume_sma5', 'volume_sma20', 'volume_ratio',
-    
-    # Price
     'close', 'open', 'high', 'low',
-    
-    # Derived
     'price_change_1d', 'price_change_3d', 'price_change_5d', 'price_change_10d', 'price_change_20d',
     'gap_%', 'vwap',
     'high_52w', 'low_52w', 'price_vs_high_52w', 'price_vs_low_52w',
-    
-    # Trend Booleans
     'ema20_above_ema50', 'ema50_above_ema200', 'price_above_ema20', 'ema10_above_ema20',
     'gap_up', 'gap_down'
 ]
@@ -417,30 +480,24 @@ AVAILABLE_INDICATORS = [
 # ============================================================================
 
 def render_backtesting_tab():
-    """Main backtesting tab rendering function - ENHANCED"""
+    """Main backtesting tab rendering function"""
     
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
     
-    # Initialize refresh counter
     if 'backtest_refresh_counter' not in st.session_state:
         st.session_state.backtest_refresh_counter = 0
     
-    # Get available date range from database
     min_date, max_date = get_date_range_from_db()
     
     st.info(f"📅 Available data range: **{min_date}** to **{max_date}**")
     
-    # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📊 View Results", "🆕 Create Strategy", "📋 Manage Strategies"])
+    tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
     
-    # ========================================================================
-    # TAB 1: VIEW RESULTS - ENHANCED
-    # ========================================================================
+    # TAB 1: VIEW RESULTS
     with tab1:
         st.markdown("### Strategy Results")
         
-        # Refresh button at top
         col1, col2 = st.columns([5, 1])
         with col2:
             if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
@@ -451,7 +508,7 @@ def render_backtesting_tab():
         strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
         
         if strategies_df.empty:
-            st.info("No strategies found. Create one in the 'Create Strategy' tab!")
+            st.info("No strategies found. Create one in the 'Create Strategy' tab")
         else:
             strategy_names = dict(zip(strategies_df['id'], strategies_df['name']))
             
@@ -473,7 +530,7 @@ def render_backtesting_tab():
                 with col3:
                     st.metric("Status", strategy['run_status'])
                 
-                with st.expander("📋 Indicator Criteria"):
+                with st.expander("Indicator Criteria"):
                     criteria = strategy['indicator_criteria']
                     if isinstance(criteria, list):
                         for i, cond in enumerate(criteria, 1):
@@ -489,7 +546,6 @@ def render_backtesting_tab():
                     st.markdown("---")
                     st.markdown("### Results Summary")
                     
-                    # ENHANCED: Show new metrics
                     col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
                         st.metric("Total Matches", strategy.get('total_matches', 0))
@@ -503,7 +559,6 @@ def render_backtesting_tab():
                         acc = strategy.get('accuracy_pct', 0)
                         st.metric("Accuracy", f"{acc}%" if acc else "N/A")
                     
-                    # NEW: Additional metrics row
                     if not trades_df.empty and 'actual_gain_pct' in trades_df.columns:
                         matched_trades = trades_df[trades_df['matched_criteria'] == True]
                         
@@ -519,11 +574,10 @@ def render_backtesting_tab():
                             total_losses = abs(losers['actual_gain_pct'].sum()) if len(losers) > 0 else 0
                             profit_factor = (total_gains / total_losses) if total_losses > 0 else None
                             
-                            # Intraday hit rate
                             intraday_hits = matched_trades.get('target_hit_intraday', pd.Series([False])).sum()
                             intraday_rate = (intraday_hits / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
                             
-                            st.markdown("#### 📈 Advanced Metrics")
+                            st.markdown("#### Advanced Metrics")
                             col1, col2, col3, col4, col5 = st.columns(5)
                             with col1:
                                 st.metric("Win Rate", f"{win_rate:.1f}%")
@@ -554,8 +608,7 @@ def render_backtesting_tab():
                         if fig3:
                             st.plotly_chart(fig3, use_container_width=True)
                     
-                    # NEW: Exit Analysis Charts
-                    st.markdown("### 🎯 Exit Analysis")
+                    st.markdown("### Exit Analysis")
                     
                     col1, col2 = st.columns(2)
                     with col1:
@@ -597,7 +650,7 @@ def render_backtesting_tab():
                         )
                     
                 elif strategy['run_status'] == 'pending':
-                    st.info("⏳ Strategy created but not yet run")
+                    st.info("Strategy created but not yet run")
                     if st.button("▶️ Run Now", key=f"run_pending_{selected_id}"):
                         run_backtest_via_github(selected_id)
                         st.cache_data.clear()
@@ -605,27 +658,22 @@ def render_backtesting_tab():
                         st.rerun()
                         
                 elif strategy['run_status'] == 'running':
-                    st.info("🔄 Backtest is currently running...")
+                    st.info("Backtest is currently running...")
                 elif strategy['run_status'] == 'failed':
-                    st.error("❌ Backtest failed. Check logs for details.")
+                    st.error("Backtest failed. Check logs for details.")
     
-    # ========================================================================
-    # TAB 2: CREATE STRATEGY - UNCHANGED
-    # ========================================================================
+    # TAB 2 & 3: Keep original implementation
     with tab2:
         st.markdown("### Create New Strategy")
         
-        # Initialize criteria in session state
         if 'criteria_list' not in st.session_state:
             st.session_state.criteria_list = [
                 {'indicator': 'rsi', 'operator': '>', 'comparison_type': 'value', 'value': 50.0, 'compare_to': None}
             ]
         
-        # Basic info
         strategy_name = st.text_input("Strategy Name*", placeholder="e.g., High RSI Momentum", key="strategy_name_input")
         strategy_desc = st.text_area("Description", placeholder="Optional description", key="strategy_desc_input")
         
-        # Date range
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input(
@@ -644,7 +692,6 @@ def render_backtesting_tab():
                 key="end_date_input"
             )
         
-        # Target
         st.markdown("#### Target Performance")
         
         col1, col2 = st.columns(2)
@@ -655,7 +702,6 @@ def render_backtesting_tab():
         
         st.info(f"Testing if stocks meeting criteria on Day 0 gain {target_gain}% or more by Day {target_days}")
         
-        # Filters
         st.markdown("#### Stock Filters")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -666,11 +712,9 @@ def render_backtesting_tab():
         with col3:
             min_volume = st.number_input("Min Volume", min_value=1000, value=100000, step=10000, key="min_volume_input")
         
-        # Indicator criteria
         st.markdown("#### Indicator Criteria")
         st.markdown("Add conditions that stocks must meet")
         
-        # Display all criteria
         criteria_to_remove = []
         for i, criterion in enumerate(st.session_state.criteria_list):
             st.markdown(f"**Condition {i+1}**")
@@ -728,12 +772,10 @@ def render_backtesting_tab():
                     if st.button("🗑️", key=f"remove_{i}", help="Remove this criterion"):
                         criteria_to_remove.append(i)
         
-        # Remove criteria
         for idx in reversed(criteria_to_remove):
             st.session_state.criteria_list.pop(idx)
             st.rerun()
         
-        # Add criterion button
         col1, col2 = st.columns([1, 4])
         with col1:
             if st.button("➕ Add Criterion", key="add_criterion_btn"):
@@ -748,12 +790,10 @@ def render_backtesting_tab():
         
         st.markdown("---")
         
-        # Submit button
         col1, col2, col3 = st.columns([1, 2, 2])
         with col1:
             submitted = st.button("🚀 Create & Run", type="primary", key="create_backtest_btn", use_container_width=True)
         
-        # Handle submission
         if submitted:
             if not strategy_name:
                 st.error("Please enter a strategy name")
@@ -764,7 +804,6 @@ def render_backtesting_tab():
             elif start_date < min_date or end_date > max_date:
                 st.error(f"Dates must be between {min_date} and {max_date}")
             else:
-                # Build criteria
                 criteria = []
                 for crit in st.session_state.criteria_list:
                     if crit['comparison_type'] == 'value':
@@ -782,7 +821,6 @@ def render_backtesting_tab():
                             'compare_to': crit['compare_to']
                         })
                 
-                # Create strategy
                 try:
                     client = get_supabase_client()
                     data = {
@@ -805,15 +843,12 @@ def render_backtesting_tab():
                     
                     st.success(f"✅ Strategy created! ID: {strategy_id}")
                     
-                    # Trigger workflow
                     run_backtest_via_github(strategy_id)
                     
-                    # Reset criteria
                     st.session_state.criteria_list = [
                         {'indicator': 'rsi', 'operator': '>', 'comparison_type': 'value', 'value': 50.0, 'compare_to': None}
                     ]
                     
-                    # Refresh cache
                     st.cache_data.clear()
                     st.session_state.backtest_refresh_counter += 1
                     
@@ -822,9 +857,6 @@ def render_backtesting_tab():
                 except Exception as e:
                     st.error(f"Error creating strategy: {e}")
     
-    # ========================================================================
-    # TAB 3: MANAGE STRATEGIES - UNCHANGED
-    # ========================================================================
     with tab3:
         st.markdown("### Manage Strategies")
         
