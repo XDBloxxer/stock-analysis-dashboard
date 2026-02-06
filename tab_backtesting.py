@@ -1,6 +1,6 @@
 """
 Strategy Backtesting Tab Module - FIXED VERSION
-Clean UI, dynamic criteria addition, no enter-key submission issues
+No duplicate strategy creation - creates once, then runs
 """
 
 import streamlit as st
@@ -637,45 +637,30 @@ def render_backtesting_tab():
                             'compare_to': crit['compare_to']
                         })
                 
-                # Create strategy config
-                strategy_config = {
-                    'name': strategy_name,
-                    'description': strategy_desc,
-                    'start_date': start_date.isoformat(),
-                    'end_date': end_date.isoformat(),
-                    'target_min_gain_pct': target_gain,
-                    'target_days': target_days,
-                    'indicator_criteria': criteria,
-                    'min_price': min_price,
-                    'max_price': max_price,
-                    'min_volume': min_volume,
-                    'exchanges': ['NASDAQ', 'NYSE', 'AMEX']
-                }
-                
-                # Create strategy in database
+                # Create strategy in database (ONLY ONCE)
                 try:
                     client = get_supabase_client()
                     data = {
-                        'name': strategy_config['name'],
-                        'description': strategy_config.get('description', ''),
-                        'start_date': strategy_config['start_date'],
-                        'end_date': strategy_config['end_date'],
-                        'target_min_gain_pct': strategy_config['target_min_gain_pct'],
-                        'target_days': strategy_config.get('target_days', 1),
-                        'indicator_criteria': json.dumps(strategy_config['indicator_criteria']),
-                        'min_price': strategy_config.get('min_price', 0.25),
-                        'max_price': strategy_config.get('max_price'),
-                        'min_volume': strategy_config.get('min_volume', 100000),
-                        'exchanges': strategy_config.get('exchanges', ['NASDAQ', 'NYSE', 'AMEX']),
+                        'name': strategy_name,
+                        'description': strategy_desc,
+                        'start_date': start_date.isoformat(),
+                        'end_date': end_date.isoformat(),
+                        'target_min_gain_pct': target_gain,
+                        'target_days': target_days,
+                        'indicator_criteria': json.dumps(criteria),
+                        'min_price': min_price,
+                        'max_price': max_price,
+                        'min_volume': min_volume,
+                        'exchanges': ['NASDAQ', 'NYSE', 'AMEX'],
                         'run_status': 'pending'
                     }
                     
                     response = client.table("backtest_strategies").insert(data).execute()
                     strategy_id = response.data[0]['id']
                     
-                    st.success(f"✓ Strategy created! ID: {strategy_id}")
+                    st.success(f"✅ Strategy created! ID: {strategy_id}")
                     
-                    # Trigger workflow
+                    # Trigger workflow to RUN (not create) the strategy
                     run_backtest_via_github(strategy_id)
                     
                     # Reset criteria list
