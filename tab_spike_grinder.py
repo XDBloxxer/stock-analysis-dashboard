@@ -29,6 +29,28 @@ COLORS = {
     'warning': '#f59e0b'
 }
 
+# Custom colorscales for heatmaps with better readability
+COLORSCALES = {
+    'rdylgn_dark': [
+        [0, '#7f1d1d'],      # Dark red
+        [0.25, '#dc2626'],   # Red
+        [0.4, '#94a3b8'],    # Gray (neutral)
+        [0.6, '#94a3b8'],    # Gray (neutral)
+        [0.75, '#059669'],   # Green
+        [1, '#064e3b']       # Dark green
+    ],
+    'blues_dark': [
+        [0, '#1e293b'],
+        [0.5, '#475569'],
+        [1, '#667eea']
+    ],
+    'rdbu_dark': [
+        [0, '#7f1d1d'],      # Dark red
+        [0.5, '#475569'],    # Gray
+        [1, '#1e3a8a']       # Dark blue
+    ]
+}
+
 @st.cache_resource
 def get_supabase_client():
     supabase_url = os.environ.get("SUPABASE_URL") or st.secrets.get("supabase", {}).get("url")
@@ -134,7 +156,7 @@ def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None)
     if df_top.empty:
         return None
     
-    colors = [COLORS['success'] if x > 0 else COLORS['spiker'] for x in df_top['difference']]
+    colors = ['#064e3b' if x > 0 else '#7f1d1d' for x in df_top['difference']]
     
     fig = go.Figure()
     
@@ -185,7 +207,7 @@ def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
         z=pivot_df.values,
         x=pivot_df.columns,
         y=pivot_df.index,
-        colorscale='RdYlGn' if value_type == 'difference' else [[0, '#2d3142'], [1, COLORS['primary']]],
+        colorscale=COLORSCALES['rdylgn_dark'] if value_type == 'difference' else COLORSCALES['blues_dark'],
         colorbar=dict(
             title=dict(text=value_type.replace('_', ' ').title(), font=dict(color='#e8eaf0')),
             tickfont=dict(color='#e8eaf0')
@@ -233,7 +255,7 @@ def create_correlation_matrix(analysis_df, selected_lag):
         z=corr_df.values,
         x=corr_df.columns,
         y=corr_df.index,
-        colorscale='RdBu',
+        colorscale=COLORSCALES['rdbu_dark'],
         zmid=0,
         colorbar=dict(
             title=dict(text="Correlation", font=dict(color='#e8eaf0')),
@@ -293,14 +315,14 @@ def create_box_plot(analysis_df, selected_indicators):
         
         spiker_data = combined_df[combined_df['event_type'] == 'Spiker'][indicator].dropna()
         fig.add_trace(
-            go.Box(y=spiker_data, name='Spikers', marker_color=COLORS['spiker'], showlegend=(idx == 0)),
+            go.Box(y=spiker_data, name='Spikers', marker_color='#b91c1c', showlegend=(idx == 0)),
             row=row,
             col=col
         )
         
         grinder_data = combined_df[combined_df['event_type'] == 'Grinder'][indicator].dropna()
         fig.add_trace(
-            go.Box(y=grinder_data, name='Grinders', marker_color=COLORS['grinder'], showlegend=(idx == 0)),
+            go.Box(y=grinder_data, name='Grinders', marker_color='#1e40af', showlegend=(idx == 0)),
             row=row,
             col=col
         )
@@ -347,7 +369,7 @@ def create_time_series_comparison(analysis_df, selected_indicators):
             line=dict(width=2)
         ))
     
-    fig.add_hline(y=0, line_dash="dash", line_color=COLORS['warning'], opacity=0.5, line_width=1)
+    fig.add_hline(y=0, line_dash="dash", line_color='#d97706', opacity=0.5, line_width=1)
     
     fig.update_layout(
         title="<b>Indicator Differences Across Time Lags</b>",
@@ -546,9 +568,9 @@ def render_spike_grinder_tab():
                         fig = go.Figure()
                         
                         if len(spikers) > 0:
-                            fig.add_trace(go.Histogram(x=spikers, name='Spikers', opacity=0.7, nbinsx=30, marker_color=COLORS['spiker']))
+                            fig.add_trace(go.Histogram(x=spikers, name='Spikers', opacity=0.75, nbinsx=30, marker_color='#b91c1c'))
                         if len(grinders) > 0:
-                            fig.add_trace(go.Histogram(x=grinders, name='Grinders', opacity=0.7, nbinsx=30, marker_color=COLORS['grinder']))
+                            fig.add_trace(go.Histogram(x=grinders, name='Grinders', opacity=0.75, nbinsx=30, marker_color='#1e40af'))
                         
                         fig.update_layout(
                             title=f"Distribution: {selected_ind} at {selected_lag}",
@@ -592,7 +614,7 @@ def render_spike_grinder_tab():
                             x=x_ind,
                             y=y_ind,
                             color='event_type',
-                            color_discrete_map={'Spiker': COLORS['spiker'], 'Grinder': COLORS['grinder']},
+                            color_discrete_map={'Spiker': '#b91c1c', 'Grinder': '#1e40af'},
                             title=f"{y_ind} vs {x_ind} at {raw_lag}",
                             opacity=0.6
                         )
