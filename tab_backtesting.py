@@ -169,7 +169,7 @@ def run_backtest_via_github(strategy_id: int):
             "ref": "main",
             "inputs": {
                 "strategy_id": str(strategy_id),
-                "verbose": "true"
+                "verbose": "false"
             }
         }
         
