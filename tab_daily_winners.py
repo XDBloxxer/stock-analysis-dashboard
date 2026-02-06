@@ -188,8 +188,8 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_df):
                 y=values,
                 mode='lines+markers',
                 name=indicator,
-                marker=dict(size=10, color=COLORS['primary']),
-                line=dict(width=3, color=COLORS['primary']),
+                marker=dict(size=10, color='#6366f1'),
+                line=dict(width=3, color='#6366f1'),
                 showlegend=False
             ),
             row=row,
