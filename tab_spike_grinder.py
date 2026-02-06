@@ -186,7 +186,10 @@ def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
         x=pivot_df.columns,
         y=pivot_df.index,
         colorscale='RdYlGn' if value_type == 'difference' else [[0, '#2d3142'], [1, COLORS['primary']]],
-        colorbar=dict(title=value_type.replace('_', ' ').title(), tickfont=dict(color='#e8eaf0'), tickfont=dict(color='#e8eaf0')),
+        colorbar=dict(
+            title=dict(text=value_type.replace('_', ' ').title(), font=dict(color='#e8eaf0')),
+            tickfont=dict(color='#e8eaf0')
+        ),
         text=pivot_df.values.round(2),
         texttemplate='%{text}',
         textfont={"size": 10, "color": "#ffffff"},
@@ -232,7 +235,10 @@ def create_correlation_matrix(analysis_df, selected_lag):
         y=corr_df.index,
         colorscale='RdBu',
         zmid=0,
-        colorbar=dict(title="Correlation", tickfont=dict(color='#e8eaf0'), tickfont=dict(color='#e8eaf0')),
+        colorbar=dict(
+            title=dict(text="Correlation", font=dict(color='#e8eaf0')),
+            tickfont=dict(color='#e8eaf0')
+        ),
         text=corr_df.values.round(2),
         texttemplate='%{text}',
         textfont={"size": 8, "color": "#ffffff"},
