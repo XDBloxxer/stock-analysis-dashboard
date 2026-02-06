@@ -343,6 +343,12 @@ def render_backtesting_tab():
     with tab1:
         st.markdown("### Strategy Results")
         
+        # Refresh button at top
+        if st.button("🔄 Refresh Results", key="view_refresh"):
+            st.cache_data.clear()
+            st.session_state.backtest_refresh_counter += 1
+            st.rerun()
+        
         strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
         
         if strategies_df.empty:
@@ -446,6 +452,7 @@ def render_backtesting_tab():
                     st.info("⏳ Strategy created but not yet run")
                     if st.button("▶️ Run Now", key=f"run_pending_{selected_id}"):
                         run_backtest_via_github(selected_id)
+                        st.cache_data.clear()
                         st.session_state.backtest_refresh_counter += 1
                         st.rerun()
                         
@@ -455,116 +462,115 @@ def render_backtesting_tab():
                     st.error("❌ Backtest failed. Check logs for details.")
     
     # ========================================================================
-    # TAB 2: CREATE STRATEGY
+    # TAB 2: CREATE STRATEGY - USING FORM TO PREVENT DUPLICATES
     # ========================================================================
     with tab2:
         st.markdown("### Create New Strategy")
         
-        # Use session state to track form submissions
-        if 'form_submitted' not in st.session_state:
-            st.session_state.form_submitted = False
-        
-        # Basic info
-        strategy_name = st.text_input("Strategy Name*", placeholder="e.g., High RSI Momentum", key="strat_name")
-        strategy_desc = st.text_area("Description", placeholder="Optional description", key="strat_desc")
-        
-        # Date range with validation
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input(
-                "Start Date*",
-                value=max(min_date, datetime.now().date() - timedelta(days=365)),
-                min_value=min_date,
-                max_value=max_date,
-                key="strat_start"
-            )
-        with col2:
-            end_date = st.date_input(
-                "End Date*",
-                value=min(max_date, datetime.now().date()),
-                min_value=min_date,
-                max_value=max_date,
-                key="strat_end"
-            )
-        
-        # Target
-        st.markdown("#### Target Performance")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            target_gain = st.number_input("Target Gain %*", min_value=0.1, value=5.0, step=0.1, key="strat_gain")
-        with col2:
-            target_days = st.number_input("Days to Hold*", min_value=1, max_value=30, value=1, key="strat_days")
-        
-        st.info(f"Testing if stocks meeting criteria on Day 0 gain {target_gain}% or more by Day {target_days}")
-        
-        # Filters
-        st.markdown("#### Stock Filters")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            min_price = st.number_input("Min Price ($)", min_value=0.01, value=0.25, step=0.10, key="strat_minprice")
-        with col2:
-            max_price = st.number_input("Max Price ($)", min_value=0.0, value=0.0, step=1.0, key="strat_maxprice")
-            max_price = max_price if max_price > 0 else None
-        with col3:
-            min_volume = st.number_input("Min Volume", min_value=1000, value=100000, step=10000, key="strat_minvol")
-        
-        # Indicator criteria with indicator-to-indicator comparison
-        st.markdown("#### Indicator Criteria")
-        st.markdown("Add conditions that stocks must meet")
-        
-        num_criteria = st.number_input("Number of Criteria", min_value=1, max_value=10, value=2, key="strat_numcrit")
-        
-        criteria = []
-        for i in range(int(num_criteria)):
-            st.markdown(f"**Condition {i+1}**")
-            col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
+        # Use form to prevent duplicate submissions
+        with st.form("create_strategy_form", clear_on_submit=True):
+            # Basic info
+            strategy_name = st.text_input("Strategy Name*", placeholder="e.g., High RSI Momentum")
+            strategy_desc = st.text_area("Description", placeholder="Optional description")
             
+            # Date range with validation
+            col1, col2 = st.columns(2)
             with col1:
-                indicator = st.selectbox(
-                    "Indicator",
-                    sorted(AVAILABLE_INDICATORS),
-                    key=f"indicator_{i}"
+                start_date = st.date_input(
+                    "Start Date*",
+                    value=max(min_date, datetime.now().date() - timedelta(days=365)),
+                    min_value=min_date,
+                    max_value=max_date
                 )
-            
             with col2:
-                operator = st.selectbox(
-                    "Operator",
-                    ['>', '<', '>=', '<=', '==', '!='],
-                    key=f"operator_{i}"
+                end_date = st.date_input(
+                    "End Date*",
+                    value=min(max_date, datetime.now().date()),
+                    min_value=min_date,
+                    max_value=max_date
                 )
             
+            # Target
+            st.markdown("#### Target Performance")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                target_gain = st.number_input("Target Gain %*", min_value=0.1, value=5.0, step=0.1)
+            with col2:
+                target_days = st.number_input("Days to Hold*", min_value=1, max_value=30, value=1)
+            
+            st.info(f"Testing if stocks meeting criteria on Day 0 gain {target_gain}% or more by Day {target_days}")
+            
+            # Filters
+            st.markdown("#### Stock Filters")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                min_price = st.number_input("Min Price ($)", min_value=0.01, value=0.25, step=0.10)
+            with col2:
+                max_price = st.number_input("Max Price ($)", min_value=0.0, value=0.0, step=1.0)
+                max_price = max_price if max_price > 0 else None
             with col3:
-                comparison_type = st.selectbox(
-                    "Compare to",
-                    ['Value', 'Indicator'],
-                    key=f"comptype_{i}"
-                )
+                min_volume = st.number_input("Min Volume", min_value=1000, value=100000, step=10000)
             
-            with col4:
-                if comparison_type == 'Value':
-                    value = st.number_input("Value", value=0.0, step=0.1, key=f"value_{i}")
-                    criteria.append({
-                        'indicator': indicator,
-                        'operator': operator,
-                        'comparison_type': 'value',
-                        'value': value
-                    })
-                else:
-                    compare_indicator = st.selectbox(
+            # Indicator criteria with indicator-to-indicator comparison
+            st.markdown("#### Indicator Criteria")
+            st.markdown("Add conditions that stocks must meet")
+            
+            num_criteria = st.number_input("Number of Criteria", min_value=1, max_value=10, value=2)
+            
+            criteria = []
+            for i in range(int(num_criteria)):
+                st.markdown(f"**Condition {i+1}**")
+                col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
+                
+                with col1:
+                    indicator = st.selectbox(
                         "Indicator",
                         sorted(AVAILABLE_INDICATORS),
-                        key=f"compare_ind_{i}"
+                        key=f"form_indicator_{i}"
                     )
-                    criteria.append({
-                        'indicator': indicator,
-                        'operator': operator,
-                        'comparison_type': 'indicator',
-                        'compare_to': compare_indicator
-                    })
+                
+                with col2:
+                    operator = st.selectbox(
+                        "Operator",
+                        ['>', '<', '>=', '<=', '==', '!='],
+                        key=f"form_operator_{i}"
+                    )
+                
+                with col3:
+                    comparison_type = st.selectbox(
+                        "Compare to",
+                        ['Value', 'Indicator'],
+                        key=f"form_comptype_{i}"
+                    )
+                
+                with col4:
+                    if comparison_type == 'Value':
+                        value = st.number_input("Value", value=0.0, step=0.1, key=f"form_value_{i}")
+                        criteria.append({
+                            'indicator': indicator,
+                            'operator': operator,
+                            'comparison_type': 'value',
+                            'value': value
+                        })
+                    else:
+                        compare_indicator = st.selectbox(
+                            "Indicator",
+                            sorted(AVAILABLE_INDICATORS),
+                            key=f"form_compare_ind_{i}"
+                        )
+                        criteria.append({
+                            'indicator': indicator,
+                            'operator': operator,
+                            'comparison_type': 'indicator',
+                            'compare_to': compare_indicator
+                        })
+            
+            # Submit button inside form
+            submitted = st.form_submit_button("🚀 Create & Run Backtest", type="primary")
         
-        # Submit button
-        if st.button("🚀 Create & Run Backtest", type="primary", key="create_backtest_btn"):
+        # Handle submission outside form
+        if submitted:
             # Validate
             if not strategy_name:
                 st.error("Please enter a strategy name")
@@ -616,9 +622,9 @@ def render_backtesting_tab():
                     # Trigger workflow
                     run_backtest_via_github(strategy_id)
                     
-                    # Refresh
+                    # Refresh cache
+                    st.cache_data.clear()
                     st.session_state.backtest_refresh_counter += 1
-                    st.session_state.form_submitted = True
                     
                     st.info("Switch to 'View Results' tab to see progress")
                     
@@ -634,6 +640,7 @@ def render_backtesting_tab():
         col1, col2 = st.columns([4, 1])
         with col2:
             if st.button("🔄 Refresh", use_container_width=True, key="manage_refresh"):
+                st.cache_data.clear()
                 st.session_state.backtest_refresh_counter += 1
                 st.rerun()
         
@@ -664,6 +671,7 @@ def render_backtesting_tab():
                     client = get_supabase_client()
                     client.table("backtest_strategies").delete().eq("id", strategy_to_delete).execute()
                     st.success("Strategy deleted!")
+                    st.cache_data.clear()
                     st.session_state.backtest_refresh_counter += 1
                     st.rerun()
                 except Exception as e:
