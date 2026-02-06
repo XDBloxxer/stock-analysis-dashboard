@@ -1,6 +1,5 @@
 """
-Spike/Grinder Analysis Tab Module
-Handles all Spike/Grinder analysis functionality
+Spike/Grinder Analysis Tab Module - Enhanced with dark theme
 """
 
 import streamlit as st
@@ -11,14 +10,27 @@ from plotly.subplots import make_subplots
 import os
 from supabase import create_client, Client
 
+# Chart theme configuration
+CHART_THEME = {
+    'plot_bgcolor': 'rgba(26, 29, 41, 0.6)',
+    'paper_bgcolor': 'rgba(0,0,0,0)',
+    'font': dict(color='#e8eaf0', family='sans-serif'),
+    'title_font': dict(size=18, color='#ffffff'),
+    'xaxis': dict(gridcolor='rgba(255, 255, 255, 0.1)', color='#b8bcc8', linecolor='rgba(255, 255, 255, 0.2)'),
+    'yaxis': dict(gridcolor='rgba(255, 255, 255, 0.1)', color='#b8bcc8', linecolor='rgba(255, 255, 255, 0.2)'),
+    'legend': dict(bgcolor='rgba(45, 49, 66, 0.8)', bordercolor='rgba(255, 255, 255, 0.2)', borderwidth=1, font=dict(color='#e8eaf0'))
+}
 
-# ============================================================================
-# SUPABASE CONNECTION
-# ============================================================================
+COLORS = {
+    'spiker': '#ef4444',
+    'grinder': '#3b82f6',
+    'primary': '#667eea',
+    'success': '#10b981',
+    'warning': '#f59e0b'
+}
 
 @st.cache_resource
 def get_supabase_client():
-    """Initialize Supabase client"""
     supabase_url = os.environ.get("SUPABASE_URL") or st.secrets.get("supabase", {}).get("url")
     supabase_key = os.environ.get("SUPABASE_KEY") or st.secrets.get("supabase", {}).get("key")
     
@@ -28,10 +40,8 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-
 @st.cache_data(ttl=300)
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
-    """Load data from Supabase with optional filters"""
     try:
         client = get_supabase_client()
         query = client.table(table_name).select("*")
@@ -49,13 +59,8 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         df = df.dropna(how='all').dropna(axis=1, how='all')
         return df
     except Exception as e:
-        st.warning(f"⚠️ Could not load from {table_name}: {str(e)}")
+        st.warning(f"Could not load from {table_name}: {str(e)}")
         return pd.DataFrame()
-
-
-# ============================================================================
-# CONSTANTS
-# ============================================================================
 
 INDICATOR_CATEGORIES = {
     "Momentum": {
@@ -80,13 +85,7 @@ INDICATOR_CATEGORIES = {
 
 TIME_LAG_ORDER = ["T-1", "T-3", "T-5", "T-10", "T-30"]
 
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
 def filter_indicators_by_categories(df, enabled_categories):
-    """Filter dataframe to only include indicators from enabled categories"""
     if 'indicator' not in df.columns:
         return df
     
@@ -98,9 +97,7 @@ def filter_indicators_by_categories(df, enabled_categories):
     df_filtered = df[df['indicator'].str.lower().isin(enabled_indicators)].copy()
     return df_filtered
 
-
 def create_category_selector(key_prefix):
-    """Create a category selector widget"""
     categories = list(INDICATOR_CATEGORIES.keys())
     default_selected = [cat for cat, info in INDICATOR_CATEGORIES.items() if info["default_enabled"]]
     
@@ -113,9 +110,7 @@ def create_category_selector(key_prefix):
     
     return selected
 
-
 def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None):
-    """Create chart showing top indicator differences"""
     if analysis_df.empty or 'difference' not in analysis_df.columns:
         return None
     
@@ -139,7 +134,7 @@ def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None)
     if df_top.empty:
         return None
     
-    colors = ['#2ecc71' if x > 0 else '#e74c3c' for x in df_top['difference']]
+    colors = [COLORS['success'] if x > 0 else COLORS['spiker'] for x in df_top['difference']]
     
     fig = go.Figure()
     
@@ -149,7 +144,8 @@ def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None)
         orientation='h',
         marker_color=colors,
         text=[f'{x:+.2f}' for x in df_top['difference']],
-        textposition='outside'
+        textposition='outside',
+        textfont=dict(color='#ffffff')
     ))
     
     fig.update_layout(
@@ -157,24 +153,24 @@ def create_top_differences_chart(analysis_df, top_n=10, enabled_categories=None)
         xaxis_title="Difference (Spikers - Grinders)",
         yaxis_title="",
         height=max(400, top_n * 35),
-        showlegend=False
+        showlegend=False,
+        **CHART_THEME
     )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
-
 def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
-    """Create heatmap showing indicator values across time lags"""
     if analysis_df.empty or 'indicator' not in analysis_df.columns:
         return None
     
-    # Filter to selected indicators
     df = analysis_df[analysis_df['indicator'].isin(selected_indicators)].copy()
     
     if df.empty:
         return None
     
-    # Pivot the data
     pivot_df = df.pivot_table(
         values=value_type,
         index='indicator',
@@ -182,20 +178,18 @@ def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
         aggfunc='mean'
     )
     
-    # Reorder columns by time lag
     available_lags = [lag for lag in TIME_LAG_ORDER if lag in pivot_df.columns]
     pivot_df = pivot_df[available_lags]
     
-    # Create heatmap
     fig = go.Figure(data=go.Heatmap(
         z=pivot_df.values,
         x=pivot_df.columns,
         y=pivot_df.index,
-        colorscale='RdYlGn' if value_type == 'difference' else 'Viridis',
-        colorbar=dict(title=value_type.replace('_', ' ').title()),
+        colorscale='RdYlGn' if value_type == 'difference' else [[0, '#2d3142'], [1, COLORS['primary']]],
+        colorbar=dict(title=value_type.replace('_', ' ').title(), titlefont=dict(color='#e8eaf0'), tickfont=dict(color='#e8eaf0')),
         text=pivot_df.values.round(2),
         texttemplate='%{text}',
-        textfont={"size": 10},
+        textfont={"size": 10, "color": "#ffffff"},
         hoverongaps=False
     ))
     
@@ -209,41 +203,39 @@ def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
         title=f"<b>{title_map.get(value_type, value_type)}</b> Across Time Lags",
         xaxis_title="Time Lag",
         yaxis_title="Indicator",
-        height=max(400, len(selected_indicators) * 40)
+        height=max(400, len(selected_indicators) * 40),
+        **CHART_THEME
     )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
-
 def create_correlation_matrix(analysis_df, selected_lag):
-    """Create correlation matrix for indicators at a specific time lag"""
-    # Load raw data for the selected lag
     raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag})
     
     if raw_df.empty or 'event_type' not in raw_df.columns:
         return None
     
-    # Get numeric columns (exclude metadata)
     exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at']
     numeric_cols = [col for col in raw_df.columns if col not in exclude_cols]
     
     if len(numeric_cols) < 2:
         return None
     
-    # Calculate correlation matrix
     corr_df = raw_df[numeric_cols].corr()
     
-    # Create heatmap
     fig = go.Figure(data=go.Heatmap(
         z=corr_df.values,
         x=corr_df.columns,
         y=corr_df.index,
         colorscale='RdBu',
         zmid=0,
-        colorbar=dict(title="Correlation"),
+        colorbar=dict(title="Correlation", titlefont=dict(color='#e8eaf0'), tickfont=dict(color='#e8eaf0')),
         text=corr_df.values.round(2),
         texttemplate='%{text}',
-        textfont={"size": 8},
+        textfont={"size": 8, "color": "#ffffff"},
         hoverongaps=False
     ))
     
@@ -252,18 +244,16 @@ def create_correlation_matrix(analysis_df, selected_lag):
         xaxis_title="",
         yaxis_title="",
         height=max(600, len(numeric_cols) * 30),
-        width=max(600, len(numeric_cols) * 30)
+        width=max(600, len(numeric_cols) * 30),
+        **CHART_THEME
     )
     
     return fig
 
-
 def create_box_plot(analysis_df, selected_indicators):
-    """Create box plot comparing spikers vs grinders for selected indicators"""
     if analysis_df.empty:
         return None
     
-    # We need raw data for box plots
     all_data = []
     
     for lag in TIME_LAG_ORDER:
@@ -276,9 +266,6 @@ def create_box_plot(analysis_df, selected_indicators):
         return None
     
     combined_df = pd.concat(all_data, ignore_index=True)
-    
-    # Create subplots for each indicator
-    from plotly.subplots import make_subplots
     
     n_indicators = len(selected_indicators)
     rows = (n_indicators + 1) // 2
@@ -298,18 +285,16 @@ def create_box_plot(analysis_df, selected_indicators):
         row = idx // 2 + 1
         col = idx % 2 + 1
         
-        # Spikers
         spiker_data = combined_df[combined_df['event_type'] == 'Spiker'][indicator].dropna()
         fig.add_trace(
-            go.Box(y=spiker_data, name='Spikers', marker_color='#e74c3c', showlegend=(idx == 0)),
+            go.Box(y=spiker_data, name='Spikers', marker_color=COLORS['spiker'], showlegend=(idx == 0)),
             row=row,
             col=col
         )
         
-        # Grinders
         grinder_data = combined_df[combined_df['event_type'] == 'Grinder'][indicator].dropna()
         fig.add_trace(
-            go.Box(y=grinder_data, name='Grinders', marker_color='#3498db', showlegend=(idx == 0)),
+            go.Box(y=grinder_data, name='Grinders', marker_color=COLORS['grinder'], showlegend=(idx == 0)),
             row=row,
             col=col
         )
@@ -317,14 +302,18 @@ def create_box_plot(analysis_df, selected_indicators):
     fig.update_layout(
         title="<b>Distribution Comparison: Spikers vs Grinders</b>",
         height=300 * rows,
-        showlegend=True
+        showlegend=True,
+        **CHART_THEME
     )
+    
+    for i in range(1, rows + 1):
+        for j in range(1, 3):
+            fig.update_xaxes(**CHART_THEME['xaxis'], row=i, col=j)
+            fig.update_yaxes(**CHART_THEME['yaxis'], row=i, col=j)
     
     return fig
 
-
 def create_time_series_comparison(analysis_df, selected_indicators):
-    """Create line chart showing how differences evolve across time lags"""
     if analysis_df.empty:
         return None
     
@@ -333,7 +322,6 @@ def create_time_series_comparison(analysis_df, selected_indicators):
     if df.empty:
         return None
     
-    # Sort by time lag
     df['time_lag_order'] = df['time_lag'].map(
         {lag: i for i, lag in enumerate(TIME_LAG_ORDER)}
     )
@@ -353,32 +341,26 @@ def create_time_series_comparison(analysis_df, selected_indicators):
             line=dict(width=2)
         ))
     
-    # Add zero line
-    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    fig.add_hline(y=0, line_dash="dash", line_color=COLORS['warning'], opacity=0.5, line_width=1)
     
     fig.update_layout(
         title="<b>Indicator Differences Across Time Lags</b>",
         xaxis_title="Time Lag",
         yaxis_title="Difference (Spikers - Grinders)",
         height=500,
-        hovermode='x unified'
+        hovermode='x unified',
+        **CHART_THEME
     )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
     
     return fig
 
-
-# ============================================================================
-# MAIN TAB FUNCTION
-# ============================================================================
-
 def render_spike_grinder_tab():
-    """Main Spike/Grinder analysis tab rendering function"""
-    
-    # Initialize refresh counter in session state
     if 'spike_grinder_refresh_counter' not in st.session_state:
         st.session_state.spike_grinder_refresh_counter = 0
     
-    # Load data with refresh key
     refresh_key = st.session_state.spike_grinder_refresh_counter
     
     with st.spinner("Loading analysis data..."):
@@ -387,16 +369,15 @@ def render_spike_grinder_tab():
         summary_df = load_supabase_data("summary_stats", None, refresh_key)
     
     if analysis_df.empty and candidates_df.empty:
-        st.warning("⚠️ No analysis data available yet.")
+        st.warning("No analysis data available yet")
         return
     
-    # Validate analysis data
     if not analysis_df.empty:
         required_cols = ['indicator', 'time_lag', 'avg_spikers', 'avg_grinders']
         missing_cols = [col for col in required_cols if col not in analysis_df.columns]
         
         if missing_cols:
-            st.error(f"❌ Analysis data is missing required columns: {', '.join(missing_cols)}")
+            st.error(f"Analysis data is missing required columns: {', '.join(missing_cols)}")
             return
         
         analysis_df = analysis_df[analysis_df['indicator'].notna()]
@@ -404,7 +385,6 @@ def render_spike_grinder_tab():
             if col in analysis_df.columns:
                 analysis_df[col] = pd.to_numeric(analysis_df[col], errors='coerce')
     
-    # Summary metrics
     if not summary_df.empty:
         col_header1, col_header2 = st.columns([4, 1])
         
@@ -432,10 +412,8 @@ def render_spike_grinder_tab():
         
         st.markdown("---")
     
-    # Create sub-tabs
     subtabs = st.tabs(["Key Insights", "Custom Analysis", "Raw Data"])
     
-    # Key Insights
     with subtabs[0]:
         if not analysis_df.empty:
             st.subheader("Top Differentiating Indicators")
@@ -452,7 +430,6 @@ def render_spike_grinder_tab():
         else:
             st.info("No analysis data available for insights")
     
-    # Custom Analysis
     with subtabs[1]:
         st.subheader("Build Custom Visualizations")
         
@@ -563,15 +540,18 @@ def render_spike_grinder_tab():
                         fig = go.Figure()
                         
                         if len(spikers) > 0:
-                            fig.add_trace(go.Histogram(x=spikers, name='Spikers', opacity=0.7, nbinsx=30))
+                            fig.add_trace(go.Histogram(x=spikers, name='Spikers', opacity=0.7, nbinsx=30, marker_color=COLORS['spiker']))
                         if len(grinders) > 0:
-                            fig.add_trace(go.Histogram(x=grinders, name='Grinders', opacity=0.7, nbinsx=30))
+                            fig.add_trace(go.Histogram(x=grinders, name='Grinders', opacity=0.7, nbinsx=30, marker_color=COLORS['grinder']))
                         
                         fig.update_layout(
                             title=f"Distribution: {selected_ind} at {selected_lag}",
                             barmode='overlay',
-                            height=500
+                            height=500,
+                            **CHART_THEME
                         )
+                        fig.update_xaxes(**CHART_THEME['xaxis'])
+                        fig.update_yaxes(**CHART_THEME['yaxis'])
                         st.plotly_chart(fig, use_container_width=True)
                         
                         if len(spikers) > 0 and len(grinders) > 0:
@@ -606,18 +586,19 @@ def render_spike_grinder_tab():
                             x=x_ind,
                             y=y_ind,
                             color='event_type',
-                            color_discrete_map={'Spiker': '#e74c3c', 'Grinder': '#3498db'},
+                            color_discrete_map={'Spiker': COLORS['spiker'], 'Grinder': COLORS['grinder']},
                             title=f"{y_ind} vs {x_ind} at {raw_lag}",
                             opacity=0.6
                         )
-                        fig.update_layout(height=500)
+                        fig.update_layout(height=500, **CHART_THEME)
+                        fig.update_xaxes(**CHART_THEME['xaxis'])
+                        fig.update_yaxes(**CHART_THEME['yaxis'])
                         st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No raw data available for this time lag")
         else:
             st.info("No analysis data available for custom visualizations")
     
-    # Raw Data
     with subtabs[2]:
         data_tabs = st.tabs(["Candidates", "Analysis Results", "Raw Indicator Data"])
         
