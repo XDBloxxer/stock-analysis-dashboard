@@ -1,6 +1,6 @@
 """
 Strategy Backtesting Tab Module - FIXED VERSION
-Clean UI, no duplicates, indicator comparisons, dynamic date ranges
+Clean UI, dynamic criteria addition, no enter-key submission issues
 """
 
 import streamlit as st
@@ -344,10 +344,12 @@ def render_backtesting_tab():
         st.markdown("### Strategy Results")
         
         # Refresh button at top
-        if st.button("🔄 Refresh Results", key="view_refresh"):
-            st.cache_data.clear()
-            st.session_state.backtest_refresh_counter += 1
-            st.rerun()
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
+                st.cache_data.clear()
+                st.session_state.backtest_refresh_counter += 1
+                st.rerun()
         
         strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
         
@@ -462,125 +464,179 @@ def render_backtesting_tab():
                     st.error("❌ Backtest failed. Check logs for details.")
     
     # ========================================================================
-    # TAB 2: CREATE STRATEGY - USING FORM TO PREVENT DUPLICATES
+    # TAB 2: CREATE STRATEGY - DYNAMIC CRITERIA WITHOUT FORM
     # ========================================================================
     with tab2:
         st.markdown("### Create New Strategy")
         
-        # Use form to prevent duplicate submissions
-        with st.form("create_strategy_form", clear_on_submit=True):
-            # Basic info
-            strategy_name = st.text_input("Strategy Name*", placeholder="e.g., High RSI Momentum")
-            strategy_desc = st.text_area("Description", placeholder="Optional description")
+        # Initialize criteria in session state
+        if 'criteria_list' not in st.session_state:
+            st.session_state.criteria_list = [
+                {'indicator': 'rsi', 'operator': '>', 'comparison_type': 'value', 'value': 50.0, 'compare_to': None}
+            ]
+        
+        # Basic info (no form needed)
+        strategy_name = st.text_input("Strategy Name*", placeholder="e.g., High RSI Momentum", key="strategy_name_input")
+        strategy_desc = st.text_area("Description", placeholder="Optional description", key="strategy_desc_input")
+        
+        # Date range with validation
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Start Date*",
+                value=max(min_date, datetime.now().date() - timedelta(days=365)),
+                min_value=min_date,
+                max_value=max_date,
+                key="start_date_input"
+            )
+        with col2:
+            end_date = st.date_input(
+                "End Date*",
+                value=min(max_date, datetime.now().date()),
+                min_value=min_date,
+                max_value=max_date,
+                key="end_date_input"
+            )
+        
+        # Target
+        st.markdown("#### Target Performance")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            target_gain = st.number_input("Target Gain %*", min_value=0.1, value=5.0, step=0.1, key="target_gain_input")
+        with col2:
+            target_days = st.number_input("Days to Hold*", min_value=1, max_value=30, value=1, key="target_days_input")
+        
+        st.info(f"Testing if stocks meeting criteria on Day 0 gain {target_gain}% or more by Day {target_days}")
+        
+        # Filters
+        st.markdown("#### Stock Filters")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            min_price = st.number_input("Min Price ($)", min_value=0.01, value=0.25, step=0.10, key="min_price_input")
+        with col2:
+            max_price = st.number_input("Max Price ($)", min_value=0.0, value=0.0, step=1.0, key="max_price_input")
+            max_price = max_price if max_price > 0 else None
+        with col3:
+            min_volume = st.number_input("Min Volume", min_value=1000, value=100000, step=10000, key="min_volume_input")
+        
+        # Indicator criteria with dynamic addition
+        st.markdown("#### Indicator Criteria")
+        st.markdown("Add conditions that stocks must meet")
+        
+        # Display all criteria
+        criteria_to_remove = []
+        for i, criterion in enumerate(st.session_state.criteria_list):
+            st.markdown(f"**Condition {i+1}**")
+            col1, col2, col3, col4, col5 = st.columns([2, 1, 2, 1, 0.5])
             
-            # Date range with validation
-            col1, col2 = st.columns(2)
             with col1:
-                start_date = st.date_input(
-                    "Start Date*",
-                    value=max(min_date, datetime.now().date() - timedelta(days=365)),
-                    min_value=min_date,
-                    max_value=max_date
+                indicator = st.selectbox(
+                    "Indicator",
+                    sorted(AVAILABLE_INDICATORS),
+                    index=sorted(AVAILABLE_INDICATORS).index(criterion['indicator']) if criterion['indicator'] in AVAILABLE_INDICATORS else 0,
+                    key=f"indicator_{i}"
                 )
+                st.session_state.criteria_list[i]['indicator'] = indicator
+            
             with col2:
-                end_date = st.date_input(
-                    "End Date*",
-                    value=min(max_date, datetime.now().date()),
-                    min_value=min_date,
-                    max_value=max_date
+                operator = st.selectbox(
+                    "Operator",
+                    ['>', '<', '>=', '<=', '==', '!='],
+                    index=['>', '<', '>=', '<=', '==', '!='].index(criterion['operator']) if criterion['operator'] in ['>', '<', '>=', '<=', '==', '!='] else 0,
+                    key=f"operator_{i}"
                 )
+                st.session_state.criteria_list[i]['operator'] = operator
             
-            # Target
-            st.markdown("#### Target Performance")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                target_gain = st.number_input("Target Gain %*", min_value=0.1, value=5.0, step=0.1)
-            with col2:
-                target_days = st.number_input("Days to Hold*", min_value=1, max_value=30, value=1)
-            
-            st.info(f"Testing if stocks meeting criteria on Day 0 gain {target_gain}% or more by Day {target_days}")
-            
-            # Filters
-            st.markdown("#### Stock Filters")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                min_price = st.number_input("Min Price ($)", min_value=0.01, value=0.25, step=0.10)
-            with col2:
-                max_price = st.number_input("Max Price ($)", min_value=0.0, value=0.0, step=1.0)
-                max_price = max_price if max_price > 0 else None
             with col3:
-                min_volume = st.number_input("Min Volume", min_value=1000, value=100000, step=10000)
+                comparison_type = st.selectbox(
+                    "Compare to",
+                    ['Value', 'Indicator'],
+                    index=0 if criterion['comparison_type'] == 'value' else 1,
+                    key=f"comptype_{i}"
+                )
+                st.session_state.criteria_list[i]['comparison_type'] = comparison_type.lower()
             
-            # Indicator criteria with indicator-to-indicator comparison
-            st.markdown("#### Indicator Criteria")
-            st.markdown("Add conditions that stocks must meet")
-            
-            num_criteria = st.number_input("Number of Criteria", min_value=1, max_value=10, value=2)
-            
-            criteria = []
-            for i in range(int(num_criteria)):
-                st.markdown(f"**Condition {i+1}**")
-                col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
-                
-                with col1:
-                    indicator = st.selectbox(
+            with col4:
+                if comparison_type == 'Value':
+                    value = st.number_input(
+                        "Value",
+                        value=float(criterion.get('value', 0.0)),
+                        step=0.1,
+                        key=f"value_{i}"
+                    )
+                    st.session_state.criteria_list[i]['value'] = value
+                    st.session_state.criteria_list[i]['compare_to'] = None
+                else:
+                    compare_indicator = st.selectbox(
                         "Indicator",
                         sorted(AVAILABLE_INDICATORS),
-                        key=f"form_indicator_{i}"
+                        index=sorted(AVAILABLE_INDICATORS).index(criterion.get('compare_to', 'close')) if criterion.get('compare_to') in AVAILABLE_INDICATORS else 0,
+                        key=f"compare_ind_{i}"
                     )
-                
-                with col2:
-                    operator = st.selectbox(
-                        "Operator",
-                        ['>', '<', '>=', '<=', '==', '!='],
-                        key=f"form_operator_{i}"
-                    )
-                
-                with col3:
-                    comparison_type = st.selectbox(
-                        "Compare to",
-                        ['Value', 'Indicator'],
-                        key=f"form_comptype_{i}"
-                    )
-                
-                with col4:
-                    if comparison_type == 'Value':
-                        value = st.number_input("Value", value=0.0, step=0.1, key=f"form_value_{i}")
-                        criteria.append({
-                            'indicator': indicator,
-                            'operator': operator,
-                            'comparison_type': 'value',
-                            'value': value
-                        })
-                    else:
-                        compare_indicator = st.selectbox(
-                            "Indicator",
-                            sorted(AVAILABLE_INDICATORS),
-                            key=f"form_compare_ind_{i}"
-                        )
-                        criteria.append({
-                            'indicator': indicator,
-                            'operator': operator,
-                            'comparison_type': 'indicator',
-                            'compare_to': compare_indicator
-                        })
+                    st.session_state.criteria_list[i]['compare_to'] = compare_indicator
+                    st.session_state.criteria_list[i]['value'] = None
             
-            # Submit button inside form
-            submitted = st.form_submit_button("🚀 Create & Run Backtest", type="primary")
+            with col5:
+                if len(st.session_state.criteria_list) > 1:  # Only show delete if more than 1 criterion
+                    if st.button("🗑️", key=f"remove_{i}", help="Remove this criterion"):
+                        criteria_to_remove.append(i)
         
-        # Handle submission outside form
+        # Remove criteria (outside the loop to avoid index issues)
+        for idx in reversed(criteria_to_remove):
+            st.session_state.criteria_list.pop(idx)
+            st.rerun()
+        
+        # Add criterion button
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("➕ Add Criterion", key="add_criterion_btn"):
+                st.session_state.criteria_list.append({
+                    'indicator': 'rsi',
+                    'operator': '>',
+                    'comparison_type': 'value',
+                    'value': 0.0,
+                    'compare_to': None
+                })
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # Submit button (NOT in a form, so Enter won't trigger it)
+        col1, col2, col3 = st.columns([1, 2, 2])
+        with col1:
+            submitted = st.button("🚀 Create & Run", type="primary", key="create_backtest_btn", use_container_width=True)
+        
+        # Handle submission
         if submitted:
             # Validate
             if not strategy_name:
                 st.error("Please enter a strategy name")
-            elif not criteria:
+            elif not st.session_state.criteria_list:
                 st.error("Please add at least one criterion")
             elif start_date >= end_date:
                 st.error("End date must be after start date")
             elif start_date < min_date or end_date > max_date:
                 st.error(f"Dates must be between {min_date} and {max_date}")
             else:
+                # Build criteria from session state
+                criteria = []
+                for crit in st.session_state.criteria_list:
+                    if crit['comparison_type'] == 'value':
+                        criteria.append({
+                            'indicator': crit['indicator'],
+                            'operator': crit['operator'],
+                            'comparison_type': 'value',
+                            'value': crit['value']
+                        })
+                    else:
+                        criteria.append({
+                            'indicator': crit['indicator'],
+                            'operator': crit['operator'],
+                            'comparison_type': 'indicator',
+                            'compare_to': crit['compare_to']
+                        })
+                
                 # Create strategy config
                 strategy_config = {
                     'name': strategy_name,
@@ -621,6 +677,11 @@ def render_backtesting_tab():
                     
                     # Trigger workflow
                     run_backtest_via_github(strategy_id)
+                    
+                    # Reset criteria list
+                    st.session_state.criteria_list = [
+                        {'indicator': 'rsi', 'operator': '>', 'comparison_type': 'value', 'value': 50.0, 'compare_to': None}
+                    ]
                     
                     # Refresh cache
                     st.cache_data.clear()
@@ -666,13 +727,15 @@ def render_backtesting_tab():
                 key=f"delete_strategy_select_{st.session_state.backtest_refresh_counter}"
             )
             
-            if st.button("🗑️ Delete Strategy", type="secondary", key="delete_btn"):
-                try:
-                    client = get_supabase_client()
-                    client.table("backtest_strategies").delete().eq("id", strategy_to_delete).execute()
-                    st.success("Strategy deleted!")
-                    st.cache_data.clear()
-                    st.session_state.backtest_refresh_counter += 1
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error deleting strategy: {e}")
+            col1, col2, col3 = st.columns([1, 2, 2])
+            with col1:
+                if st.button("🗑️ Delete", type="secondary", key="delete_btn", use_container_width=True):
+                    try:
+                        client = get_supabase_client()
+                        client.table("backtest_strategies").delete().eq("id", strategy_to_delete).execute()
+                        st.success("Strategy deleted!")
+                        st.cache_data.clear()
+                        st.session_state.backtest_refresh_counter += 1
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error deleting strategy: {e}")
