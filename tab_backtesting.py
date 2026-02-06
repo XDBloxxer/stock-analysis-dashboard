@@ -242,25 +242,25 @@ def create_performance_chart(daily_df: pd.DataFrame):
     
     fig.add_trace(
         go.Bar(x=daily_df['test_date'], y=daily_df['criteria_matches'], name='Total Matches', 
-               marker_color=COLORS['info'], opacity=0.7),
+               marker_color='#475569', opacity=0.7),
         row=1, col=1
     )
     
     fig.add_trace(
         go.Bar(x=daily_df['test_date'], y=daily_df['true_positives'], name='True Positives', 
-               marker_color=COLORS['success']),
+               marker_color='#059669'),
         row=1, col=1
     )
     
     fig.add_trace(
         go.Bar(x=daily_df['test_date'], y=daily_df['false_positives'], name='False Positives', 
-               marker_color=COLORS['danger']),
+               marker_color='#b91c1c'),
         row=1, col=1
     )
     
     fig.add_trace(
         go.Scatter(x=daily_df['test_date'], y=daily_df['missed_opportunities'], name='Missed', 
-                  mode='lines+markers', line=dict(color=COLORS['warning'], dash='dot', width=2)),
+                  mode='lines+markers', line=dict(color='#d97706', dash='dot', width=2)),
         row=1, col=1
     )
     
@@ -308,7 +308,7 @@ def create_confusion_matrix(trades_df: pd.DataFrame):
         textfont={"size": 14, "color": "#ffffff"},
         x=['Hit Target', 'Missed Target'],
         y=['Matched Criteria', 'Missed Criteria'],
-        colorscale=[[0, '#ef4444'], [0.5, '#f59e0b'], [1, '#10b981']],
+        colorscale=[[0, '#7f1d1d'], [0.5, '#f59e0b'], [1, '#064e3b']],
         showscale=False
     ))
     
@@ -333,11 +333,11 @@ def create_gain_distribution(trades_df: pd.DataFrame):
     
     if not matched_gains.empty:
         fig.add_trace(go.Histogram(x=matched_gains, name='Matched Criteria', opacity=0.75, 
-                                   marker_color=COLORS['success'], nbinsx=30))
+                                   marker_color='#059669', nbinsx=30))
     
     if not unmatched_gains.empty:
         fig.add_trace(go.Histogram(x=unmatched_gains, name='Missed Criteria', opacity=0.75, 
-                                   marker_color=COLORS['warning'], nbinsx=30))
+                                   marker_color='#d97706', nbinsx=30))
     
     fig.update_layout(
         title="<b>Gain Distribution</b>", 
@@ -374,7 +374,7 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
         y=matched['actual_gain_pct'],
         mode='markers',
         name='Actual Gain (Close)',
-        marker=dict(size=8, color=COLORS['info']),
+        marker=dict(size=8, color='#1e40af'),
         text=matched['symbol'],
         hovertemplate='<b>%{text}</b><br>Actual: %{y:.2f}%'
     ))
@@ -384,7 +384,7 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
         y=matched['max_possible_gain_pct'],
         mode='markers',
         name='Max Possible (High)',
-        marker=dict(size=8, color=COLORS['success'], symbol='triangle-up'),
+        marker=dict(size=8, color='#059669', symbol='triangle-up'),
         text=matched['symbol'],
         hovertemplate='<b>%{text}</b><br>Max: %{y:.2f}%'
     ))
@@ -394,7 +394,7 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
         y=matched['max_drawdown_pct'],
         mode='markers',
         name='Max Drawdown (Low)',
-        marker=dict(size=8, color=COLORS['danger'], symbol='triangle-down'),
+        marker=dict(size=8, color='#b91c1c', symbol='triangle-down'),
         text=matched['symbol'],
         hovertemplate='<b>%{text}</b><br>Drawdown: %{y:.2f}%'
     ))
@@ -434,12 +434,12 @@ def create_cumulative_pnl(trades_df: pd.DataFrame):
         y=matched['cumulative_pnl'],
         mode='lines',
         name='Cumulative P&L',
-        line=dict(color=COLORS['purple'], width=3),
+        line=dict(color='#7c3aed', width=3),
         fill='tozeroy',
-        fillcolor=f"rgba(168, 85, 247, 0.2)"
+        fillcolor=f"rgba(124, 58, 237, 0.2)"
     ))
     
-    fig.add_hline(y=0, line_dash="dash", line_color=COLORS['warning'], line_width=1)
+    fig.add_hline(y=0, line_dash="dash", line_color='#d97706', line_width=1)
     
     fig.update_layout(
         title="<b>Cumulative P&L Curve</b>",
