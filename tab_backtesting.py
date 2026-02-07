@@ -211,10 +211,33 @@ def run_backtest_via_github(strategy_id: int):
 # CHART CREATION FUNCTIONS
 # ============================================================================
 
-def create_performance_chart(daily_df: pd.DataFrame):
-    """Create daily performance chart"""
-    if daily_df.empty:
+def create_performance_chart(trades_df: pd.DataFrame):
+    """Create daily performance chart from trades data"""
+    if trades_df.empty:
         return None
+    
+    # Check if we have the date column
+    date_col = None
+    for possible_col in ['signal_date', 'date', 'trade_date']:
+        if possible_col in trades_df.columns:
+            date_col = possible_col
+            break
+    
+    if date_col is None:
+        st.warning("No date column found in trades data")
+        return None
+    
+    # Calculate daily metrics from trades
+    trades_df[date_col] = pd.to_datetime(trades_df[date_col]).dt.date
+    
+    daily_stats = trades_df.groupby(date_col).agg({
+        'matched_criteria': 'sum',  # Count of matches per day
+        'hit_target': lambda x: (x == True).sum() if 'hit_target' in trades_df.columns else 0,
+    }).reset_index()
+    
+    # Rename for clarity
+    daily_stats.columns = [date_col, 'total_matches', 'true_positives']
+    daily_stats['false_positives'] = daily_stats['total_matches'] - daily_stats['true_positives']
     
     fig = make_subplots(
         rows=2, cols=1,
@@ -223,52 +246,34 @@ def create_performance_chart(daily_df: pd.DataFrame):
         vertical_spacing=0.1
     )
     
-    # Cumulative matches - ✅ IMPROVED: More robust checking
-    has_cumulative_data = False
-    if 'total_matches' in daily_df.columns:
-        # Check if column has actual data (not all zeros/NaN)
-        if daily_df['total_matches'].notna().any() and daily_df['total_matches'].sum() > 0:
-            daily_df_sorted = daily_df.sort_values('test_date')
-            daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
-            
-            fig.add_trace(go.Scatter(
-                x=daily_df_sorted['test_date'],
-                y=daily_df_sorted['cumulative_matches'],
-                mode='lines',
-                name='Total Matches',
-                line=dict(color='#667eea', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(102, 126, 234, 0.2)'
-            ), row=1, col=1)
-            has_cumulative_data = True
+    # Cumulative matches
+    daily_stats_sorted = daily_stats.sort_values(date_col)
+    daily_stats_sorted['cumulative_matches'] = daily_stats_sorted['total_matches'].cumsum()
     
-    # If no cumulative data, add a note
-    if not has_cumulative_data:
-        fig.add_annotation(
-            text="No match data available yet",
-            xref="x", yref="y",
-            x=0.5, y=0.5,
-            xanchor='center', yanchor='middle',
-            showarrow=False,
-            font=dict(size=14, color='#b8bcc8'),
-            row=1, col=1
-        )
+    fig.add_trace(go.Scatter(
+        x=daily_stats_sorted[date_col],
+        y=daily_stats_sorted['cumulative_matches'],
+        mode='lines',
+        name='Total Matches',
+        line=dict(color='#667eea', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(102, 126, 234, 0.2)'
+    ), row=1, col=1)
     
     # Daily metrics
-    if all(col in daily_df.columns for col in ['true_positives', 'false_positives']):
-        fig.add_trace(go.Bar(
-            x=daily_df['test_date'],
-            y=daily_df['true_positives'],
-            name='True Positives',
-            marker_color='#10b981'
-        ), row=2, col=1)
-        
-        fig.add_trace(go.Bar(
-            x=daily_df['test_date'],
-            y=daily_df['false_positives'],
-            name='False Positives',
-            marker_color='#ef4444'
-        ), row=2, col=1)
+    fig.add_trace(go.Bar(
+        x=daily_stats[date_col],
+        y=daily_stats['true_positives'],
+        name='True Positives',
+        marker_color='#10b981'
+    ), row=2, col=1)
+    
+    fig.add_trace(go.Bar(
+        x=daily_stats[date_col],
+        y=daily_stats['false_positives'],
+        name='False Positives',
+        marker_color='#ef4444'
+    ), row=2, col=1)
     
     fig.update_layout(
         height=600,
@@ -584,21 +589,7 @@ def render_backtesting_tab():
                     # Charts
                     st.markdown("### Performance Charts")
                     
-                    # ✅ DEBUG: Add expander to inspect daily_df
-                    with st.expander("🔍 Debug: View Daily Results Data"):
-                        st.write("**Daily DataFrame Info:**")
-                        st.write(f"- Shape: {daily_df.shape}")
-                        st.write(f"- Columns: {list(daily_df.columns)}")
-                        
-                        if 'total_matches' in daily_df.columns:
-                            st.write(f"- Total Matches column sum: {daily_df['total_matches'].sum()}")
-                            st.write(f"- Total Matches column has data: {daily_df['total_matches'].notna().any()}")
-                        else:
-                            st.warning("'total_matches' column NOT found in daily results")
-                        
-                        st.dataframe(daily_df.head(10))
-                    
-                    fig1 = create_performance_chart(daily_df)
+                    fig1 = create_performance_chart(trades_df)
                     if fig1:
                         st.plotly_chart(fig1, use_container_width=True)
                     
