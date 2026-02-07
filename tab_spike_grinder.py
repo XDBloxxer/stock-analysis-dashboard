@@ -423,16 +423,13 @@ def create_time_series_comparison(analysis_df, selected_indicators):
     return fig
 
 def render_spike_grinder_tab():
-    # ✅ ADD: Session state to track if data has been loaded
+    # Initialize session state FIRST
     if 'spike_grinder_data_loaded' not in st.session_state:
         st.session_state.spike_grinder_data_loaded = False
     
     if 'spike_grinder_refresh_counter' not in st.session_state:
         st.session_state.spike_grinder_refresh_counter = 0
     
-    refresh_key = st.session_state.spike_grinder_refresh_counter
-    
-    # Manual refresh button at top
     col_header1, col_header2 = st.columns([4, 1])
     
     with col_header1:
@@ -442,10 +439,10 @@ def render_spike_grinder_tab():
         if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
             st.cache_data.clear()
             st.session_state.spike_grinder_refresh_counter += 1
-            st.session_state.spike_grinder_data_loaded = True  # ✅ Mark as loaded
+            st.session_state.spike_grinder_data_loaded = True
             st.rerun()
     
-    # ✅ CRITICAL: Don't load data until user clicks refresh
+    # CRITICAL: Don't load data until user clicks refresh
     if not st.session_state.spike_grinder_data_loaded:
         st.info("👆 Click 'Refresh Data' to load spike/grinder analysis")
         
@@ -457,13 +454,33 @@ def render_spike_grinder_tab():
             
             Click 'Refresh Data' above to load the analysis.
             """)
-        return  # ✅ EXIT early
+        return  # EXIT - no data loading!
     
-    # Now load data
-    with st.spinner("Loading analysis data..."):
-        candidates_df = load_supabase_data("candidates", None, refresh_key)
-        analysis_df = load_supabase_data("analysis", None, refresh_key)
-        summary_df = load_supabase_data("summary_stats", None, refresh_key)
+    # Now load data (only after user action)
+    refresh_key = st.session_state.spike_grinder_refresh_counter
+    
+    # Use session state to cache loaded data
+    cache_key = f"spike_grinder_data_{refresh_key}"
+    
+    if cache_key not in st.session_state:
+        with st.spinner("Loading analysis data..."):
+            candidates_df = load_supabase_data("candidates", None, refresh_key)
+            analysis_df = load_supabase_data("analysis", None, refresh_key)
+            summary_df = load_supabase_data("summary_stats", None, refresh_key)
+            
+            st.session_state[cache_key] = {
+                'candidates': candidates_df,
+                'analysis': analysis_df,
+                'summary': summary_df
+            }
+    
+    # Use cached data
+    data = st.session_state[cache_key]
+    candidates_df = data['candidates']
+    analysis_df = data['analysis']
+    summary_df = data['summary']
+    
+    # Rest of your code...
     
     # ... rest of your code ...
     
