@@ -265,22 +265,21 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
     st.plotly_chart(fig, use_container_width=True)
 
 def render_daily_winners_tab():
-    # ✅ ADD: Session state to track if data has been loaded
+    # Initialize session state FIRST
     if 'daily_winners_data_loaded' not in st.session_state:
         st.session_state.daily_winners_data_loaded = False
     
     if 'daily_winners_refresh_counter' not in st.session_state:
         st.session_state.daily_winners_refresh_counter = 0
     
-    # ✅ CRITICAL: Don't query dates until user interacts
+    # CRITICAL: Exit early if data not loaded - DON'T query anything
     if not st.session_state.daily_winners_data_loaded:
-        st.info("👆 Select a date and click 'Refresh Data' to load winners")
+        st.info("👆 Select a date and click 'Load Data' to load winners")
         
-        # Show date selector WITHOUT querying database
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Use a default date picker (doesn't query DB)
+            # Simple date picker - NO database queries
             selected_date = st.date_input(
                 "Select Date:",
                 value=datetime.now().date() - timedelta(days=1),
@@ -293,20 +292,27 @@ def render_daily_winners_tab():
                 st.session_state.daily_winners_refresh_counter += 1
                 st.rerun()
         
-        return  # ✅ EXIT early - no data loaded yet
+        return  # EXIT - no data loading!
     
-    # NOW we can query dates (only after initial load)
-    with st.spinner("Loading available dates..."):
-        client = get_supabase_client()
+    # NOW we can query (only after user clicked "Load Data")
+    client = get_supabase_client()
+    
+    # Only query available dates ONCE when first loading
+    if 'daily_winners_available_dates' not in st.session_state:
         try:
             response = client.table("daily_winners").select("detection_date").limit(100).execute()
             if response.data:
-                available_dates = sorted(list(set(row["detection_date"] for row in response.data)), reverse=True)
+                st.session_state.daily_winners_available_dates = sorted(
+                    list(set(row["detection_date"] for row in response.data)), 
+                    reverse=True
+                )
             else:
-                available_dates = []
+                st.session_state.daily_winners_available_dates = []
         except Exception as e:
             st.error(f"Error loading dates: {e}")
-            available_dates = []
+            st.session_state.daily_winners_available_dates = []
+    
+    available_dates = st.session_state.daily_winners_available_dates
     
     # ... rest of your code ...
     
