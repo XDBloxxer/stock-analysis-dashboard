@@ -211,10 +211,47 @@ def run_backtest_via_github(strategy_id: int):
 # CHART CREATION FUNCTIONS
 # ============================================================================
 
-def create_performance_chart(daily_df: pd.DataFrame):
-    """Create daily performance chart"""
-    if daily_df.empty:
+def create_performance_chart(trades_df: pd.DataFrame):
+    """Create daily performance chart from trades data"""
+    if trades_df.empty:
         return None
+    
+    # Check if we have the date column
+    date_col = None
+    for possible_col in ['signal_date', 'date', 'trade_date']:
+        if possible_col in trades_df.columns:
+            date_col = possible_col
+            break
+    
+    if date_col is None:
+        st.warning("No date column found in trades data")
+        return None
+    
+    # Calculate daily metrics from trades
+    trades_df = trades_df.copy()
+    trades_df[date_col] = pd.to_datetime(trades_df[date_col]).dt.date
+    
+    # Count matches and hits per day
+    daily_stats = trades_df.groupby(date_col).agg({
+        'matched_criteria': 'sum',  # Count of matches per day
+    }).reset_index()
+    
+    # Calculate true positives (need to check if hit_target column exists)
+    if 'hit_target' in trades_df.columns:
+        true_positives = trades_df[trades_df['hit_target'] == True].groupby(date_col).size()
+        daily_stats = daily_stats.merge(
+            true_positives.to_frame('true_positives'), 
+            left_on=date_col, 
+            right_index=True, 
+            how='left'
+        )
+        daily_stats['true_positives'] = daily_stats['true_positives'].fillna(0).astype(int)
+    else:
+        daily_stats['true_positives'] = 0
+    
+    # Rename for clarity
+    daily_stats.columns = [date_col, 'total_matches', 'true_positives']
+    daily_stats['false_positives'] = daily_stats['total_matches'] - daily_stats['true_positives']
     
     fig = make_subplots(
         rows=2, cols=1,
@@ -224,35 +261,33 @@ def create_performance_chart(daily_df: pd.DataFrame):
     )
     
     # Cumulative matches
-    if 'total_matches' in daily_df.columns:
-        daily_df_sorted = daily_df.sort_values('test_date')
-        daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
-        
-        fig.add_trace(go.Scatter(
-            x=daily_df_sorted['test_date'],
-            y=daily_df_sorted['cumulative_matches'],
-            mode='lines',
-            name='Total Matches',
-            line=dict(color='#667eea', width=2),
-            fill='tozeroy',
-            fillcolor='rgba(102, 126, 234, 0.2)'
-        ), row=1, col=1)
+    daily_stats_sorted = daily_stats.sort_values(date_col)
+    daily_stats_sorted['cumulative_matches'] = daily_stats_sorted['total_matches'].cumsum()
+    
+    fig.add_trace(go.Scatter(
+        x=daily_stats_sorted[date_col],
+        y=daily_stats_sorted['cumulative_matches'],
+        mode='lines',
+        name='Total Matches',
+        line=dict(color='#667eea', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(102, 126, 234, 0.2)'
+    ), row=1, col=1)
     
     # Daily metrics
-    if all(col in daily_df.columns for col in ['true_positives', 'false_positives']):
-        fig.add_trace(go.Bar(
-            x=daily_df['test_date'],
-            y=daily_df['true_positives'],
-            name='True Positives',
-            marker_color='#10b981'
-        ), row=2, col=1)
-        
-        fig.add_trace(go.Bar(
-            x=daily_df['test_date'],
-            y=daily_df['false_positives'],
-            name='False Positives',
-            marker_color='#ef4444'
-        ), row=2, col=1)
+    fig.add_trace(go.Bar(
+        x=daily_stats[date_col],
+        y=daily_stats['true_positives'],
+        name='True Positives',
+        marker_color='#10b981'
+    ), row=2, col=1)
+    
+    fig.add_trace(go.Bar(
+        x=daily_stats[date_col],
+        y=daily_stats['false_positives'],
+        name='False Positives',
+        marker_color='#ef4444'
+    ), row=2, col=1)
     
     fig.update_layout(
         height=600,
@@ -592,7 +627,7 @@ def render_backtesting_tab():
                     # Charts
                     st.markdown("### Performance Charts")
                     
-                    fig1 = create_performance_chart(daily_df)
+                    fig1 = create_performance_chart(trades_df)
                     if fig1:
                         st.plotly_chart(fig1, use_container_width=True)
                     
