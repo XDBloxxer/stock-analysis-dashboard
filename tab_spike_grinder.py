@@ -77,9 +77,15 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
     """
     try:
         client = get_supabase_client()
+        # ✅ Add column selection for candidates too
+        if table_name == "candidates":
+            query = client.table(table_name).select(
+                "symbol,exchange,date,event_type,price,change_pct,volume"
+            )
+
         
         # ✅ CRITICAL FIX: Select only needed columns, not SELECT *
-        if table_name == "raw_data":
+        elif table_name == "raw_data":
             # Only select columns actually used in analysis/charts
             query = client.table(table_name).select(
                 "symbol,event_date,event_type,time_lag,"
