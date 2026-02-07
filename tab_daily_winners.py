@@ -1,7 +1,10 @@
 """
-Daily Winners Tab Module - UPDATED for new schema
-Now reads from winners_day_prior_open and winners_day_prior_close tables
-Fixed confusing OHLC display - shows contextually appropriate prices
+Daily Winners Tab Module - FIXED FOR ZERO AUTO-EGRESS
+CHANGES:
+- ttl=0 (never auto-refresh)
+- Added .limit(100) to all queries
+- Column selection for winners tables
+- Only refreshes when user clicks refresh button
 """
 
 import streamlit as st
@@ -41,15 +44,40 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh (was 300)
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
+    """
+    OPTIMIZED: Only loads when refresh button is clicked
+    - ttl=0 means cache never expires on its own
+    - Uses column selection to reduce egress
+    - Limits results to 100 rows max
+    """
     try:
         client = get_supabase_client()
-        query = client.table(table_name).select("*")
+        
+        # ✅ CRITICAL FIX: Select only needed columns for each table
+        if table_name == "daily_winners":
+            query = client.table(table_name).select(
+                "symbol,exchange,price,change_pct,volume,detection_date"
+            )
+        elif table_name in ["winners_market_open", "winners_market_close", 
+                           "winners_day_prior_open", "winners_day_prior_close"]:
+            # Only select most important indicators, not all 150 columns
+            query = client.table(table_name).select(
+                "symbol,exchange,detection_date,snapshot_type,snapshot_time,"
+                "open,high,low,close,volume,"
+                "rsi,macd.macd,adx,ema20,sma20,atr,bb_width,"
+                "stoch.k,w.r,ao,cci20"
+            )
+        else:
+            query = client.table(table_name).select("*")
         
         if filters:
             for key, value in filters.items():
                 query = query.eq(key, value)
+        
+        # ✅ CRITICAL FIX: Limit to 100 rows max
+        query = query.limit(100)
         
         response = query.execute()
         
@@ -68,19 +96,14 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         return pd.DataFrame()
 
 def render_indicator_snapshot(data_row, title, snapshot_type):
-    """
-    Render indicator snapshot with contextually appropriate price display
-    
-    snapshot_type: 'market_open', 'market_close', 'day_prior_open', 'day_prior_close'
-    """
+    """Render indicator snapshot with contextually appropriate price display"""
     st.markdown(f"**{title}**")
 
     # Define indicator groups based on snapshot type
-    # For OPEN snapshots, show opening price; for CLOSE snapshots, show closing price
     if snapshot_type in ['market_open', 'day_prior_open']:
         price_field = 'open'
         price_label = 'Opening Price'
-    else:  # market_close, day_prior_close
+    else:
         price_field = 'close'
         price_label = 'Closing Price'
     
@@ -144,26 +167,22 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     else:
                         display_val = f"{value:.3f}"
 
-                    # Use custom label if available, otherwise format field name
                     label = custom_labels.get(field, field.replace(".", " ").replace("_", " ").upper())
                     st.metric(label, display_val)
 
 def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_close_df):
-    """Enhanced to show 4 timepoints: T-1 Open, T-1 Close, T0 Open, T0 Close"""
+    """Enhanced to show 4 timepoints"""
     symbol = symbol.strip().upper()
     
-    # Clean up all dataframes
     for df in [open_df, close_df, prior_open_df, prior_close_df]:
         if not df.empty and 'symbol' in df.columns:
             df['symbol'] = df['symbol'].str.strip().str.upper()
     
-    # Extract data for this symbol
     open_data = open_df[open_df['symbol'] == symbol].iloc[0] if not open_df.empty and symbol in open_df['symbol'].values else None
     close_data = close_df[close_df['symbol'] == symbol].iloc[0] if not close_df.empty and symbol in close_df['symbol'].values else None
     prior_open_data = prior_open_df[prior_open_df['symbol'] == symbol].iloc[0] if not prior_open_df.empty and symbol in prior_open_df['symbol'].values else None
     prior_close_data = prior_close_df[prior_close_df['symbol'] == symbol].iloc[0] if not prior_close_df.empty and symbol in prior_close_df['symbol'].values else None
     
-    # Build timepoints list
     timepoints = []
     
     if prior_open_data is not None:
@@ -181,7 +200,6 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
             st.write(f"Available: {timepoints[0][0]}")
         return
     
-    # Find common indicators across all timepoints
     common_indicators = ["rsi", "macd.macd", "adx", "volume", "close", "atr", "bb_width", "stoch.k", 
                         "ema20", "ema50", "sma20", "volatility_20d", "volume_ratio"]
     available_indicators = []
@@ -192,10 +210,6 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
     
     if not available_indicators:
         st.warning("No common indicators across all time points")
-        # Show what's available at each timepoint
-        with st.expander("Debug: Available indicators per timepoint"):
-            for name, data in timepoints:
-                st.write(f"**{name}:** {len([c for c in common_indicators if c in data.index and pd.notna(data[c])])} indicators")
         return
     
     selected_indicators = st.multiselect(
@@ -257,7 +271,8 @@ def render_daily_winners_tab():
     with st.spinner("Loading available dates..."):
         client = get_supabase_client()
         try:
-            response = client.table("daily_winners").select("detection_date").execute()
+            # ✅ OPTIMIZED: Only fetch detection_date column, limit to 100
+            response = client.table("daily_winners").select("detection_date").limit(100).execute()
             if response.data:
                 available_dates = sorted(list(set(row["detection_date"] for row in response.data)), reverse=True)
             else:
@@ -282,7 +297,8 @@ def render_daily_winners_tab():
         )
     
     with col2:
-        if st.button("Refresh Data", use_container_width=True, key="daily_winners_refresh"):
+        # ✅ CHANGED: Manual refresh button
+        if st.button("🔄 Refresh Data", use_container_width=True, key="daily_winners_refresh"):
             st.cache_data.clear()
             st.session_state.daily_winners_refresh_counter += 1
             st.rerun()
@@ -340,51 +356,6 @@ def render_daily_winners_tab():
     
     st.markdown("---")
     
-    # Enhanced debug info
-    with st.expander("📊 Data Availability Summary"):
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        with col1:
-            st.metric("Winners", len(winners_df))
-        with col2:
-            st.metric("Market Open", len(market_open_df))
-        with col3:
-            st.metric("Market Close", len(market_close_df))
-        with col4:
-            st.metric("Prior Open", len(day_prior_open_df))
-        with col5:
-            st.metric("Prior Close", len(day_prior_close_df))
-        
-        if not winners_df.empty:
-            st.write("**Winners symbols:**", ', '.join(sorted(winners_df['symbol'].unique())))
-        
-        # Show which symbols have data in each table
-        all_symbols = set(winners_df['symbol'].unique())
-        
-        if not market_open_df.empty and 'symbol' in market_open_df.columns:
-            open_symbols = set(market_open_df['symbol'].unique())
-            missing_open = all_symbols - open_symbols
-            if missing_open:
-                st.warning(f"Market Open missing: {', '.join(sorted(missing_open))}")
-        
-        if not market_close_df.empty and 'symbol' in market_close_df.columns:
-            close_symbols = set(market_close_df['symbol'].unique())
-            missing_close = all_symbols - close_symbols
-            if missing_close:
-                st.warning(f"Market Close missing: {', '.join(sorted(missing_close))}")
-        
-        if not day_prior_open_df.empty and 'symbol' in day_prior_open_df.columns:
-            prior_open_symbols = set(day_prior_open_df['symbol'].unique())
-            missing_prior_open = all_symbols - prior_open_symbols
-            if missing_prior_open:
-                st.warning(f"Prior Open missing: {', '.join(sorted(missing_prior_open))}")
-        
-        if not day_prior_close_df.empty and 'symbol' in day_prior_close_df.columns:
-            prior_close_symbols = set(day_prior_close_df['symbol'].unique())
-            missing_prior_close = all_symbols - prior_close_symbols
-            if missing_prior_close:
-                st.warning(f"Prior Close missing: {', '.join(sorted(missing_prior_close))}")
-    
     st.subheader("Detailed Stock Analysis")
     
     symbols = sorted(winners_df['symbol'].unique())
@@ -409,7 +380,6 @@ def render_daily_winners_tab():
         
         st.markdown("### Technical Indicator Snapshots")
         
-        # Create 4 tabs - one for each timepoint
         snapshot_tabs = st.tabs([
             "📈 Day Prior Open (T-1 9:30 AM)", 
             "📊 Day Prior Close (T-1 4:00 PM)",
