@@ -417,12 +417,16 @@ def create_time_series_comparison(analysis_df, selected_indicators):
     return fig
 
 def render_spike_grinder_tab():
+    # ✅ ADD: Session state to track if data has been loaded
+    if 'spike_grinder_data_loaded' not in st.session_state:
+        st.session_state.spike_grinder_data_loaded = False
+    
     if 'spike_grinder_refresh_counter' not in st.session_state:
         st.session_state.spike_grinder_refresh_counter = 0
     
     refresh_key = st.session_state.spike_grinder_refresh_counter
     
-    # ✅ CHANGED: Manual refresh button at top
+    # Manual refresh button at top
     col_header1, col_header2 = st.columns([4, 1])
     
     with col_header1:
@@ -432,12 +436,30 @@ def render_spike_grinder_tab():
         if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
             st.cache_data.clear()
             st.session_state.spike_grinder_refresh_counter += 1
+            st.session_state.spike_grinder_data_loaded = True  # ✅ Mark as loaded
             st.rerun()
     
+    # ✅ CRITICAL: Don't load data until user clicks refresh
+    if not st.session_state.spike_grinder_data_loaded:
+        st.info("👆 Click 'Refresh Data' to load spike/grinder analysis")
+        
+        with st.expander("ℹ️ About Spike/Grinder Analysis"):
+            st.markdown("""
+            This analysis compares technical indicators between:
+            - **Spikers**: Stocks with single-day explosive moves
+            - **Grinders**: Stocks with sustained multi-day gains
+            
+            Click 'Refresh Data' above to load the analysis.
+            """)
+        return  # ✅ EXIT early
+    
+    # Now load data
     with st.spinner("Loading analysis data..."):
         candidates_df = load_supabase_data("candidates", None, refresh_key)
         analysis_df = load_supabase_data("analysis", None, refresh_key)
         summary_df = load_supabase_data("summary_stats", None, refresh_key)
+    
+    # ... rest of your code ...
     
     if analysis_df.empty and candidates_df.empty:
         st.warning("No analysis data available yet")
