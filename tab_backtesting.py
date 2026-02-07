@@ -248,7 +248,7 @@ def create_performance_chart(daily_df: pd.DataFrame):
         ), row=2, col=1)
         
         fig.add_trace(go.Bar(
-            x=daily_df['date'],
+            x=daily_df['test_date'],
             y=daily_df['false_positives'],
             name='False Positives',
             marker_color='#ef4444'
