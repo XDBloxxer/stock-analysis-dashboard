@@ -7,9 +7,15 @@ font = "sans serif"
 
 [server]
 headless = true
-port = 8501
 enableCORS = false
-enableXsrfProtection = true
+enableXsrfProtection = false
+runOnSave = false  # Prevents auto-reload
 
 [browser]
 gatherUsageStats = false
+serverAddress = "localhost"
+serverPort = 8501
+
+[runner]
+magicEnabled = false
+fastReruns = true
