@@ -662,9 +662,26 @@ def render_backtesting_tab():
                             st.plotly_chart(fig3, use_container_width=True)
                     
                     with col2:
+                        # ✅ DEBUG: Check why exit analysis might not appear
+                        with st.expander("🔍 Debug: Exit Analysis Chart"):
+                            st.write(f"**Trades DF empty?** {trades_df.empty}")
+                            if not trades_df.empty:
+                                st.write(f"**Columns in trades_df:** {list(trades_df.columns)}")
+                                required = ['actual_gain_pct', 'high_pct', 'low_pct', 'matched_criteria']
+                                st.write(f"**Required columns present?**")
+                                for col in required:
+                                    present = col in trades_df.columns
+                                    st.write(f"  - {col}: {'✅' if present else '❌'}")
+                                
+                                if 'matched_criteria' in trades_df.columns:
+                                    matched_count = (trades_df['matched_criteria'] == True).sum()
+                                    st.write(f"**Matched criteria trades:** {matched_count}")
+                        
                         fig4 = create_exit_analysis_chart(trades_df)
                         if fig4:
                             st.plotly_chart(fig4, use_container_width=True)
+                        else:
+                            st.warning("Exit analysis chart not available - check debug info above")
                     
                     # Trade log
                     st.markdown("### Trade Log")
