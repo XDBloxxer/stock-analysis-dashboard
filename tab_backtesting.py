@@ -223,20 +223,36 @@ def create_performance_chart(daily_df: pd.DataFrame):
         vertical_spacing=0.1
     )
     
-    # Cumulative matches
+    # Cumulative matches - ✅ IMPROVED: More robust checking
+    has_cumulative_data = False
     if 'total_matches' in daily_df.columns:
-        daily_df_sorted = daily_df.sort_values('test_date')
-        daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
-        
-        fig.add_trace(go.Scatter(
-            x=daily_df_sorted['test_date'],
-            y=daily_df_sorted['cumulative_matches'],
-            mode='lines',
-            name='Total Matches',
-            line=dict(color='#667eea', width=2),
-            fill='tozeroy',
-            fillcolor='rgba(102, 126, 234, 0.2)'
-        ), row=1, col=1)
+        # Check if column has actual data (not all zeros/NaN)
+        if daily_df['total_matches'].notna().any() and daily_df['total_matches'].sum() > 0:
+            daily_df_sorted = daily_df.sort_values('test_date')
+            daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
+            
+            fig.add_trace(go.Scatter(
+                x=daily_df_sorted['test_date'],
+                y=daily_df_sorted['cumulative_matches'],
+                mode='lines',
+                name='Total Matches',
+                line=dict(color='#667eea', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(102, 126, 234, 0.2)'
+            ), row=1, col=1)
+            has_cumulative_data = True
+    
+    # If no cumulative data, add a note
+    if not has_cumulative_data:
+        fig.add_annotation(
+            text="No match data available yet",
+            xref="x", yref="y",
+            x=0.5, y=0.5,
+            xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=14, color='#b8bcc8'),
+            row=1, col=1
+        )
     
     # Daily metrics
     if all(col in daily_df.columns for col in ['true_positives', 'false_positives']):
@@ -567,6 +583,20 @@ def render_backtesting_tab():
                     
                     # Charts
                     st.markdown("### Performance Charts")
+                    
+                    # ✅ DEBUG: Add expander to inspect daily_df
+                    with st.expander("🔍 Debug: View Daily Results Data"):
+                        st.write("**Daily DataFrame Info:**")
+                        st.write(f"- Shape: {daily_df.shape}")
+                        st.write(f"- Columns: {list(daily_df.columns)}")
+                        
+                        if 'total_matches' in daily_df.columns:
+                            st.write(f"- Total Matches column sum: {daily_df['total_matches'].sum()}")
+                            st.write(f"- Total Matches column has data: {daily_df['total_matches'].notna().any()}")
+                        else:
+                            st.warning("'total_matches' column NOT found in daily results")
+                        
+                        st.dataframe(daily_df.head(10))
                     
                     fig1 = create_performance_chart(daily_df)
                     if fig1:
