@@ -104,11 +104,12 @@ def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
     try:
         client = get_supabase_client()
         
-        # Load daily results
+        # Load daily results (limit to 1000 most recent)
         daily_response = client.table("backtest_results")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
             .order("test_date", desc=False)\
+            .limit(1000)\
             .execute()
         
         daily_df = pd.DataFrame(daily_response.data) if daily_response.data else pd.DataFrame()
