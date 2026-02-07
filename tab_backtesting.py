@@ -508,8 +508,6 @@ def create_cumulative_pnl(trades_df: pd.DataFrame):
 # ============================================================================
 
 def render_backtesting_tab():
-    """Main backtesting tab rendering function"""
-    
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
     
@@ -522,9 +520,6 @@ def render_backtesting_tab():
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
     
-    # ========================================================================
-    # TAB 1: VIEW RESULTS
-    # ========================================================================
     with tab1:
         st.markdown("### Strategy Results")
         
@@ -536,13 +531,21 @@ def render_backtesting_tab():
                 st.session_state.backtest_data_loaded = True
                 st.rerun()
         
-        # ✅ CRITICAL: Only load data if user has clicked refresh
+        # CRITICAL: Don't load until refresh clicked
         if not st.session_state.backtest_data_loaded:
             st.info("👆 Click 'Refresh' to load backtesting results")
             return
         
-        # Load strategies (only after refresh clicked)
-        strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
+        # Use session state cache
+        cache_key = f"strategies_df_{st.session_state.backtest_refresh_counter}"
+        
+        if cache_key not in st.session_state:
+            strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
+            st.session_state[cache_key] = strategies_df
+        else:
+            strategies_df = st.session_state[cache_key]
+        
+        # Rest of your code...
         
         if strategies_df.empty:
             st.info("No strategies found. Create one in the 'Create Strategy' tab")
