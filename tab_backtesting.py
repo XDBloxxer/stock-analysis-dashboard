@@ -306,12 +306,16 @@ def create_trade_analysis(trades_df):
     return fig1, fig2
 
 def render_backtesting_tab():
+    # ✅ ADD: Session state to track if data has been loaded
+    if 'backtesting_data_loaded' not in st.session_state:
+        st.session_state.backtesting_data_loaded = False
+    
     if 'backtesting_refresh_counter' not in st.session_state:
         st.session_state.backtesting_refresh_counter = 0
     
     refresh_key = st.session_state.backtesting_refresh_counter
     
-    # ✅ CHANGED: Manual refresh button at top
+    # Manual refresh button at top
     col_header1, col_header2 = st.columns([4, 1])
     
     with col_header1:
@@ -321,8 +325,29 @@ def render_backtesting_tab():
         if st.button("🔄 Refresh Data", use_container_width=True, key="backtesting_manual_refresh"):
             st.cache_data.clear()
             st.session_state.backtesting_refresh_counter += 1
+            st.session_state.backtesting_data_loaded = True  # ✅ Mark as loaded
             st.rerun()
     
+    # ✅ CRITICAL: Don't load data until user clicks refresh
+    if not st.session_state.backtesting_data_loaded:
+        st.info("👆 Click 'Refresh Data' to load backtesting results")
+        
+        with st.expander("ℹ️ About Backtesting"):
+            st.markdown("""
+            **How to run a backtest:**
+            1. Configure your strategy parameters
+            2. Run `python -m backtesting.backtest_runner`
+            3. Click 'Refresh Data' above to see results
+            
+            **Key metrics to look for:**
+            - Total P&L: Overall profit/loss
+            - Win Rate: Percentage of winning trades
+            - Sharpe Ratio: Risk-adjusted returns
+            - Max Drawdown: Largest peak-to-trough decline
+            """)
+        return  # ✅ EXIT early - no data loaded yet
+    
+    # Now load data (only after refresh clicked)
     with st.spinner("Loading strategies..."):
         strategies_df = load_strategies(refresh_key)
     
