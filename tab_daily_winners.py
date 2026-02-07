@@ -1,6 +1,7 @@
 """
 Daily Winners Tab Module - UPDATED for new schema
 Now reads from winners_day_prior_open and winners_day_prior_close tables
+Fixed confusing OHLC display - shows contextually appropriate prices
 """
 
 import streamlit as st
@@ -66,27 +67,62 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         st.warning(f"Could not load from {table_name}: {str(e)}")
         return pd.DataFrame()
 
-def render_indicator_snapshot(data_row, title):
+def render_indicator_snapshot(data_row, title, snapshot_type):
+    """
+    Render indicator snapshot with contextually appropriate price display
+    
+    snapshot_type: 'market_open', 'market_close', 'day_prior_open', 'day_prior_close'
+    """
     st.markdown(f"**{title}**")
 
+    # Define indicator groups based on snapshot type
+    # For OPEN snapshots, show opening price; for CLOSE snapshots, show closing price
+    if snapshot_type in ['market_open', 'day_prior_open']:
+        price_field = 'open'
+        price_label = 'Opening Price'
+    else:  # market_close, day_prior_close
+        price_field = 'close'
+        price_label = 'Closing Price'
+    
     indicator_groups = {
-        "Price & Volume": ["close", "open", "high", "low", "volume"],
-        "Momentum": ["rsi", "rsi[1]", "rsi[2]", "stoch.k", "stoch.d", "mom", "w.r", "roc", "tsi", "kama"],
-        "Trend": ["macd.macd", "macd.signal", "adx", "adx+di", "adx-di", "ema20", "ema50", "ema200", 
-                 "sma20", "sma50", "sma200", "aroon_up", "aroon_down", "psar"],
-        "Volatility": ["atr", "atr_pct", "bb.upper", "bb.lower", "bb_width", "volatility_20d", 
+        "Price & Volume": {
+            'fields': [price_field, 'volume'],
+            'labels': {price_field: price_label, 'volume': 'Volume'}
+        },
+        "Momentum": {
+            'fields': ["rsi", "rsi[1]", "rsi[2]", "stoch.k", "stoch.d", "mom", "w.r", "roc", "tsi", "kama"],
+            'labels': {}
+        },
+        "Trend": {
+            'fields': ["macd.macd", "macd.signal", "adx", "adx+di", "adx-di", "ema20", "ema50", "ema200", 
+                      "sma20", "sma50", "sma200", "aroon_up", "aroon_down", "psar"],
+            'labels': {}
+        },
+        "Volatility": {
+            'fields': ["atr", "atr_pct", "bb.upper", "bb.lower", "bb_width", "volatility_20d", 
                       "keltner_upper", "keltner_lower", "donchian_upper", "donchian_lower"],
-        "Volume Indicators": ["obv", "cmf", "force_index", "vpt", "volume_sma20", "volume_ratio"],
-        "Other": ["cci20", "ao", "uo", "vwap", "high_52w", "low_52w", "gap_%"]
+            'labels': {}
+        },
+        "Volume Indicators": {
+            'fields': ["obv", "cmf", "force_index", "vpt", "volume_sma20", "volume_ratio"],
+            'labels': {}
+        },
+        "Other": {
+            'fields': ["cci20", "ao", "uo", "vwap", "high_52w", "low_52w", "gap_%"],
+            'labels': {}
+        }
     }
 
     tabs = st.tabs(list(indicator_groups.keys()))
 
-    for i, (group_name, indicators) in enumerate(indicator_groups.items()):
+    for i, (group_name, group_info) in enumerate(indicator_groups.items()):
         with tabs[i]:
+            fields = group_info['fields']
+            custom_labels = group_info.get('labels', {})
+            
             available = [
-                ind for ind in indicators
-                if ind in data_row.index and pd.notna(data_row[ind])
+                field for field in fields
+                if field in data_row.index and pd.notna(data_row[field])
             ]
 
             if not available:
@@ -95,11 +131,11 @@ def render_indicator_snapshot(data_row, title):
 
             cols = st.columns(min(4, len(available)))
 
-            for j, indicator in enumerate(available):
+            for j, field in enumerate(available):
                 with cols[j % 4]:
-                    value = data_row[indicator]
+                    value = data_row[field]
 
-                    if indicator == "volume":
+                    if field == "volume":
                         display_val = f"{value/1e6:.1f}M"
                     elif abs(value) >= 1000:
                         display_val = f"{value:.0f}"
@@ -108,7 +144,8 @@ def render_indicator_snapshot(data_row, title):
                     else:
                         display_val = f"{value:.3f}"
 
-                    label = indicator.replace(".", " ").replace("_", " ").upper()
+                    # Use custom label if available, otherwise format field name
+                    label = custom_labels.get(field, field.replace(".", " ").replace("_", " ").upper())
                     st.metric(label, display_val)
 
 def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_close_df):
@@ -372,12 +409,12 @@ def render_daily_winners_tab():
         
         st.markdown("### Technical Indicator Snapshots")
         
-        # Create 4 tabs instead of 3
+        # Create 4 tabs - one for each timepoint
         snapshot_tabs = st.tabs([
-            "Day Prior Open (T-1 9:30 AM)", 
-            "Day Prior Close (T-1 4:00 PM)",
-            "Market Open (9:30 AM)", 
-            "Market Close (4:00 PM)"
+            "📈 Day Prior Open (T-1 9:30 AM)", 
+            "📊 Day Prior Close (T-1 4:00 PM)",
+            "🌅 Market Open (9:30 AM)", 
+            "🌆 Market Close (4:00 PM)"
         ])
         
         with snapshot_tabs[0]:
@@ -386,7 +423,7 @@ def render_daily_winners_tab():
                 symbol_data = day_prior_open_df[day_prior_open_df['symbol'] == selected_symbol]
                 
                 if not symbol_data.empty:
-                    render_indicator_snapshot(symbol_data.iloc[0], "Day Prior Open - T-1 9:30 AM")
+                    render_indicator_snapshot(symbol_data.iloc[0], "Day Prior Open - T-1 9:30 AM", 'day_prior_open')
                 else:
                     st.warning(f"No day prior open data for {selected_symbol}")
             else:
@@ -398,7 +435,7 @@ def render_daily_winners_tab():
                 symbol_data = day_prior_close_df[day_prior_close_df['symbol'] == selected_symbol]
                 
                 if not symbol_data.empty:
-                    render_indicator_snapshot(symbol_data.iloc[0], "Day Prior Close - T-1 4:00 PM")
+                    render_indicator_snapshot(symbol_data.iloc[0], "Day Prior Close - T-1 4:00 PM", 'day_prior_close')
                 else:
                     st.warning(f"No day prior close data for {selected_symbol}")
             else:
@@ -410,7 +447,7 @@ def render_daily_winners_tab():
                 symbol_open = market_open_df[market_open_df['symbol'] == selected_symbol]
                 
                 if not symbol_open.empty:
-                    render_indicator_snapshot(symbol_open.iloc[0], "Market Open - 9:30 AM")
+                    render_indicator_snapshot(symbol_open.iloc[0], "Market Open - 9:30 AM", 'market_open')
                 else:
                     st.warning(f"No market open data for {selected_symbol}")
             else:
@@ -422,7 +459,7 @@ def render_daily_winners_tab():
                 symbol_close = market_close_df[market_close_df['symbol'] == selected_symbol]
                 
                 if not symbol_close.empty:
-                    render_indicator_snapshot(symbol_close.iloc[0], "Market Close - 4:00 PM")
+                    render_indicator_snapshot(symbol_close.iloc[0], "Market Close - 4:00 PM", 'market_close')
                 else:
                     st.warning(f"No market close data for {selected_symbol}")
             else:
@@ -431,5 +468,5 @@ def render_daily_winners_tab():
         st.markdown("---")
         
         st.markdown("### Indicator Evolution")
-        st.info("Compare how indicators changed across 4 timepoints: T-1 Open → T-1 Close → Market Open → Market Close")
+        st.info("📊 Compare how indicators changed across 4 timepoints: T-1 Open → T-1 Close → Market Open → Market Close")
         render_indicator_evolution(selected_symbol, market_open_df, market_close_df, day_prior_open_df, day_prior_close_df)
