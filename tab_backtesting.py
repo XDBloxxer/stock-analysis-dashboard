@@ -211,33 +211,10 @@ def run_backtest_via_github(strategy_id: int):
 # CHART CREATION FUNCTIONS
 # ============================================================================
 
-def create_performance_chart(trades_df: pd.DataFrame):
-    """Create daily performance chart from trades data"""
-    if trades_df.empty:
+def create_performance_chart(daily_df: pd.DataFrame):
+    """Create daily performance chart"""
+    if daily_df.empty:
         return None
-    
-    # Check if we have the date column
-    date_col = None
-    for possible_col in ['signal_date', 'date', 'trade_date']:
-        if possible_col in trades_df.columns:
-            date_col = possible_col
-            break
-    
-    if date_col is None:
-        st.warning("No date column found in trades data")
-        return None
-    
-    # Calculate daily metrics from trades
-    trades_df[date_col] = pd.to_datetime(trades_df[date_col]).dt.date
-    
-    daily_stats = trades_df.groupby(date_col).agg({
-        'matched_criteria': 'sum',  # Count of matches per day
-        'hit_target': lambda x: (x == True).sum() if 'hit_target' in trades_df.columns else 0,
-    }).reset_index()
-    
-    # Rename for clarity
-    daily_stats.columns = [date_col, 'total_matches', 'true_positives']
-    daily_stats['false_positives'] = daily_stats['total_matches'] - daily_stats['true_positives']
     
     fig = make_subplots(
         rows=2, cols=1,
@@ -247,33 +224,35 @@ def create_performance_chart(trades_df: pd.DataFrame):
     )
     
     # Cumulative matches
-    daily_stats_sorted = daily_stats.sort_values(date_col)
-    daily_stats_sorted['cumulative_matches'] = daily_stats_sorted['total_matches'].cumsum()
-    
-    fig.add_trace(go.Scatter(
-        x=daily_stats_sorted[date_col],
-        y=daily_stats_sorted['cumulative_matches'],
-        mode='lines',
-        name='Total Matches',
-        line=dict(color='#667eea', width=2),
-        fill='tozeroy',
-        fillcolor='rgba(102, 126, 234, 0.2)'
-    ), row=1, col=1)
+    if 'total_matches' in daily_df.columns:
+        daily_df_sorted = daily_df.sort_values('test_date')
+        daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
+        
+        fig.add_trace(go.Scatter(
+            x=daily_df_sorted['test_date'],
+            y=daily_df_sorted['cumulative_matches'],
+            mode='lines',
+            name='Total Matches',
+            line=dict(color='#667eea', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(102, 126, 234, 0.2)'
+        ), row=1, col=1)
     
     # Daily metrics
-    fig.add_trace(go.Bar(
-        x=daily_stats[date_col],
-        y=daily_stats['true_positives'],
-        name='True Positives',
-        marker_color='#10b981'
-    ), row=2, col=1)
-    
-    fig.add_trace(go.Bar(
-        x=daily_stats[date_col],
-        y=daily_stats['false_positives'],
-        name='False Positives',
-        marker_color='#ef4444'
-    ), row=2, col=1)
+    if all(col in daily_df.columns for col in ['true_positives', 'false_positives']):
+        fig.add_trace(go.Bar(
+            x=daily_df['test_date'],
+            y=daily_df['true_positives'],
+            name='True Positives',
+            marker_color='#10b981'
+        ), row=2, col=1)
+        
+        fig.add_trace(go.Bar(
+            x=daily_df['test_date'],
+            y=daily_df['false_positives'],
+            name='False Positives',
+            marker_color='#ef4444'
+        ), row=2, col=1)
     
     fig.update_layout(
         height=600,
@@ -568,9 +547,33 @@ def render_backtesting_tab():
                             total_losses = abs(losers['actual_gain_pct'].sum()) if len(losers) > 0 else 0
                             profit_factor = (total_gains / total_losses) if total_losses > 0 else None
                             
-                            # ✅ FIX: Safe column access
-                            intraday_hits = matched_trades.get('hit_target_intraday', pd.Series([False])).sum()
+                            # ✅ FIX: Proper intraday hit rate calculation
+                            # Check multiple possible column names
+                            intraday_hits = 0
+                            intraday_col = None
+                            
+                            for possible_col in ['hit_target_intraday', 'target_hit_intraday', 'intraday_hit']:
+                                if possible_col in matched_trades.columns:
+                                    intraday_col = possible_col
+                                    # Count True values
+                                    intraday_hits = (matched_trades[possible_col] == True).sum()
+                                    break
+                            
                             intraday_rate = (intraday_hits / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
+                            
+                            # ✅ DEBUG: Show what columns are available
+                            with st.expander("🔍 Debug: Intraday Hit Rate"):
+                                st.write(f"**Total matched trades:** {len(matched_trades)}")
+                                st.write(f"**Intraday hits found:** {intraday_hits}")
+                                st.write(f"**Intraday column found:** {intraday_col if intraday_col else 'NONE'}")
+                                st.write(f"**Available columns in trades_df:**")
+                                st.write(list(matched_trades.columns))
+                                
+                                # Show a sample of relevant columns
+                                relevant_cols = [col for col in matched_trades.columns if 'hit' in col.lower() or 'target' in col.lower() or 'intraday' in col.lower()]
+                                if relevant_cols:
+                                    st.write(f"**Columns with 'hit', 'target', or 'intraday':**")
+                                    st.dataframe(matched_trades[relevant_cols].head(10))
                             
                             st.markdown("#### Advanced Metrics")
                             col1, col2, col3, col4, col5 = st.columns(5)
@@ -589,7 +592,7 @@ def render_backtesting_tab():
                     # Charts
                     st.markdown("### Performance Charts")
                     
-                    fig1 = create_performance_chart(trades_df)
+                    fig1 = create_performance_chart(daily_df)
                     if fig1:
                         st.plotly_chart(fig1, use_container_width=True)
                     
