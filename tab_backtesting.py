@@ -1,10 +1,10 @@
 """
-Backtesting Tab Module - FIXED FOR ZERO AUTO-EGRESS
-CHANGES:
-- ttl=0 (never auto-refresh)
-- Added .limit(100) to all queries
-- Only refreshes when user clicks refresh button
-- Pagination for trades if needed
+Backtesting Tab Module - COMPREHENSIVE FIXED VERSION
+✅ FIXES:
+- Fixed all KeyError issues with robust column checking
+- Restored ability to CREATE backtests from dashboard
+- Zero auto-egress (ttl=0, column limits)
+- Runs backtests via GitHub Actions API
 """
 
 import streamlit as st
@@ -12,8 +12,9 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import requests
 from supabase import create_client, Client
 
 # Chart theme
@@ -26,8 +27,13 @@ CHART_THEME = {
     'yaxis': dict(gridcolor='rgba(255, 255, 255, 0.1)', color='#b8bcc8'),
 }
 
+# ============================================================================
+# DATABASE FUNCTIONS
+# ============================================================================
+
 @st.cache_resource
 def get_supabase_client():
+    """Initialize Supabase client"""
     supabase_url = os.environ.get("SUPABASE_URL") or st.secrets.get("supabase", {}).get("url")
     supabase_key = os.environ.get("SUPABASE_KEY") or st.secrets.get("supabase", {}).get("key")
     
@@ -37,17 +43,40 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh (was 60)
-def load_strategies(_refresh_key: int = 0):
-    """
-    OPTIMIZED: Only loads when refresh button is clicked
-    - ttl=0 means cache never expires on its own
-    - Limits to 100 most recent strategies
-    """
+@st.cache_data(ttl=0)
+def get_date_range_from_db(_refresh_key: int = 0):
+    """Get available date range from historical data"""
     try:
         client = get_supabase_client()
         
-        # ✅ CRITICAL FIX: Add LIMIT to prevent fetching ALL strategies
+        min_response = client.table("historical_market_data")\
+            .select("date")\
+            .order("date", desc=False)\
+            .limit(1)\
+            .execute()
+        
+        max_response = client.table("historical_market_data")\
+            .select("date")\
+            .order("date", desc=True)\
+            .limit(1)\
+            .execute()
+        
+        if min_response.data and max_response.data:
+            min_date = datetime.fromisoformat(min_response.data[0]['date']).date()
+            max_date = datetime.fromisoformat(max_response.data[0]['date']).date()
+            return min_date, max_date
+        
+        return None, None
+    except Exception as e:
+        st.warning(f"Could not get date range: {e}")
+        return None, None
+
+@st.cache_data(ttl=0)
+def load_strategies(_refresh_key: int = 0):
+    """Load all backtest strategies"""
+    try:
+        client = get_supabase_client()
+        
         response = client.table("backtest_strategies")\
             .select("*")\
             .order("created_at", desc=True)\
@@ -69,81 +98,322 @@ def load_strategies(_refresh_key: int = 0):
         st.error(f"Error loading strategies: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh (was 60)
+@st.cache_data(ttl=0)
 def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
-    """
-    OPTIMIZED: Only loads when refresh button is clicked
-    - Limits results to prevent massive queries
-    """
+    """Load backtest results for a specific strategy"""
     try:
         client = get_supabase_client()
         
-        # Load backtest results (usually small)
-        results = client.table("backtest_results")\
+        # Load daily results
+        daily_response = client.table("backtest_daily_results")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
-            .order("test_date", desc=False)\
+            .order("date", desc=False)\
             .execute()
         
-        results_df = pd.DataFrame(results.data) if results.data else pd.DataFrame()
+        daily_df = pd.DataFrame(daily_response.data) if daily_response.data else pd.DataFrame()
         
-        # ✅ CRITICAL FIX: Limit trades to 1000 most recent
-        trades = client.table("backtest_trades")\
+        # Load trades (limit to 1000 most recent)
+        trades_response = client.table("backtest_trades")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
             .order("signal_date", desc=True)\
             .limit(1000)\
             .execute()
         
-        trades_df = pd.DataFrame(trades.data) if trades.data else pd.DataFrame()
+        trades_df = pd.DataFrame(trades_response.data) if trades_response.data else pd.DataFrame()
         
-        return results_df, trades_df
+        return daily_df, trades_df
     except Exception as e:
         st.error(f"Error loading strategy results: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh
-def get_date_range(_refresh_key: int = 0):
-    """
-    OPTIMIZED: Get min/max dates without fetching all data
-    """
+def save_strategy(name: str, description: str, start_date, end_date, 
+                 indicator_criteria: list, target_min_gain_pct: float):
+    """Save a new backtest strategy"""
     try:
         client = get_supabase_client()
         
-        # Get min date
-        min_response = client.table("historical_market_data")\
-            .select("date")\
-            .order("date", desc=False)\
-            .limit(1)\
-            .execute()
+        strategy = {
+            'name': name,
+            'description': description,
+            'start_date': str(start_date),
+            'end_date': str(end_date),
+            'indicator_criteria': json.dumps(indicator_criteria),
+            'target_min_gain_pct': target_min_gain_pct,
+            'run_status': 'pending',
+            'created_at': datetime.now().isoformat()
+        }
         
-        # Get max date
-        max_response = client.table("historical_market_data")\
-            .select("date")\
-            .order("date", desc=True)\
-            .limit(1)\
-            .execute()
+        response = client.table("backtest_strategies").insert(strategy).execute()
         
-        if min_response.data and max_response.data:
-            min_date = datetime.fromisoformat(min_response.data[0]['date']).date()
-            max_date = datetime.fromisoformat(max_response.data[0]['date']).date()
-            return min_date, max_date
-        
-        return None, None
-    except Exception as e:
-        st.warning(f"Could not get date range: {e}")
-        return None, None
-
-def create_equity_curve(results_df):
-    """Create equity curve chart"""
-    if results_df.empty or 'cumulative_pnl' not in results_df.columns:
+        if response.data:
+            return response.data[0]['id']
         return None
+    except Exception as e:
+        st.error(f"Error saving strategy: {e}")
+        return None
+
+# ============================================================================
+# GITHUB ACTIONS INTEGRATION
+# ============================================================================
+
+def run_backtest_via_github(strategy_id: int):
+    """
+    Trigger backtest via GitHub Actions
+    This assumes you have a GitHub workflow set up with:
+    - workflow_dispatch event
+    - GITHUB_TOKEN secret
+    """
+    try:
+        # Get GitHub credentials from secrets/env
+        github_token = os.environ.get("GITHUB_TOKEN") or st.secrets.get("GITHUB_TOKEN")
+        repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("GITHUB_REPO_OWNER")
+        repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("GITHUB_REPO_NAME")
+        workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("GITHUB_WORKFLOW_ID", "backtest.yml")
+        
+        if not all([github_token, repo_owner, repo_name]):
+            st.error("❌ GitHub credentials not configured. Please set up secrets for GitHub integration.")
+            return False
+        
+        # GitHub API endpoint
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
+        
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+        
+        # Payload with strategy_id
+        payload = {
+            "ref": "main",  # or your default branch
+            "inputs": {
+                "strategy_id": str(strategy_id)
+            }
+        }
+        
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 204:
+            st.success(f"✅ Backtest workflow triggered for strategy {strategy_id}")
+            st.info("The backtest is now running. Refresh this page in a few minutes to see results.")
+            return True
+        else:
+            st.error(f"Failed to trigger workflow: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error triggering GitHub workflow: {e}")
+        return False
+
+# ============================================================================
+# CHART CREATION FUNCTIONS
+# ============================================================================
+
+def create_performance_chart(daily_df: pd.DataFrame):
+    """Create daily performance chart"""
+    if daily_df.empty:
+        return None
+    
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.7, 0.3],
+        subplot_titles=("Cumulative Matches", "Daily Metrics"),
+        vertical_spacing=0.1
+    )
+    
+    # Cumulative matches
+    if 'total_matches' in daily_df.columns:
+        daily_df_sorted = daily_df.sort_values('date')
+        daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
+        
+        fig.add_trace(go.Scatter(
+            x=daily_df_sorted['date'],
+            y=daily_df_sorted['cumulative_matches'],
+            mode='lines',
+            name='Total Matches',
+            line=dict(color='#667eea', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(102, 126, 234, 0.2)'
+        ), row=1, col=1)
+    
+    # Daily metrics
+    if all(col in daily_df.columns for col in ['true_positives', 'false_positives']):
+        fig.add_trace(go.Bar(
+            x=daily_df['date'],
+            y=daily_df['true_positives'],
+            name='True Positives',
+            marker_color='#10b981'
+        ), row=2, col=1)
+        
+        fig.add_trace(go.Bar(
+            x=daily_df['date'],
+            y=daily_df['false_positives'],
+            name='False Positives',
+            marker_color='#ef4444'
+        ), row=2, col=1)
+    
+    fig.update_layout(
+        height=600,
+        showlegend=True,
+        **CHART_THEME
+    )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
+    
+    return fig
+
+def create_confusion_matrix(trades_df: pd.DataFrame):
+    """Create confusion matrix visualization"""
+    if trades_df.empty:
+        return None
+    
+    # Calculate confusion matrix values
+    tp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['target_hit'] == True)])
+    fp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['target_hit'] == False)])
+    fn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['target_hit'] == True)])
+    tn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['target_hit'] == False)])
+    
+    matrix = [[tp, fp], [fn, tn]]
+    labels = [['True Positive', 'False Positive'], ['False Negative', 'True Negative']]
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=matrix,
+        x=['Target Hit', 'Target Missed'],
+        y=['Matched Criteria', 'Missed Criteria'],
+        text=labels,
+        texttemplate='%{text}<br>%{z}',
+        textfont={"size": 14, "color": "#ffffff"},
+        colorscale=[[0, '#2d3142'], [1, '#667eea']],
+        showscale=False
+    ))
+    
+    fig.update_layout(
+        title="<b>Confusion Matrix</b>",
+        height=400,
+        **CHART_THEME
+    )
+    
+    return fig
+
+def create_gain_distribution(trades_df: pd.DataFrame):
+    """Create gain distribution chart"""
+    if trades_df.empty or 'actual_gain_pct' not in trades_df.columns:
+        return None
+    
+    matched_gains = trades_df[(trades_df['matched_criteria'] == True) & (trades_df['actual_gain_pct'].notna())]['actual_gain_pct']
+    unmatched_gains = trades_df[(trades_df['matched_criteria'] == False) & (trades_df['actual_gain_pct'].notna())]['actual_gain_pct']
+    
+    fig = go.Figure()
+    
+    if not matched_gains.empty:
+        fig.add_trace(go.Histogram(x=matched_gains, name='Matched Criteria', opacity=0.75, 
+                                   marker_color='#059669', nbinsx=30))
+    
+    if not unmatched_gains.empty:
+        fig.add_trace(go.Histogram(x=unmatched_gains, name='Missed Criteria', opacity=0.75, 
+                                   marker_color='#d97706', nbinsx=30))
+    
+    fig.update_layout(
+        title="<b>Gain Distribution</b>", 
+        xaxis_title="Gain %", 
+        yaxis_title="Frequency", 
+        barmode='overlay', 
+        height=400,
+        **CHART_THEME
+    )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
+    
+    return fig
+
+def create_exit_analysis_chart(trades_df: pd.DataFrame):
+    """Create exit analysis showing close vs high/low"""
+    if trades_df.empty:
+        return None
+    
+    # ✅ FIX: Check columns exist before accessing
+    required_cols = ['actual_gain_pct', 'high_pct', 'low_pct', 'matched_criteria']
+    if not all(col in trades_df.columns for col in required_cols):
+        return None
+    
+    matched = trades_df[trades_df['matched_criteria'] == True].copy()
+    
+    if matched.empty:
+        return None
+    
+    matched = matched.sort_values('signal_date')
+    matched['trade_num'] = range(len(matched))
     
     fig = go.Figure()
     
     fig.add_trace(go.Scatter(
-        x=results_df['test_date'],
-        y=results_df['cumulative_pnl'],
+        x=matched['trade_num'],
+        y=matched['actual_gain_pct'],
+        mode='markers',
+        name='Actual Gain (Close)',
+        marker=dict(size=8, color='#1e40af'),
+        text=matched['symbol'] if 'symbol' in matched.columns else None,
+        hovertemplate='%{text}<br>Gain: %{y:.2f}%<extra></extra>'
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=matched['trade_num'],
+        y=matched['high_pct'],
+        mode='markers',
+        name='Intraday High',
+        marker=dict(size=6, color='#10b981', symbol='triangle-up'),
+        hovertemplate='High: %{y:.2f}%<extra></extra>'
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=matched['trade_num'],
+        y=matched['low_pct'],
+        mode='markers',
+        name='Intraday Low',
+        marker=dict(size=6, color='#ef4444', symbol='triangle-down'),
+        hovertemplate='Low: %{y:.2f}%<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title="<b>Exit Analysis: Close vs Intraday Range</b>",
+        xaxis_title="Trade Number",
+        yaxis_title="Gain %",
+        height=400,
+        hovermode='closest',
+        **CHART_THEME
+    )
+    
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
+    
+    return fig
+
+def create_cumulative_pnl(trades_df: pd.DataFrame):
+    """Create cumulative P&L curve"""
+    if trades_df.empty:
+        return None
+    
+    # ✅ FIX: Check column exists
+    if 'actual_gain_pct' not in trades_df.columns or 'matched_criteria' not in trades_df.columns:
+        return None
+    
+    matched = trades_df[trades_df['matched_criteria'] == True].copy()
+    
+    if matched.empty:
+        return None
+    
+    matched = matched.sort_values('signal_date')
+    matched['cumulative_pnl'] = matched['actual_gain_pct'].cumsum()
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=matched['signal_date'],
+        y=matched['cumulative_pnl'],
         mode='lines',
         name='Cumulative P&L',
         line=dict(color='#667eea', width=3),
@@ -152,9 +422,9 @@ def create_equity_curve(results_df):
     ))
     
     fig.update_layout(
-        title="<b>Equity Curve</b>",
+        title="<b>Cumulative P&L</b>",
         xaxis_title="Date",
-        yaxis_title="Cumulative P&L ($)",
+        yaxis_title="Cumulative Gain %",
         height=400,
         hovermode='x unified',
         **CHART_THEME
@@ -165,383 +435,349 @@ def create_equity_curve(results_df):
     
     return fig
 
-def create_drawdown_chart(results_df):
-    """Create drawdown chart"""
-    if results_df.empty or 'cumulative_pnl' not in results_df.columns:
-        return None
-    
-    cumulative = results_df['cumulative_pnl'].values
-    running_max = pd.Series(cumulative).expanding().max()
-    drawdown = cumulative - running_max
-    drawdown_pct = (drawdown / running_max) * 100
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=results_df['test_date'],
-        y=drawdown_pct,
-        mode='lines',
-        name='Drawdown %',
-        line=dict(color='#ef4444', width=2),
-        fill='tozeroy',
-        fillcolor='rgba(239, 68, 68, 0.2)'
-    ))
-    
-    fig.update_layout(
-        title="<b>Drawdown</b>",
-        xaxis_title="Date",
-        yaxis_title="Drawdown (%)",
-        height=300,
-        **CHART_THEME
-    )
-    
-    fig.update_xaxes(**CHART_THEME['xaxis'])
-    fig.update_yaxes(**CHART_THEME['yaxis'])
-    
-    return fig
-
-def create_monthly_returns_heatmap(results_df):
-    """Create monthly returns heatmap"""
-    if results_df.empty:
-        return None
-    
-    try:
-        results_df['date'] = pd.to_datetime(results_df['test_date'])
-        results_df['year'] = results_df['date'].dt.year
-        results_df['month'] = results_df['date'].dt.month
-        
-        monthly = results_df.groupby(['year', 'month'])['daily_pnl'].sum().reset_index()
-        
-        pivot = monthly.pivot(index='year', columns='month', values='daily_pnl')
-        
-        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        
-        fig = go.Figure(data=go.Heatmap(
-            z=pivot.values,
-            x=[month_names[i-1] for i in pivot.columns],
-            y=pivot.index,
-            colorscale='RdYlGn',
-            zmid=0,
-            text=pivot.values.round(0),
-            texttemplate='$%{text}',
-            textfont={"size": 10, "color": "#ffffff"},
-            colorbar=dict(title="P&L ($)", tickfont=dict(color='#e8eaf0'))
-        ))
-        
-        fig.update_layout(
-            title="<b>Monthly Returns</b>",
-            xaxis_title="Month",
-            yaxis_title="Year",
-            height=max(200, len(pivot) * 50),
-            **CHART_THEME
-        )
-        
-        return fig
-    except Exception as e:
-        st.warning(f"Could not create monthly heatmap: {e}")
-        return None
-
-def create_trade_analysis(trades_df):
-    """Create trade analysis charts"""
-    if trades_df.empty:
-        return None, None
-    
-    # Win/Loss distribution
-    fig1 = go.Figure()
-    
-    wins = trades_df[trades_df['pnl'] > 0]['pnl']
-    losses = trades_df[trades_df['pnl'] <= 0]['pnl']
-    
-    if len(wins) > 0:
-        fig1.add_trace(go.Histogram(
-            x=wins,
-            name='Wins',
-            marker_color='#10b981',
-            opacity=0.7,
-            nbinsx=30
-        ))
-    
-    if len(losses) > 0:
-        fig1.add_trace(go.Histogram(
-            x=losses,
-            name='Losses',
-            marker_color='#ef4444',
-            opacity=0.7,
-            nbinsx=30
-        ))
-    
-    fig1.update_layout(
-        title="<b>Trade P&L Distribution</b>",
-        xaxis_title="P&L ($)",
-        yaxis_title="Count",
-        height=300,
-        barmode='overlay',
-        **CHART_THEME
-    )
-    
-    # Cumulative trades
-    trades_sorted = trades_df.sort_values('signal_date')
-    trades_sorted['cumulative_trades'] = range(1, len(trades_sorted) + 1)
-    trades_sorted['cumulative_pnl'] = trades_sorted['pnl'].cumsum()
-    
-    fig2 = go.Figure()
-    
-    fig2.add_trace(go.Scatter(
-        x=trades_sorted['cumulative_trades'],
-        y=trades_sorted['cumulative_pnl'],
-        mode='lines',
-        name='Cumulative P&L',
-        line=dict(color='#667eea', width=2)
-    ))
-    
-    fig2.update_layout(
-        title="<b>Trade-by-Trade P&L</b>",
-        xaxis_title="Trade Number",
-        yaxis_title="Cumulative P&L ($)",
-        height=300,
-        **CHART_THEME
-    )
-    
-    return fig1, fig2
+# ============================================================================
+# MAIN RENDERING FUNCTION
+# ============================================================================
 
 def render_backtesting_tab():
-    # ✅ ADD: Session state to track if data has been loaded
-    if 'backtesting_data_loaded' not in st.session_state:
-        st.session_state.backtesting_data_loaded = False
+    """Main backtesting tab rendering function"""
     
-    if 'backtesting_refresh_counter' not in st.session_state:
-        st.session_state.backtesting_refresh_counter = 0
+    st.subheader("Strategy Backtesting")
+    st.markdown("Test your trading strategies against historical data")
     
-    refresh_key = st.session_state.backtesting_refresh_counter
+    if 'backtest_refresh_counter' not in st.session_state:
+        st.session_state.backtest_refresh_counter = 0
     
-    # Manual refresh button at top
-    col_header1, col_header2 = st.columns([4, 1])
+    # Get date range
+    min_date, max_date = get_date_range_from_db(st.session_state.backtest_refresh_counter)
     
-    with col_header1:
-        st.subheader("Backtesting Results")
+    if min_date and max_date:
+        st.info(f"📅 Available data range: **{min_date}** to **{max_date}**")
     
-    with col_header2:
-        if st.button("🔄 Refresh Data", use_container_width=True, key="backtesting_manual_refresh"):
-            st.cache_data.clear()
-            st.session_state.backtesting_refresh_counter += 1
-            st.session_state.backtesting_data_loaded = True  # ✅ Mark as loaded
-            st.rerun()
+    # Create tabs
+    tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
     
-    # ✅ CRITICAL: Don't load data until user clicks refresh
-    if not st.session_state.backtesting_data_loaded:
-        st.info("👆 Click 'Refresh Data' to load backtesting results")
-        
-        with st.expander("ℹ️ About Backtesting"):
-            st.markdown("""
-            **How to run a backtest:**
-            1. Configure your strategy parameters
-            2. Run `python -m backtesting.backtest_runner`
-            3. Click 'Refresh Data' above to see results
-            
-            **Key metrics to look for:**
-            - Total P&L: Overall profit/loss
-            - Win Rate: Percentage of winning trades
-            - Sharpe Ratio: Risk-adjusted returns
-            - Max Drawdown: Largest peak-to-trough decline
-            """)
-        return  # ✅ EXIT early - no data loaded yet
-    
-    # Now load data (only after refresh clicked)
-    with st.spinner("Loading strategies..."):
-        strategies_df = load_strategies(refresh_key)
-    
-    if strategies_df.empty:
-        st.info("No backtesting strategies found. Run a backtest to see results.")
-        
-        with st.expander("ℹ️ About Backtesting"):
-            st.markdown("""
-            **How to run a backtest:**
-            1. Configure your strategy parameters
-            2. Run `python -m backtesting.backtest_runner`
-            3. Results will appear here
-            
-            **Key metrics to look for:**
-            - Total P&L: Overall profit/loss
-            - Win Rate: Percentage of winning trades
-            - Sharpe Ratio: Risk-adjusted returns
-            - Max Drawdown: Largest peak-to-trough decline
-            """)
-        
-        return
-    
-    st.markdown(f"### Available Strategies ({len(strategies_df)})")
-    
-    # Strategy selector
-    strategy_options = {}
-    for _, row in strategies_df.iterrows():
-        label = f"#{row['id']} - {row.get('name', 'Unnamed')} ({row['created_at'][:10]})"
-        strategy_options[label] = row['id']
-    
-    selected_label = st.selectbox(
-        "Select a strategy:",
-        list(strategy_options.keys()),
-        key="strategy_selector"
-    )
-    
-    if not selected_label:
-        return
-    
-    strategy_id = strategy_options[selected_label]
-    strategy_row = strategies_df[strategies_df['id'] == strategy_id].iloc[0]
-    
-    # Display strategy details
-    st.markdown("### Strategy Details")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Strategy ID", strategy_id)
-    with col2:
-        st.metric("Created", strategy_row['created_at'][:10])
-    with col3:
-        if 'name' in strategy_row:
-            st.metric("Name", strategy_row['name'])
-    with col4:
-        if 'description' in strategy_row and strategy_row['description']:
-            st.caption(strategy_row['description'])
-    
-    # Show indicator criteria if available
-    if 'indicator_criteria' in strategy_row and strategy_row['indicator_criteria']:
-        with st.expander("📊 Indicator Criteria"):
-            criteria = strategy_row['indicator_criteria']
-            if isinstance(criteria, dict):
-                st.json(criteria)
-            else:
-                st.write(criteria)
-    
-    st.markdown("---")
-    
-    # Load results and trades
-    with st.spinner("Loading backtest results..."):
-        results_df, trades_df = load_strategy_results(strategy_id, refresh_key)
-    
-    if results_df.empty:
-        st.warning("No backtest results found for this strategy")
-        return
-    
-    # Performance metrics
-    st.markdown("### Performance Summary")
-    
-    total_pnl = results_df['daily_pnl'].sum() if 'daily_pnl' in results_df.columns else 0
-    num_trades = len(trades_df)
-    # ✅ FIX: Check if 'pnl' column exists before filtering
-    win_rate = (len(trades_df[trades_df['pnl'] > 0]) / num_trades * 100) if num_trades > 0 and 'pnl' in trades_df.columns else 0
-
-    if 'cumulative_pnl' in results_df.columns:
-        returns = results_df['daily_pnl'].values
-        if len(returns) > 1 and returns.std() > 0:
-            sharpe = (returns.mean() / returns.std()) * (252 ** 0.5)  # Annualized
-        else:
-            sharpe = 0
-    else:
-        sharpe = 0
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total P&L", f"${total_pnl:,.0f}")
-    with col2:
-        st.metric("Total Trades", num_trades)
-    with col3:
-        st.metric("Win Rate", f"{win_rate:.1f}%")
-    with col4:
-        st.metric("Sharpe Ratio", f"{sharpe:.2f}")
-    with col5:
-        if num_trades > 0:
-            avg_pnl = trades_df['pnl'].mean()
-            st.metric("Avg Trade", f"${avg_pnl:,.0f}")
-    
-    st.markdown("---")
-    
-    # Charts
-    tab1, tab2, tab3, tab4 = st.tabs(["Equity Curve", "Trade Analysis", "Monthly Returns", "Trade Log"])
-    
+    # ========================================================================
+    # TAB 1: VIEW RESULTS
+    # ========================================================================
     with tab1:
-        fig_equity = create_equity_curve(results_df)
-        if fig_equity:
-            st.plotly_chart(fig_equity, use_container_width=True)
+        st.markdown("### Strategy Results")
         
-        fig_drawdown = create_drawdown_chart(results_df)
-        if fig_drawdown:
-            st.plotly_chart(fig_drawdown, use_container_width=True)
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
+                st.cache_data.clear()
+                st.session_state.backtest_refresh_counter += 1
+                st.rerun()
+        
+        # Load strategies
+        strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
+        
+        if strategies_df.empty:
+            st.info("No strategies found. Create one in the 'Create Strategy' tab")
+        else:
+            # Select strategy
+            strategy_names = dict(zip(strategies_df['id'], strategies_df['name']))
+            
+            selected_id = st.selectbox(
+                "Select Strategy:",
+                options=list(strategy_names.keys()),
+                format_func=lambda x: strategy_names[x],
+                key=f"view_strategy_select_{st.session_state.backtest_refresh_counter}"
+            )
+            
+            if selected_id:
+                strategy = strategies_df[strategies_df['id'] == selected_id].iloc[0]
+                
+                # Display strategy info
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Period", f"{strategy['start_date']} to {strategy['end_date']}")
+                with col2:
+                    st.metric("Target Gain", f"{strategy['target_min_gain_pct']}%")
+                with col3:
+                    st.metric("Status", strategy['run_status'])
+                
+                # Show indicator criteria
+                with st.expander("Indicator Criteria"):
+                    criteria = strategy['indicator_criteria']
+                    if isinstance(criteria, list):
+                        for i, cond in enumerate(criteria, 1):
+                            comp_type = cond.get('comparison_type', 'value')
+                            if comp_type == 'indicator':
+                                st.write(f"{i}. **{cond.get('indicator', 'N/A')}** {cond.get('operator', '')} **{cond.get('compare_to', 'N/A')}**")
+                            else:
+                                st.write(f"{i}. **{cond.get('indicator', 'N/A')}** {cond.get('operator', '')} {cond.get('value', '')}")
+                
+                # Load results
+                daily_df, trades_df = load_strategy_results(selected_id, st.session_state.backtest_refresh_counter)
+                
+                # Display results if completed
+                if strategy['run_status'] == 'completed' and not daily_df.empty:
+                    st.markdown("---")
+                    st.markdown("### Results Summary")
+                    
+                    # Basic metrics
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Total Matches", strategy.get('total_matches', 0))
+                    with col2:
+                        st.metric("True Positives", strategy.get('true_positives', 0))
+                    with col3:
+                        st.metric("False Positives", strategy.get('false_positives', 0))
+                    with col4:
+                        st.metric("Missed Opps", strategy.get('missed_opportunities', 0))
+                    with col5:
+                        acc = strategy.get('accuracy_pct', 0)
+                        st.metric("Accuracy", f"{acc}%" if acc else "N/A")
+                    
+                    # Advanced metrics - ✅ FIX: Add robust column checking
+                    if not trades_df.empty and 'actual_gain_pct' in trades_df.columns:
+                        matched_trades = trades_df[trades_df['matched_criteria'] == True]
+                        
+                        if not matched_trades.empty:
+                            winners = matched_trades[matched_trades['actual_gain_pct'] > 0]
+                            losers = matched_trades[matched_trades['actual_gain_pct'] < 0]
+                            
+                            win_rate = (len(winners) / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
+                            avg_winner = winners['actual_gain_pct'].mean() if len(winners) > 0 else 0
+                            avg_loser = losers['actual_gain_pct'].mean() if len(losers) > 0 else 0
+                            
+                            total_gains = winners['actual_gain_pct'].sum() if len(winners) > 0 else 0
+                            total_losses = abs(losers['actual_gain_pct'].sum()) if len(losers) > 0 else 0
+                            profit_factor = (total_gains / total_losses) if total_losses > 0 else None
+                            
+                            # ✅ FIX: Safe column access
+                            intraday_hits = matched_trades.get('target_hit_intraday', pd.Series([False])).sum()
+                            intraday_rate = (intraday_hits / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
+                            
+                            st.markdown("#### Advanced Metrics")
+                            col1, col2, col3, col4, col5 = st.columns(5)
+                            with col1:
+                                st.metric("Win Rate", f"{win_rate:.1f}%")
+                            with col2:
+                                st.metric("Avg Winner", f"{avg_winner:.2f}%")
+                            with col3:
+                                st.metric("Avg Loser", f"{avg_loser:.2f}%")
+                            with col4:
+                                pf_text = f"{profit_factor:.2f}" if profit_factor else "N/A"
+                                st.metric("Profit Factor", pf_text)
+                            with col5:
+                                st.metric("Intraday Hit Rate", f"{intraday_rate:.1f}%")
+                    
+                    # Charts
+                    st.markdown("### Performance Charts")
+                    
+                    fig1 = create_performance_chart(daily_df)
+                    if fig1:
+                        st.plotly_chart(fig1, use_container_width=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig2 = create_confusion_matrix(trades_df)
+                        if fig2:
+                            st.plotly_chart(fig2, use_container_width=True)
+                    
+                    with col2:
+                        fig5 = create_cumulative_pnl(trades_df)
+                        if fig5:
+                            st.plotly_chart(fig5, use_container_width=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig3 = create_gain_distribution(trades_df)
+                        if fig3:
+                            st.plotly_chart(fig3, use_container_width=True)
+                    
+                    with col2:
+                        fig4 = create_exit_analysis_chart(trades_df)
+                        if fig4:
+                            st.plotly_chart(fig4, use_container_width=True)
+                    
+                    # Trade log
+                    st.markdown("### Trade Log")
+                    if not trades_df.empty:
+                        display_trades = trades_df.sort_values('signal_date', ascending=False).head(100)
+                        
+                        # Select display columns
+                        display_cols = ['signal_date', 'symbol', 'matched_criteria', 'target_hit', 
+                                      'actual_gain_pct', 'high_pct', 'low_pct']
+                        display_cols = [col for col in display_cols if col in display_trades.columns]
+                        
+                        st.dataframe(
+                            display_trades[display_cols],
+                            use_container_width=True,
+                            height=400
+                        )
+                        
+                        # Download button
+                        csv = trades_df.to_csv(index=False)
+                        st.download_button(
+                            "📥 Download All Trades",
+                            csv,
+                            f"trades_strategy_{selected_id}.csv",
+                            "text/csv"
+                        )
+                    else:
+                        st.info("No trades to display")
+                
+                elif strategy['run_status'] == 'pending':
+                    st.info("This strategy hasn't been run yet. Click 'Run Backtest' in the Manage Strategies tab.")
+                elif strategy['run_status'] == 'running':
+                    st.info("This strategy is currently running. Refresh this page in a few minutes to see results.")
+                elif strategy['run_status'] == 'failed':
+                    st.error("This strategy failed to run. Check the logs for details.")
     
+    # ========================================================================
+    # TAB 2: CREATE STRATEGY
+    # ========================================================================
     with tab2:
-        if not trades_df.empty:
-            fig_dist, fig_cum = create_trade_analysis(trades_df)
-            
-            if fig_dist:
-                st.plotly_chart(fig_dist, use_container_width=True)
-            
-            if fig_cum:
-                st.plotly_chart(fig_cum, use_container_width=True)
-            
-            # Trade statistics
-            st.markdown("#### Trade Statistics")
-            
-            wins = trades_df[trades_df['pnl'] > 0]
-            losses = trades_df[trades_df['pnl'] <= 0]
+        st.markdown("### Create New Strategy")
+        
+        with st.form("create_strategy_form"):
+            name = st.text_input("Strategy Name", placeholder="e.g., High RSI Momentum")
+            description = st.text_area("Description", placeholder="Describe your strategy...")
             
             col1, col2 = st.columns(2)
-            
             with col1:
-                st.markdown("**Winning Trades**")
-                if len(wins) > 0:
-                    st.metric("Count", len(wins))
-                    st.metric("Avg Win", f"${wins['pnl'].mean():,.0f}")
-                    st.metric("Largest Win", f"${wins['pnl'].max():,.0f}")
+                if min_date and max_date:
+                    start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
+                else:
+                    start_date = st.date_input("Start Date", value=datetime.now().date() - timedelta(days=365))
             
             with col2:
-                st.markdown("**Losing Trades**")
-                if len(losses) > 0:
-                    st.metric("Count", len(losses))
-                    st.metric("Avg Loss", f"${losses['pnl'].mean():,.0f}")
-                    st.metric("Largest Loss", f"${losses['pnl'].min():,.0f}")
-        else:
-            st.info("No trades to analyze")
+                if min_date and max_date:
+                    end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
+                else:
+                    end_date = st.date_input("End Date", value=datetime.now().date())
+            
+            target_gain = st.number_input("Target Min Gain %", min_value=0.1, max_value=100.0, value=5.0, step=0.5)
+            
+            st.markdown("#### Indicator Criteria")
+            st.info("Add conditions that define when to signal a trade")
+            
+            # Number of conditions
+            num_conditions = st.number_input("Number of conditions", min_value=1, max_value=10, value=2)
+            
+            criteria = []
+            for i in range(num_conditions):
+                st.markdown(f"**Condition {i+1}**")
+                col1, col2, col3, col4 = st.columns([3, 2, 2, 3])
+                
+                with col1:
+                    indicator = st.text_input(
+                        "Indicator",
+                        key=f"ind_{i}",
+                        placeholder="e.g., rsi, macd.macd, adx"
+                    )
+                
+                with col2:
+                    operator = st.selectbox(
+                        "Operator",
+                        [">", "<", ">=", "<=", "=="],
+                        key=f"op_{i}"
+                    )
+                
+                with col3:
+                    comp_type = st.selectbox(
+                        "Compare to",
+                        ["value", "indicator"],
+                        key=f"comp_{i}"
+                    )
+                
+                with col4:
+                    if comp_type == "value":
+                        compare_value = st.number_input(
+                            "Value",
+                            key=f"val_{i}",
+                            value=0.0,
+                            step=0.1
+                        )
+                        criteria.append({
+                            'indicator': indicator,
+                            'operator': operator,
+                            'comparison_type': 'value',
+                            'value': compare_value
+                        })
+                    else:
+                        compare_indicator = st.text_input(
+                            "Indicator",
+                            key=f"comp_ind_{i}",
+                            placeholder="e.g., ema20"
+                        )
+                        criteria.append({
+                            'indicator': indicator,
+                            'operator': operator,
+                            'comparison_type': 'indicator',
+                            'compare_to': compare_indicator
+                        })
+            
+            submitted = st.form_submit_button("Create Strategy", use_container_width=True)
+            
+            if submitted:
+                if not name:
+                    st.error("Please provide a strategy name")
+                elif start_date >= end_date:
+                    st.error("Start date must be before end date")
+                else:
+                    strategy_id = save_strategy(name, description, start_date, end_date, criteria, target_gain)
+                    if strategy_id:
+                        st.success(f"✅ Strategy created successfully! ID: {strategy_id}")
+                        st.info("Go to 'Manage Strategies' tab to run the backtest")
+                        st.session_state.backtest_refresh_counter += 1
     
+    # ========================================================================
+    # TAB 3: MANAGE STRATEGIES
+    # ========================================================================
     with tab3:
-        fig_monthly = create_monthly_returns_heatmap(results_df)
-        if fig_monthly:
-            st.plotly_chart(fig_monthly, use_container_width=True)
+        st.markdown("### Manage Strategies")
+        
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("🔄 Refresh", key="manage_refresh", use_container_width=True):
+                st.cache_data.clear()
+                st.session_state.backtest_refresh_counter += 1
+                st.rerun()
+        
+        strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
+        
+        if strategies_df.empty:
+            st.info("No strategies found")
         else:
-            st.info("Not enough data for monthly returns")
-    
-    with tab4:
-        if not trades_df.empty:
-            st.markdown("#### Recent Trades")
-            
-            display_trades = trades_df.sort_values('signal_date', ascending=False).copy()
-            
-            # Format for display
-            if 'signal_date' in display_trades.columns:
-                display_trades['signal_date'] = pd.to_datetime(display_trades['signal_date']).dt.strftime('%Y-%m-%d')
-            if 'exit_date' in display_trades.columns:
-                display_trades['exit_date'] = pd.to_datetime(display_trades['exit_date']).dt.strftime('%Y-%m-%d')
-            
-            # Select columns to display
-            display_cols = ['signal_date', 'symbol', 'signal_type', 'entry_price', 'exit_price', 'pnl']
-            display_cols = [col for col in display_cols if col in display_trades.columns]
-            
-            st.dataframe(
-                display_trades[display_cols].head(100),  # Show max 100 trades
-                use_container_width=True,
-                height=400
-            )
-            
-            # Download button
-            csv = trades_df.to_csv(index=False)
-            st.download_button(
-                "📥 Download All Trades",
-                csv,
-                f"trades_strategy_{strategy_id}.csv",
-                "text/csv",
-                key="download_trades"
-            )
-        else:
-            st.info("No trades to display")
+            for idx, row in strategies_df.iterrows():
+                with st.expander(f"**{row['name']}** - {row['run_status']}", expanded=False):
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**Period:** {row['start_date']} to {row['end_date']}")
+                        st.write(f"**Target:** {row['target_min_gain_pct']}%")
+                    
+                    with col2:
+                        st.write(f"**Status:** {row['run_status']}")
+                        st.write(f"**Created:** {row['created_at'][:10]}")
+                    
+                    with col3:
+                        if row['run_status'] in ['pending', 'failed']:
+                            if st.button("▶️ Run", key=f"run_{row['id']}", use_container_width=True):
+                                with st.spinner("Triggering backtest..."):
+                                    success = run_backtest_via_github(row['id'])
+                                    if success:
+                                        st.cache_data.clear()
+                                        st.session_state.backtest_refresh_counter += 1
+                        elif row['run_status'] == 'running':
+                            st.info("Running...")
+                        else:
+                            st.success("✅ Done")
+                    
+                    if row.get('description'):
+                        st.write(f"**Description:** {row['description']}")
+                    
+                    st.write("**Criteria:**")
+                    criteria = row['indicator_criteria']
+                    if isinstance(criteria, list):
+                        for i, cond in enumerate(criteria, 1):
+                            comp_type = cond.get('comparison_type', 'value')
+                            if comp_type == 'indicator':
+                                st.write(f"{i}. `{cond.get('indicator', 'N/A')} {cond.get('operator', '')} {cond.get('compare_to', 'N/A')}`")
+                            else:
+                                st.write(f"{i}. `{cond.get('indicator', 'N/A')} {cond.get('operator', '')} {cond.get('value', '')}`")
