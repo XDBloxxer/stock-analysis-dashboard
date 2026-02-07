@@ -225,11 +225,11 @@ def create_performance_chart(daily_df: pd.DataFrame):
     
     # Cumulative matches
     if 'total_matches' in daily_df.columns:
-        daily_df_sorted = daily_df.sort_values('date')
+        daily_df_sorted = daily_df.sort_values('test_date')
         daily_df_sorted['cumulative_matches'] = daily_df_sorted['total_matches'].cumsum()
         
         fig.add_trace(go.Scatter(
-            x=daily_df_sorted['date'],
+            x=daily_df_sorted['test_date'],
             y=daily_df_sorted['cumulative_matches'],
             mode='lines',
             name='Total Matches',
