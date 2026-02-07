@@ -108,7 +108,7 @@ def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
         daily_response = client.table("backtest_results")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
-            .order("date", desc=False)\
+            .order("test_date", desc=False)\
             .execute()
         
         daily_df = pd.DataFrame(daily_response.data) if daily_response.data else pd.DataFrame()
