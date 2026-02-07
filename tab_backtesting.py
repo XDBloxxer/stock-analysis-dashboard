@@ -381,7 +381,19 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
     if matched.empty:
         return None
     
-    matched = matched.sort_values('signal_date')
+    # ✅ FIX: Find the date column
+    date_col = None
+    for possible_col in ['signal_date', 'date', 'trade_date']:
+        if possible_col in matched.columns:
+            date_col = possible_col
+            break
+    
+    if date_col is None:
+        # If no date column, just use index
+        matched = matched.reset_index(drop=True)
+    else:
+        matched = matched.sort_values(date_col)
+    
     matched['trade_num'] = range(len(matched))
     
     fig = go.Figure()
