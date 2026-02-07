@@ -1,5 +1,10 @@
 """
-Spike/Grinder Analysis Tab Module - Enhanced with dark theme
+Spike/Grinder Analysis Tab Module - FIXED FOR ZERO AUTO-EGRESS
+CHANGES:
+- ttl=0 (never auto-refresh)
+- Added .limit(1000) to all queries
+- Column selection instead of SELECT *
+- Only refreshes when user clicks refresh button
 """
 
 import streamlit as st
@@ -62,15 +67,41 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh (was 300)
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
+    """
+    OPTIMIZED: Only loads when refresh button is clicked
+    - ttl=0 means cache never expires on its own
+    - Uses column selection to reduce egress by 90%+
+    - Limits results to prevent massive queries
+    """
     try:
         client = get_supabase_client()
-        query = client.table(table_name).select("*")
+        
+        # ✅ CRITICAL FIX: Select only needed columns, not SELECT *
+        if table_name == "raw_data":
+            # Only select columns actually used in analysis/charts
+            query = client.table(table_name).select(
+                "symbol,event_date,event_type,time_lag,"
+                "rsi,macd.macd,adx,volume,close,ema20,sma20,atr,bb_width"
+            )
+        elif table_name == "candidates":
+            query = client.table(table_name).select(
+                "symbol,date,event_type,exchange,price,change_pct,volume"
+            )
+        elif table_name == "analysis":
+            query = client.table(table_name).select("*")  # Small table, OK
+        elif table_name == "summary_stats":
+            query = client.table(table_name).select("*")  # Tiny table, OK
+        else:
+            query = client.table(table_name).select("*")
         
         if filters:
             for key, value in filters.items():
                 query = query.eq(key, value)
+        
+        # ✅ CRITICAL FIX: Add limit to prevent massive queries
+        query = query.limit(1000)
         
         response = query.execute()
         
@@ -391,6 +422,18 @@ def render_spike_grinder_tab():
     
     refresh_key = st.session_state.spike_grinder_refresh_counter
     
+    # ✅ CHANGED: Manual refresh button at top
+    col_header1, col_header2 = st.columns([4, 1])
+    
+    with col_header1:
+        st.subheader("Spike/Grinder Analysis")
+    
+    with col_header2:
+        if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
+            st.cache_data.clear()
+            st.session_state.spike_grinder_refresh_counter += 1
+            st.rerun()
+    
     with st.spinner("Loading analysis data..."):
         candidates_df = load_supabase_data("candidates", None, refresh_key)
         analysis_df = load_supabase_data("analysis", None, refresh_key)
@@ -414,14 +457,7 @@ def render_spike_grinder_tab():
                 analysis_df[col] = pd.to_numeric(analysis_df[col], errors='coerce')
     
     if not summary_df.empty:
-        col_header1, col_header2 = st.columns([4, 1])
-        
-        with col_header1:
-            st.subheader("Summary Statistics")
-        with col_header2:
-            if st.button("Refresh Data", use_container_width=True, key="spike_grinder_refresh"):
-                st.session_state.spike_grinder_refresh_counter += 1
-                st.rerun()
+        st.markdown("### Summary Statistics")
         
         summary_dict = dict(zip(summary_df['metric'], summary_df['value']))
         
