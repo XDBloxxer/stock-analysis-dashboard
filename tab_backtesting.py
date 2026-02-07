@@ -371,9 +371,29 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
     if trades_df.empty:
         return None
     
-    # ✅ FIX: Check columns exist before accessing
-    required_cols = ['actual_gain_pct', 'high_pct', 'low_pct', 'matched_criteria']
+    # ✅ FIX: Check for actual column names in your database
+    # You have: exit_high, exit_low, max_possible_gain_pct, max_drawdown_pct
+    required_cols = ['actual_gain_pct', 'matched_criteria']
     if not all(col in trades_df.columns for col in required_cols):
+        return None
+    
+    # Check for high/low columns with flexible naming
+    high_col = None
+    low_col = None
+    
+    # Check for high column
+    for possible_high in ['max_possible_gain_pct', 'high_pct', 'exit_high']:
+        if possible_high in trades_df.columns:
+            high_col = possible_high
+            break
+    
+    # Check for low column
+    for possible_low in ['max_drawdown_pct', 'low_pct', 'exit_low']:
+        if possible_low in trades_df.columns:
+            low_col = possible_low
+            break
+    
+    if high_col is None or low_col is None:
         return None
     
     matched = trades_df[trades_df['matched_criteria'] == True].copy()
@@ -410,24 +430,24 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
     
     fig.add_trace(go.Scatter(
         x=matched['trade_num'],
-        y=matched['high_pct'],
+        y=matched[high_col],
         mode='markers',
-        name='Intraday High',
+        name='Max Possible Gain',
         marker=dict(size=6, color='#10b981', symbol='triangle-up'),
-        hovertemplate='High: %{y:.2f}%<extra></extra>'
+        hovertemplate='Max: %{y:.2f}%<extra></extra>'
     ))
     
     fig.add_trace(go.Scatter(
         x=matched['trade_num'],
-        y=matched['low_pct'],
+        y=matched[low_col],
         mode='markers',
-        name='Intraday Low',
+        name='Max Drawdown',
         marker=dict(size=6, color='#ef4444', symbol='triangle-down'),
-        hovertemplate='Low: %{y:.2f}%<extra></extra>'
+        hovertemplate='Drawdown: %{y:.2f}%<extra></extra>'
     ))
     
     fig.update_layout(
-        title="<b>Exit Analysis: Close vs Intraday Range</b>",
+        title="<b>Exit Analysis: Actual vs Intraday Range</b>",
         xaxis_title="Trade Number",
         yaxis_title="Gain %",
         height=400,
@@ -667,11 +687,13 @@ def render_backtesting_tab():
                             st.write(f"**Trades DF empty?** {trades_df.empty}")
                             if not trades_df.empty:
                                 st.write(f"**Columns in trades_df:** {list(trades_df.columns)}")
-                                required = ['actual_gain_pct', 'high_pct', 'low_pct', 'matched_criteria']
-                                st.write(f"**Required columns present?**")
-                                for col in required:
-                                    present = col in trades_df.columns
-                                    st.write(f"  - {col}: {'✅' if present else '❌'}")
+                                
+                                # Check for actual column names
+                                st.write(f"**Column availability:**")
+                                st.write(f"  - actual_gain_pct: {'✅' if 'actual_gain_pct' in trades_df.columns else '❌'}")
+                                st.write(f"  - max_possible_gain_pct: {'✅' if 'max_possible_gain_pct' in trades_df.columns else '❌'}")
+                                st.write(f"  - max_drawdown_pct: {'✅' if 'max_drawdown_pct' in trades_df.columns else '❌'}")
+                                st.write(f"  - matched_criteria: {'✅' if 'matched_criteria' in trades_df.columns else '❌'}")
                                 
                                 if 'matched_criteria' in trades_df.columns:
                                     matched_count = (trades_df['matched_criteria'] == True).sum()
@@ -681,7 +703,7 @@ def render_backtesting_tab():
                         if fig4:
                             st.plotly_chart(fig4, use_container_width=True)
                         else:
-                            st.warning("Exit analysis chart not available - check debug info above")
+                            st.info("Exit analysis chart requires actual_gain_pct, max_possible_gain_pct, and max_drawdown_pct columns")
                     
                     # Trade log
                     st.markdown("### Trade Log")
