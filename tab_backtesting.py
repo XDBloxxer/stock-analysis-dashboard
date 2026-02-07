@@ -405,8 +405,9 @@ def render_backtesting_tab():
     
     total_pnl = results_df['daily_pnl'].sum() if 'daily_pnl' in results_df.columns else 0
     num_trades = len(trades_df)
-    win_rate = (len(trades_df[trades_df['pnl'] > 0]) / num_trades * 100) if num_trades > 0 else 0
-    
+    # ✅ FIX: Check if 'pnl' column exists before filtering
+    win_rate = (len(trades_df[trades_df['pnl'] > 0]) / num_trades * 100) if num_trades > 0 and 'pnl' in trades_df.columns else 0
+
     if 'cumulative_pnl' in results_df.columns:
         returns = results_df['daily_pnl'].values
         if len(returns) > 1 and returns.std() > 0:
