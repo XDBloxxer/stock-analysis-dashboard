@@ -105,7 +105,7 @@ def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
         client = get_supabase_client()
         
         # Load daily results
-        daily_response = client.table("backtest_daily_results")\
+        daily_response = client.table("backtest_results")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
             .order("date", desc=False)\
