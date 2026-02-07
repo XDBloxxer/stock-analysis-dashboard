@@ -271,10 +271,10 @@ def create_confusion_matrix(trades_df: pd.DataFrame):
         return None
     
     # Calculate confusion matrix values
-    tp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['target_hit'] == True)])
-    fp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['target_hit'] == False)])
-    fn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['target_hit'] == True)])
-    tn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['target_hit'] == False)])
+    tp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['hit_target'] == True)])
+    fp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['hit_target'] == False)])
+    fn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['hit_target'] == True)])
+    tn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['hit_target'] == False)])
     
     matrix = [[tp, fp], [fn, tn]]
     labels = [['True Positive', 'False Positive'], ['False Negative', 'True Negative']]
@@ -548,7 +548,7 @@ def render_backtesting_tab():
                             profit_factor = (total_gains / total_losses) if total_losses > 0 else None
                             
                             # ✅ FIX: Safe column access
-                            intraday_hits = matched_trades.get('target_hit_intraday', pd.Series([False])).sum()
+                            intraday_hits = matched_trades.get('hit_target_intraday', pd.Series([False])).sum()
                             intraday_rate = (intraday_hits / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
                             
                             st.markdown("#### Advanced Metrics")
@@ -600,7 +600,7 @@ def render_backtesting_tab():
                         display_trades = trades_df.sort_values('signal_date', ascending=False).head(100)
                         
                         # Select display columns
-                        display_cols = ['signal_date', 'symbol', 'matched_criteria', 'target_hit', 
+                        display_cols = ['signal_date', 'symbol', 'matched_criteria', 'hit_target', 
                                       'actual_gain_pct', 'high_pct', 'low_pct']
                         display_cols = [col for col in display_cols if col in display_trades.columns]
                         
