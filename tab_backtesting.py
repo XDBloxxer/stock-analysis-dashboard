@@ -513,14 +513,11 @@ def render_backtesting_tab():
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
     
+    # Initialize session state
     if 'backtest_refresh_counter' not in st.session_state:
         st.session_state.backtest_refresh_counter = 0
-    
-    # Get date range
-    min_date, max_date = get_date_range_from_db(st.session_state.backtest_refresh_counter)
-    
-    if min_date and max_date:
-        st.info(f"📅 Available data range: **{min_date}** to **{max_date}**")
+    if 'backtest_data_loaded' not in st.session_state:
+        st.session_state.backtest_data_loaded = False
     
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
@@ -536,9 +533,15 @@ def render_backtesting_tab():
             if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
                 st.cache_data.clear()
                 st.session_state.backtest_refresh_counter += 1
+                st.session_state.backtest_data_loaded = True
                 st.rerun()
         
-        # Load strategies
+        # ✅ CRITICAL: Only load data if user has clicked refresh
+        if not st.session_state.backtest_data_loaded:
+            st.info("👆 Click 'Refresh' to load backtesting results")
+            return
+        
+        # Load strategies (only after refresh clicked)
         strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
         
         if strategies_df.empty:
@@ -744,6 +747,11 @@ def render_backtesting_tab():
     # ========================================================================
     with tab2:
         st.markdown("### Create New Strategy")
+        
+        # ✅ Only load date range when creating strategy (not on every render)
+        min_date, max_date = None, None
+        if st.session_state.backtest_data_loaded:
+            min_date, max_date = get_date_range_from_db(st.session_state.backtest_refresh_counter)
         
         with st.form("create_strategy_form"):
             name = st.text_input("Strategy Name", placeholder="e.g., High RSI Momentum")
