@@ -1,9 +1,9 @@
 """
-Spike/Grinder Analysis Tab Module - TRUE PERSISTENT CACHE (survives browser refresh)
+Spike/Grinder Analysis Tab Module - PER-TAB PERSISTENT CACHE
 CHANGES:
-- ✅ Removed session_state flags that reset on refresh
+- ✅ Per-tab refresh counter (only refreshes this tab's data)
 - ✅ Data loads automatically on first access (from cache if available)
-- ✅ Manual refresh button to force new data fetch
+- ✅ Manual refresh button only refreshes THIS tab's data
 - ✅ Cache survives browser close/refresh
 """
 
@@ -34,15 +34,14 @@ COLORS = {
     'warning': '#f59e0b'
 }
 
-# Custom colorscales for heatmaps with better readability
 COLORSCALES = {
     'rdylgn_dark': [
-        [0, '#7f1d1d'],      # Dark red
-        [0.25, '#dc2626'],   # Red
-        [0.4, '#94a3b8'],    # Gray (neutral)
-        [0.6, '#94a3b8'],    # Gray (neutral)
-        [0.75, '#059669'],   # Green
-        [1, '#064e3b']       # Dark green
+        [0, '#7f1d1d'],
+        [0.25, '#dc2626'],
+        [0.4, '#94a3b8'],
+        [0.6, '#94a3b8'],
+        [0.75, '#059669'],
+        [1, '#064e3b']
     ],
     'blues_dark': [
         [0, '#1e293b'],
@@ -50,9 +49,9 @@ COLORSCALES = {
         [1, '#667eea']
     ],
     'rdbu_dark': [
-        [0, '#7f1d1d'],      # Dark red
-        [0.5, '#475569'],    # Gray
-        [1, '#1e3a8a']       # Dark blue
+        [0, '#7f1d1d'],
+        [0.5, '#475569'],
+        [1, '#1e3a8a']
     ]
 }
 
@@ -68,10 +67,10 @@ def get_supabase_client():
     return create_client(supabase_url, supabase_key)
 
 @st.cache_resource
-def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
+def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
-    PERSISTENT cache - survives browser refresh!
-    Only refreshes when _refresh_key changes (manual refresh button)
+    PERSISTENT cache with per-tab isolation
+    _tab_id ensures spike_grinder tab has separate cache from other tabs
     """
     try:
         client = get_supabase_client()
@@ -274,8 +273,8 @@ def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
     
     return fig
 
-def create_correlation_matrix(analysis_df, selected_lag, refresh_key):
-    raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag}, refresh_key)
+def create_correlation_matrix(tab_id, analysis_df, selected_lag, refresh_key):
+    raw_df = load_supabase_data(tab_id, "raw_data", {"time_lag": selected_lag}, refresh_key)
     
     if raw_df.empty or 'event_type' not in raw_df.columns:
         return None
@@ -315,14 +314,14 @@ def create_correlation_matrix(analysis_df, selected_lag, refresh_key):
     
     return fig
 
-def create_box_plot(analysis_df, selected_indicators, refresh_key):
+def create_box_plot(tab_id, analysis_df, selected_indicators, refresh_key):
     if analysis_df.empty:
         return None
     
     all_data = []
     
     for lag in TIME_LAG_ORDER:
-        raw_df = load_supabase_data("raw_data", {"time_lag": lag}, refresh_key)
+        raw_df = load_supabase_data(tab_id, "raw_data", {"time_lag": lag}, refresh_key)
         if not raw_df.empty and 'event_type' in raw_df.columns:
             raw_df['time_lag'] = lag
             all_data.append(raw_df)
@@ -423,9 +422,11 @@ def create_time_series_comparison(analysis_df, selected_indicators):
     return fig
 
 def render_spike_grinder_tab():
-    # Initialize refresh counter in session state
-    if 'spike_grinder_refresh_counter' not in st.session_state:
-        st.session_state.spike_grinder_refresh_counter = 0
+    TAB_ID = "spike_grinder"  # Unique ID for this tab's cache
+    
+    # Initialize PER-TAB refresh counter
+    if f'{TAB_ID}_refresh_counter' not in st.session_state:
+        st.session_state[f'{TAB_ID}_refresh_counter'] = 0
     
     col_header1, col_header2 = st.columns([4, 1])
     
@@ -434,17 +435,16 @@ def render_spike_grinder_tab():
     
     with col_header2:
         if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
-            st.cache_resource.clear()
-            st.session_state.spike_grinder_refresh_counter += 1
+            st.session_state[f'{TAB_ID}_refresh_counter'] += 1
             st.rerun()
     
-    refresh_key = st.session_state.spike_grinder_refresh_counter
+    refresh_key = st.session_state[f'{TAB_ID}_refresh_counter']
     
-    # Load data automatically (from cache if available, fresh if not)
+    # Load data automatically (from cache if available) - with tab-specific key
     with st.spinner("Loading analysis data..."):
-        candidates_df = load_supabase_data("candidates", None, refresh_key)
-        analysis_df = load_supabase_data("analysis", None, refresh_key)
-        summary_df = load_supabase_data("summary_stats", None, refresh_key)
+        candidates_df = load_supabase_data(TAB_ID, "candidates", None, refresh_key)
+        analysis_df = load_supabase_data(TAB_ID, "analysis", None, refresh_key)
+        summary_df = load_supabase_data(TAB_ID, "summary_stats", None, refresh_key)
     
     if analysis_df.empty and candidates_df.empty:
         st.warning("No analysis data available yet")
@@ -574,7 +574,7 @@ def render_spike_grinder_tab():
                 
                 if selected_indicators:
                     with st.spinner("Loading raw data for box plots..."):
-                        fig = create_box_plot(analysis_df, selected_indicators, refresh_key)
+                        fig = create_box_plot(TAB_ID, analysis_df, selected_indicators, refresh_key)
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
                         else:
@@ -587,7 +587,7 @@ def render_spike_grinder_tab():
                 selected_lag = st.selectbox("Select time lag:", available_lags, key="corr_lag")
                 
                 with st.spinner("Calculating correlations..."):
-                    fig = create_correlation_matrix(analysis_df, selected_lag, refresh_key)
+                    fig = create_correlation_matrix(TAB_ID, analysis_df, selected_lag, refresh_key)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
@@ -597,7 +597,7 @@ def render_spike_grinder_tab():
                 available_lags = sorted(analysis_df['time_lag'].unique())
                 selected_lag = st.selectbox("Select time lag:", available_lags, key="dist_lag")
                 
-                raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag}, refresh_key)
+                raw_df = load_supabase_data(TAB_ID, "raw_data", {"time_lag": selected_lag}, refresh_key)
                 
                 if not raw_df.empty and 'event_type' in raw_df.columns:
                     exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at']
@@ -639,7 +639,7 @@ def render_spike_grinder_tab():
                 st.info("Select two indicators to plot against each other")
                 
                 raw_lag = st.selectbox("Select time lag:", sorted(analysis_df['time_lag'].unique()), key='scatter_lag')
-                raw_df = load_supabase_data("raw_data", {"time_lag": raw_lag}, refresh_key)
+                raw_df = load_supabase_data(TAB_ID, "raw_data", {"time_lag": raw_lag}, refresh_key)
                 
                 if not raw_df.empty:
                     exclude_cols = ['id', 'symbol', 'event_date', 'event_type', 'exchange', 'time_lag', 'created_at']
@@ -691,7 +691,7 @@ def render_spike_grinder_tab():
         with data_tabs[2]:
             if not analysis_df.empty and 'time_lag' in analysis_df.columns:
                 lag_selector = st.selectbox("Select time lag:", TIME_LAG_ORDER, key='raw_data_lag')
-                raw_df = load_supabase_data("raw_data", {"time_lag": lag_selector}, refresh_key)
+                raw_df = load_supabase_data(TAB_ID, "raw_data", {"time_lag": lag_selector}, refresh_key)
                 if not raw_df.empty:
                     st.dataframe(raw_df, use_container_width=True, height=500)
                     st.download_button("Download CSV", raw_df.to_csv(index=False), f"raw_data_{lag_selector}.csv", "text/csv", key="download_raw")
