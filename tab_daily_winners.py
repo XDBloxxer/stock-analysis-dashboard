@@ -365,7 +365,7 @@ def render_daily_winners_tab():
             'Price ($)': '${:.2f}',
             'Change (%)': '{:+.2f}%',
             'Volume': '{:,.0f}'
-        }).background_gradient(subset=['Change (%)'], cmap='vanimo'),
+        }).background_gradient(subset=['Change (%)'], cmap='PiYG'),
         use_container_width=True,
         height=400
     )
