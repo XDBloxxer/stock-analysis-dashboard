@@ -1,10 +1,11 @@
 """
-Daily Winners Tab Module - FIXED FOR ZERO AUTO-EGRESS
+Daily Winners Tab Module - FIXED FOR ZERO AUTO-EGRESS + PERSISTENT CACHE
 CHANGES:
-- ttl=0 (never auto-refresh)
-- Added .limit(100) to all queries
-- Column selection for winners tables
-- Only refreshes when user clicks refresh button
+- ✅ Fixed PostgREST query (no dot notation - select entire JSON objects)
+- ✅ Extract nested fields in Python after query
+- ✅ Use st.cache_resource for persistent cache (survives browser close)
+- ✅ Only refreshes when user clicks refresh button
+- ✅ Column selection + limit(100) to minimize egress
 """
 
 import streamlit as st
@@ -44,11 +45,11 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh (was 300)
+@st.cache_resource  # ✅ CHANGED: cache_resource persists forever (even after browser close)
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
-    OPTIMIZED: Only loads when refresh button is clicked
-    - ttl=0 means cache never expires on its own
+    OPTIMIZED: Persistent cache that survives browser close
+    - cache_resource = persists forever until manual refresh
     - Uses column selection to reduce egress
     - Limits results to 100 rows max
     """
@@ -62,12 +63,13 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
             )
         elif table_name in ["winners_market_open", "winners_market_close", 
                            "winners_day_prior_open", "winners_day_prior_close"]:
-            # Only select most important indicators, not all 150 columns
+            # ✅ FIX: Select entire JSON objects (macd, stoch), not dot notation
+            # We'll extract nested fields in Python after the query
             query = client.table(table_name).select(
                 "symbol,exchange,detection_date,snapshot_type,snapshot_time,"
                 "open,high,low,close,volume,"
-                "rsi,macd.macd,adx,ema20,sma20,atr,bb_width,"
-                "stoch.k,w.r,ao,cci20"
+                "rsi,macd,adx,ema20,sma20,atr,bb_width,"
+                "stoch,w_r,ao,cci20"
             )
         else:
             query = client.table(table_name).select("*")
@@ -86,6 +88,28 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
+        
+        # ✅ FIX: Extract nested JSON fields in Python
+        # MACD fields
+        if 'macd' in df.columns:
+            df['macd_value'] = df['macd'].apply(
+                lambda x: x.get('macd') if isinstance(x, dict) else x
+            )
+            df['macd_signal'] = df['macd'].apply(
+                lambda x: x.get('signal') if isinstance(x, dict) else None
+            )
+            df['macd_histogram'] = df['macd'].apply(
+                lambda x: x.get('histogram') if isinstance(x, dict) else None
+            )
+        
+        # Stochastic fields
+        if 'stoch' in df.columns:
+            df['stoch_k'] = df['stoch'].apply(
+                lambda x: x.get('k') if isinstance(x, dict) else x
+            )
+            df['stoch_d'] = df['stoch'].apply(
+                lambda x: x.get('d') if isinstance(x, dict) else None
+            )
         
         if 'symbol' in df.columns:
             df['symbol'] = df['symbol'].str.strip().str.upper()
@@ -113,11 +137,13 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
             'labels': {price_field: price_label, 'volume': 'Volume'}
         },
         "Momentum": {
-            'fields': ["rsi", "rsi[1]", "rsi[2]", "stoch.k", "stoch.d", "mom", "w.r", "roc", "tsi", "kama"],
+            # ✅ FIX: Use extracted column names (macd_value, stoch_k, stoch_d)
+            'fields': ["rsi", "rsi[1]", "rsi[2]", "stoch_k", "stoch_d", "mom", "w_r", "roc", "tsi", "kama"],
             'labels': {}
         },
         "Trend": {
-            'fields': ["macd.macd", "macd.signal", "adx", "adx+di", "adx-di", "ema20", "ema50", "ema200", 
+            # ✅ FIX: Use extracted column names (macd_value, macd_signal)
+            'fields': ["macd_value", "macd_signal", "adx", "adx+di", "adx-di", "ema20", "ema50", "ema200", 
                       "sma20", "sma50", "sma200", "aroon_up", "aroon_down", "psar"],
             'labels': {}
         },
@@ -200,7 +226,8 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
             st.write(f"Available: {timepoints[0][0]}")
         return
     
-    common_indicators = ["rsi", "macd.macd", "adx", "volume", "close", "atr", "bb_width", "stoch.k", 
+    # ✅ FIX: Use extracted column names
+    common_indicators = ["rsi", "macd_value", "adx", "volume", "close", "atr", "bb_width", "stoch_k", 
                         "ema20", "ema50", "sma20", "volatility_20d", "volume_ratio"]
     available_indicators = []
     
@@ -314,8 +341,6 @@ def render_daily_winners_tab():
     
     available_dates = st.session_state.daily_winners_available_dates
     
-    # ... rest of your code ...
-    
     if not available_dates:
         st.warning("No daily winners data available yet")
         st.info("Run `python daily_winners_main.py` to collect data")
@@ -332,9 +357,9 @@ def render_daily_winners_tab():
         )
     
     with col2:
-        # ✅ CHANGED: Manual refresh button
+        # ✅ Manual refresh button - increments counter to bust cache
         if st.button("🔄 Refresh Data", use_container_width=True, key="daily_winners_refresh"):
-            st.cache_data.clear()
+            st.cache_resource.clear()  # ✅ CHANGED: clear cache_resource
             st.session_state.daily_winners_refresh_counter += 1
             st.rerun()
     
@@ -343,6 +368,8 @@ def render_daily_winners_tab():
         st.metric("Day of Week", date_obj.strftime("%A"))
     
     refresh_key = st.session_state.daily_winners_refresh_counter
+    
+    # ✅ Data loads ONCE and persists forever (until manual refresh)
     with st.spinner(f"Loading data for {selected_date}..."):
         winners_df = load_supabase_data("daily_winners", {"detection_date": selected_date}, refresh_key)
         market_open_df = load_supabase_data("winners_market_open", {"detection_date": selected_date}, refresh_key)
