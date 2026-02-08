@@ -385,7 +385,7 @@ def render_daily_winners_tab():
         with col3:
             st.metric("Change", f"{winner_info['change_pct']:+.2f}%", delta=f"{winner_info['change_pct']:.2f}%")
         with col4:
-            st.metric("Volume", f"{winner_info['volume']/1e6:.1f}M")
+            st.metric("Volume", f"{winner_info['volume']/1e3:.3f}K")
         
         st.markdown("---")
         
