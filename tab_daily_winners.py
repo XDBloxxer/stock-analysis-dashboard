@@ -63,13 +63,13 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
             )
         elif table_name in ["winners_market_open", "winners_market_close", 
                            "winners_day_prior_open", "winners_day_prior_close"]:
-            # ✅ FIX: Select entire JSON objects (macd, stoch), not dot notation
-            # We'll extract nested fields in Python after the query
+            # ✅ FIX: Use double quotes for column names with dots (e.g., "macd.macd", "stoch.k")
+            # These are actual column names, not nested JSON
             query = client.table(table_name).select(
-                "symbol,exchange,detection_date,snapshot_type,snapshot_time,"
-                "open,high,low,close,volume,"
-                "rsi,macd,adx,ema20,sma20,atr,bb_width,"
-                "stoch,w_r,ao,cci20"
+                'symbol,exchange,detection_date,snapshot_type,snapshot_time,'
+                'open,high,low,close,volume,'
+                'rsi,"macd.macd","macd.signal",adx,ema20,sma20,atr,bb_width,'
+                '"stoch.k","stoch.d","w.r",ao,cci20'
             )
         else:
             query = client.table(table_name).select("*")
@@ -89,27 +89,16 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
         
-        # ✅ FIX: Extract nested JSON fields in Python
-        # MACD fields
-        if 'macd' in df.columns:
-            df['macd_value'] = df['macd'].apply(
-                lambda x: x.get('macd') if isinstance(x, dict) else x
-            )
-            df['macd_signal'] = df['macd'].apply(
-                lambda x: x.get('signal') if isinstance(x, dict) else None
-            )
-            df['macd_histogram'] = df['macd'].apply(
-                lambda x: x.get('histogram') if isinstance(x, dict) else None
-            )
-        
-        # Stochastic fields
-        if 'stoch' in df.columns:
-            df['stoch_k'] = df['stoch'].apply(
-                lambda x: x.get('k') if isinstance(x, dict) else x
-            )
-            df['stoch_d'] = df['stoch'].apply(
-                lambda x: x.get('d') if isinstance(x, dict) else None
-            )
+        # PostgREST returns columns with dots as-is (e.g., "macd.macd", "stoch.k")
+        # Rename them to Python-friendly names for easier access
+        rename_map = {
+            'macd.macd': 'macd_value',
+            'macd.signal': 'macd_signal',
+            'stoch.k': 'stoch_k',
+            'stoch.d': 'stoch_d',
+            'w.r': 'w_r'
+        }
+        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
         
         if 'symbol' in df.columns:
             df['symbol'] = df['symbol'].str.strip().str.upper()
