@@ -175,7 +175,7 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     value = data_row[field]
 
                     if field == "volume":
-                        display_val = f"{value/1e6:.1f}M"
+                        display_val = f"{value/1e3:.1f}K"
                     elif abs(value) >= 1000:
                         display_val = f"{value:.0f}"
                     elif abs(value) >= 10:
@@ -385,7 +385,7 @@ def render_daily_winners_tab():
         with col3:
             st.metric("Change", f"{winner_info['change_pct']:+.2f}%", delta=f"{winner_info['change_pct']:.2f}%")
         with col4:
-            st.metric("Volume", f"{winner_info['volume']/1e3:.3f}K")
+            st.metric("Volume", f"{winner_info['volume']/1e6:.1f}M")
         
         st.markdown("---")
         
