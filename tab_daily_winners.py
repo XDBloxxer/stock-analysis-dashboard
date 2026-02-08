@@ -175,7 +175,11 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     value = data_row[field]
 
                     if field == "volume":
-                        display_val = f"{value/1e3:.1f}K"
+                        if value > 1000000: 
+                            display_val = f"{value/1e6:.1f}M"
+                        else:
+                            display_val = f"{value/1e3:.1f}K"
+                        
                     elif abs(value) >= 1000:
                         display_val = f"{value:.0f}"
                     elif abs(value) >= 10:
