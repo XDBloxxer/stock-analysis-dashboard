@@ -1,11 +1,10 @@
 """
-Daily Winners Tab Module - FIXED FOR ZERO AUTO-EGRESS + PERSISTENT CACHE
+Daily Winners Tab Module - TRUE PERSISTENT CACHE (survives browser refresh)
 CHANGES:
-- ✅ Fixed PostgREST query (no dot notation - select entire JSON objects)
-- ✅ Extract nested fields in Python after query
-- ✅ Use st.cache_resource for persistent cache (survives browser close)
-- ✅ Only refreshes when user clicks refresh button
-- ✅ Column selection + limit(100) to minimize egress
+- ✅ Removed session_state flags that reset on refresh
+- ✅ Data loads automatically on first access (from cache if available)
+- ✅ Manual refresh button to force new data fetch
+- ✅ Cache survives browser close/refresh
 """
 
 import streamlit as st
@@ -45,26 +44,34 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_resource  # ✅ CHANGED: cache_resource persists forever (even after browser close)
+@st.cache_resource
+def load_available_dates(_refresh_key: int = 0):
+    """Load available dates - cached forever until manual refresh"""
+    try:
+        client = get_supabase_client()
+        response = client.table("daily_winners").select("detection_date").limit(100).execute()
+        if response.data:
+            return sorted(list(set(row["detection_date"] for row in response.data)), reverse=True)
+        return []
+    except Exception as e:
+        st.error(f"Error loading dates: {e}")
+        return []
+
+@st.cache_resource
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
-    OPTIMIZED: Persistent cache that survives browser close
-    - cache_resource = persists forever until manual refresh
-    - Uses column selection to reduce egress
-    - Limits results to 100 rows max
+    PERSISTENT cache - survives browser refresh!
+    Only refreshes when _refresh_key changes (manual refresh button)
     """
     try:
         client = get_supabase_client()
         
-        # ✅ CRITICAL FIX: Select only needed columns for each table
         if table_name == "daily_winners":
             query = client.table(table_name).select(
                 "symbol,exchange,price,change_pct,volume,detection_date"
             )
         elif table_name in ["winners_market_open", "winners_market_close", 
                            "winners_day_prior_open", "winners_day_prior_close"]:
-            # ✅ FIX: Use double quotes for column names with dots (e.g., "macd.macd", "stoch.k")
-            # These are actual column names, not nested JSON
             query = client.table(table_name).select(
                 'symbol,exchange,detection_date,snapshot_type,snapshot_time,'
                 'open,high,low,close,volume,'
@@ -78,7 +85,6 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
             for key, value in filters.items():
                 query = query.eq(key, value)
         
-        # ✅ CRITICAL FIX: Limit to 100 rows max
         query = query.limit(100)
         
         response = query.execute()
@@ -89,8 +95,6 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
         
-        # PostgREST returns columns with dots as-is (e.g., "macd.macd", "stoch.k")
-        # Rename them to Python-friendly names for easier access
         rename_map = {
             'macd.macd': 'macd_value',
             'macd.signal': 'macd_signal',
@@ -112,7 +116,6 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
     """Render indicator snapshot with contextually appropriate price display"""
     st.markdown(f"**{title}**")
 
-    # Define indicator groups based on snapshot type
     if snapshot_type in ['market_open', 'day_prior_open']:
         price_field = 'open'
         price_label = 'Opening Price'
@@ -126,12 +129,10 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
             'labels': {price_field: price_label, 'volume': 'Volume'}
         },
         "Momentum": {
-            # ✅ FIX: Use extracted column names (macd_value, stoch_k, stoch_d)
             'fields': ["rsi", "rsi[1]", "rsi[2]", "stoch_k", "stoch_d", "mom", "w_r", "roc", "tsi", "kama"],
             'labels': {}
         },
         "Trend": {
-            # ✅ FIX: Use extracted column names (macd_value, macd_signal)
             'fields': ["macd_value", "macd_signal", "adx", "adx+di", "adx-di", "ema20", "ema50", "ema200", 
                       "sma20", "sma50", "sma200", "aroon_up", "aroon_down", "psar"],
             'labels': {}
@@ -215,7 +216,6 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
             st.write(f"Available: {timepoints[0][0]}")
         return
     
-    # ✅ FIX: Use extracted column names
     common_indicators = ["rsi", "macd_value", "adx", "volume", "close", "atr", "bb_width", "stoch_k", 
                         "ema20", "ema50", "sma20", "volatility_20d", "volume_ratio"]
     available_indicators = []
@@ -281,60 +281,21 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
     st.plotly_chart(fig, use_container_width=True)
 
 def render_daily_winners_tab():
-    # Initialize session state FIRST
-    if 'daily_winners_data_loaded' not in st.session_state:
-        st.session_state.daily_winners_data_loaded = False
-    
+    # Initialize refresh counter in session state (persists during session)
     if 'daily_winners_refresh_counter' not in st.session_state:
         st.session_state.daily_winners_refresh_counter = 0
     
-    # CRITICAL: Exit early if data not loaded - DON'T query anything
-    if not st.session_state.daily_winners_data_loaded:
-        st.info("👆 Select a date and click 'Load Data' to load winners")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Simple date picker - NO database queries
-            selected_date = st.date_input(
-                "Select Date:",
-                value=datetime.now().date() - timedelta(days=1),
-                key="daily_winners_date_initial"
-            )
-        
-        with col2:
-            if st.button("🔄 Load Data", use_container_width=True, key="daily_winners_initial_load"):
-                st.session_state.daily_winners_data_loaded = True
-                st.session_state.daily_winners_refresh_counter += 1
-                st.rerun()
-        
-        return  # EXIT - no data loading!
+    refresh_key = st.session_state.daily_winners_refresh_counter
     
-    # NOW we can query (only after user clicked "Load Data")
-    client = get_supabase_client()
-    
-    # Only query available dates ONCE when first loading
-    if 'daily_winners_available_dates' not in st.session_state:
-        try:
-            response = client.table("daily_winners").select("detection_date").limit(100).execute()
-            if response.data:
-                st.session_state.daily_winners_available_dates = sorted(
-                    list(set(row["detection_date"] for row in response.data)), 
-                    reverse=True
-                )
-            else:
-                st.session_state.daily_winners_available_dates = []
-        except Exception as e:
-            st.error(f"Error loading dates: {e}")
-            st.session_state.daily_winners_available_dates = []
-    
-    available_dates = st.session_state.daily_winners_available_dates
+    # Load available dates (from cache or fresh) - NO GATES
+    available_dates = load_available_dates(refresh_key)
     
     if not available_dates:
         st.warning("No daily winners data available yet")
         st.info("Run `python daily_winners_main.py` to collect data")
         return
     
+    # UI controls at top
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
@@ -346,9 +307,9 @@ def render_daily_winners_tab():
         )
     
     with col2:
-        # ✅ Manual refresh button - increments counter to bust cache
+        # Manual refresh button - increments counter to bust ALL caches
         if st.button("🔄 Refresh Data", use_container_width=True, key="daily_winners_refresh"):
-            st.cache_resource.clear()  # ✅ CHANGED: clear cache_resource
+            st.cache_resource.clear()
             st.session_state.daily_winners_refresh_counter += 1
             st.rerun()
     
@@ -356,9 +317,8 @@ def render_daily_winners_tab():
         date_obj = datetime.fromisoformat(selected_date)
         st.metric("Day of Week", date_obj.strftime("%A"))
     
-    refresh_key = st.session_state.daily_winners_refresh_counter
-    
-    # ✅ Data loads ONCE and persists forever (until manual refresh)
+    # Load data automatically (from cache if available, fresh if not)
+    # This will be INSTANT on browser refresh if data is cached!
     with st.spinner(f"Loading data for {selected_date}..."):
         winners_df = load_supabase_data("daily_winners", {"detection_date": selected_date}, refresh_key)
         market_open_df = load_supabase_data("winners_market_open", {"detection_date": selected_date}, refresh_key)
