@@ -1,10 +1,10 @@
 """
-Spike/Grinder Analysis Tab Module - FIXED FOR PERSISTENT CACHE
+Spike/Grinder Analysis Tab Module - TRUE PERSISTENT CACHE (survives browser refresh)
 CHANGES:
-- ✅ cache_resource (persistent cache that survives browser close)
-- ✅ Added .limit(1000) to all queries
-- ✅ Column selection instead of SELECT *
-- ✅ Only refreshes when user clicks refresh button
+- ✅ Removed session_state flags that reset on refresh
+- ✅ Data loads automatically on first access (from cache if available)
+- ✅ Manual refresh button to force new data fetch
+- ✅ Cache survives browser close/refresh
 """
 
 import streamlit as st
@@ -67,32 +67,28 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_resource  # ✅ CHANGED: cache_resource persists forever
+@st.cache_resource
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
-    OPTIMIZED: Persistent cache that survives browser close
-    - cache_resource = persists forever until manual refresh
-    - Uses column selection to reduce egress by 90%+
-    - Limits results to prevent massive queries
+    PERSISTENT cache - survives browser refresh!
+    Only refreshes when _refresh_key changes (manual refresh button)
     """
     try:
         client = get_supabase_client()
         
-        # ✅ CRITICAL FIX: Select only needed columns, not SELECT *
         if table_name == "candidates":
             query = client.table(table_name).select(
                 "symbol,exchange,date,event_type,price,change_pct,volume"
             )
         elif table_name == "raw_data":
-            # Only select columns actually used in analysis/charts
             query = client.table(table_name).select(
                 "symbol,event_date,event_type,time_lag,"
                 "rsi,macd,adx,volume,close,ema20,sma20,atr,bb_width,stoch"
             )
         elif table_name == "analysis":
-            query = client.table(table_name).select("*")  # Small table, OK
+            query = client.table(table_name).select("*")
         elif table_name == "summary_stats":
-            query = client.table(table_name).select("*")  # Tiny table, OK
+            query = client.table(table_name).select("*")
         else:
             query = client.table(table_name).select("*")
         
@@ -100,7 +96,6 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
             for key, value in filters.items():
                 query = query.eq(key, value)
         
-        # ✅ CRITICAL FIX: Add limit to prevent massive queries
         query = query.limit(1000)
         
         response = query.execute()
@@ -111,7 +106,6 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
         
-        # ✅ Extract nested JSON fields if they exist
         if 'macd' in df.columns:
             df['macd_value'] = df['macd'].apply(
                 lambda x: x.get('macd') if isinstance(x, dict) else x
@@ -127,7 +121,6 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         st.warning(f"Could not load from {table_name}: {str(e)}")
         return pd.DataFrame()
 
-# ... [rest of your existing code - all the chart functions, etc.] ...
 INDICATOR_CATEGORIES = {
     "Momentum": {
         "indicators": ["rsi", "rsi[1]", "mom", "mom[1]", "stoch.k", "stoch.d", "stoch.k[1]", "stoch.d[1]"],
@@ -430,10 +423,7 @@ def create_time_series_comparison(analysis_df, selected_indicators):
     return fig
 
 def render_spike_grinder_tab():
-    # Initialize session state FIRST
-    if 'spike_grinder_data_loaded' not in st.session_state:
-        st.session_state.spike_grinder_data_loaded = False
-    
+    # Initialize refresh counter in session state
     if 'spike_grinder_refresh_counter' not in st.session_state:
         st.session_state.spike_grinder_refresh_counter = 0
     
@@ -444,28 +434,13 @@ def render_spike_grinder_tab():
     
     with col_header2:
         if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
-            st.cache_resource.clear()  # ✅ CHANGED: clear cache_resource
+            st.cache_resource.clear()
             st.session_state.spike_grinder_refresh_counter += 1
-            st.session_state.spike_grinder_data_loaded = True
             st.rerun()
     
-    # CRITICAL: Don't load data until user clicks refresh
-    if not st.session_state.spike_grinder_data_loaded:
-        st.info("👆 Click 'Refresh Data' to load spike/grinder analysis")
-        
-        with st.expander("ℹ️ About Spike/Grinder Analysis"):
-            st.markdown("""
-            This analysis compares technical indicators between:
-            - **Spikers**: Stocks with single-day explosive moves
-            - **Grinders**: Stocks with sustained multi-day gains
-            
-            Click 'Refresh Data' above to load the analysis.
-            """)
-        return  # EXIT - no data loading!
-    
-    # Now load data (only after user action) - this persists forever until refresh
     refresh_key = st.session_state.spike_grinder_refresh_counter
     
+    # Load data automatically (from cache if available, fresh if not)
     with st.spinner("Loading analysis data..."):
         candidates_df = load_supabase_data("candidates", None, refresh_key)
         analysis_df = load_supabase_data("analysis", None, refresh_key)
@@ -473,6 +448,7 @@ def render_spike_grinder_tab():
     
     if analysis_df.empty and candidates_df.empty:
         st.warning("No analysis data available yet")
+        st.info("Run the spike/grinder analysis script to populate data")
         return
     
     if not analysis_df.empty:
