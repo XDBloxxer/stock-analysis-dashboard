@@ -1,9 +1,9 @@
 """
-Backtesting Tab Module - TRUE PERSISTENT CACHE (survives browser refresh)
+Backtesting Tab Module - PER-TAB PERSISTENT CACHE
 CHANGES:
-- ✅ Removed session_state flags that reset on refresh
+- ✅ Per-tab refresh counter (only refreshes this tab's data)
 - ✅ Data loads automatically on first access (from cache if available)
-- ✅ Manual refresh button to force new data fetch
+- ✅ Manual refresh button only refreshes THIS tab's data
 - ✅ Cache survives browser close/refresh
 - ✅ Fixed all KeyError issues with robust column checking
 - ✅ Restored ability to CREATE backtests from dashboard
@@ -30,10 +30,6 @@ CHART_THEME = {
     'yaxis': dict(gridcolor='rgba(255, 255, 255, 0.1)', color='#b8bcc8'),
 }
 
-# ============================================================================
-# DATABASE FUNCTIONS
-# ============================================================================
-
 @st.cache_resource
 def get_supabase_client():
     """Initialize Supabase client"""
@@ -47,8 +43,8 @@ def get_supabase_client():
     return create_client(supabase_url, supabase_key)
 
 @st.cache_resource
-def get_date_range_from_db(_refresh_key: int = 0):
-    """Get available date range from historical data"""
+def get_date_range_from_db(_tab_id: str, _refresh_key: int = 0):
+    """Get available date range from historical data - per-tab cache"""
     try:
         client = get_supabase_client()
         
@@ -75,8 +71,8 @@ def get_date_range_from_db(_refresh_key: int = 0):
         return None, None
 
 @st.cache_resource
-def load_strategies(_refresh_key: int = 0):
-    """Load all backtest strategies"""
+def load_strategies(_tab_id: str, _refresh_key: int = 0):
+    """Load all backtest strategies - per-tab cache"""
     try:
         client = get_supabase_client()
         
@@ -102,12 +98,11 @@ def load_strategies(_refresh_key: int = 0):
         return pd.DataFrame()
 
 @st.cache_resource
-def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
-    """Load backtest results for a specific strategy"""
+def load_strategy_results(_tab_id: str, strategy_id: int, _refresh_key: int = 0):
+    """Load backtest results for a specific strategy - per-tab cache"""
     try:
         client = get_supabase_client()
         
-        # Load daily results (limit to 1000 most recent)
         daily_response = client.table("backtest_results")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
@@ -117,7 +112,6 @@ def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
         
         daily_df = pd.DataFrame(daily_response.data) if daily_response.data else pd.DataFrame()
         
-        # Load trades (limit to 1000 most recent)
         trades_response = client.table("backtest_trades")\
             .select("*")\
             .eq("strategy_id", strategy_id)\
@@ -158,10 +152,6 @@ def save_strategy(name: str, description: str, start_date, end_date,
         st.error(f"Error saving strategy: {e}")
         return None
 
-# ============================================================================
-# GITHUB ACTIONS INTEGRATION
-# ============================================================================
-
 def run_backtest_via_github(strategy_id: int):
     """Trigger backtest via GitHub Actions"""
     try:
@@ -171,7 +161,7 @@ def run_backtest_via_github(strategy_id: int):
         workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("GITHUB_WORKFLOW_ID", "backtest.yml")
         
         if not all([github_token, repo_owner, repo_name]):
-            st.error("❌ GitHub credentials not configured. Please set up secrets for GitHub integration.")
+            st.error("❌ GitHub credentials not configured.")
             return False
         
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
@@ -202,10 +192,6 @@ def run_backtest_via_github(strategy_id: int):
     except Exception as e:
         st.error(f"Error triggering GitHub workflow: {e}")
         return False
-
-# ============================================================================
-# CHART CREATION FUNCTIONS
-# ============================================================================
 
 def create_performance_chart(trades_df: pd.DataFrame):
     """Create daily performance chart from trades data"""
@@ -482,19 +468,17 @@ def create_cumulative_pnl(trades_df: pd.DataFrame):
     
     return fig
 
-# ============================================================================
-# MAIN RENDERING FUNCTION
-# ============================================================================
-
 def render_backtesting_tab():
+    TAB_ID = "backtesting"  # Unique ID for this tab's cache
+    
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
     
-    # Initialize refresh counter in session state
-    if 'backtest_refresh_counter' not in st.session_state:
-        st.session_state.backtest_refresh_counter = 0
+    # Initialize PER-TAB refresh counter
+    if f'{TAB_ID}_refresh_counter' not in st.session_state:
+        st.session_state[f'{TAB_ID}_refresh_counter'] = 0
     
-    refresh_key = st.session_state.backtest_refresh_counter
+    refresh_key = st.session_state[f'{TAB_ID}_refresh_counter']
     
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
@@ -505,12 +489,11 @@ def render_backtesting_tab():
         col1, col2 = st.columns([5, 1])
         with col2:
             if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
-                st.cache_resource.clear()
-                st.session_state.backtest_refresh_counter += 1
+                st.session_state[f'{TAB_ID}_refresh_counter'] += 1
                 st.rerun()
         
-        # Load strategies automatically (from cache if available)
-        strategies_df = load_strategies(refresh_key)
+        # Load strategies automatically with tab-specific cache
+        strategies_df = load_strategies(TAB_ID, refresh_key)
         
         if strategies_df.empty:
             st.info("No strategies found. Create one in the 'Create Strategy' tab")
@@ -547,8 +530,8 @@ def render_backtesting_tab():
                             else:
                                 st.write(f"{i}. **{cond.get('indicator', 'N/A')}** {cond.get('operator', '')} {cond.get('value', '')}")
                 
-                # Load results
-                daily_df, trades_df = load_strategy_results(selected_id, refresh_key)
+                # Load results with tab-specific cache
+                daily_df, trades_df = load_strategy_results(TAB_ID, selected_id, refresh_key)
                 
                 # Display results if completed
                 if strategy['run_status'] == 'completed' and not daily_df.empty:
@@ -587,11 +570,8 @@ def render_backtesting_tab():
                             
                             # Intraday hit rate
                             intraday_hits = 0
-                            intraday_col = None
-                            
                             for possible_col in ['hit_target_intraday', 'target_hit_intraday', 'intraday_hit']:
                                 if possible_col in matched_trades.columns:
-                                    intraday_col = possible_col
                                     intraday_hits = (matched_trades[possible_col] == True).sum()
                                     break
                             
@@ -674,14 +654,11 @@ def render_backtesting_tab():
                 elif strategy['run_status'] == 'failed':
                     st.error("This strategy failed to run. Check the logs for details.")
     
-    # ========================================================================
-    # TAB 2: CREATE STRATEGY
-    # ========================================================================
     with tab2:
         st.markdown("### Create New Strategy")
         
-        # Load date range when needed
-        min_date, max_date = get_date_range_from_db(refresh_key)
+        # Load date range when needed with tab-specific cache
+        min_date, max_date = get_date_range_from_db(TAB_ID, refresh_key)
         
         with st.form("create_strategy_form"):
             name = st.text_input("Strategy Name", placeholder="e.g., High RSI Momentum")
@@ -772,23 +749,18 @@ def render_backtesting_tab():
                     if strategy_id:
                         st.success(f"✅ Strategy created successfully! ID: {strategy_id}")
                         st.info("Go to 'Manage Strategies' tab to run the backtest")
-                        st.cache_resource.clear()
-                        st.session_state.backtest_refresh_counter += 1
+                        st.session_state[f'{TAB_ID}_refresh_counter'] += 1
     
-    # ========================================================================
-    # TAB 3: MANAGE STRATEGIES
-    # ========================================================================
     with tab3:
         st.markdown("### Manage Strategies")
         
         col1, col2 = st.columns([5, 1])
         with col2:
             if st.button("🔄 Refresh", key="manage_refresh", use_container_width=True):
-                st.cache_resource.clear()
-                st.session_state.backtest_refresh_counter += 1
+                st.session_state[f'{TAB_ID}_refresh_counter'] += 1
                 st.rerun()
         
-        strategies_df = load_strategies(refresh_key)
+        strategies_df = load_strategies(TAB_ID, refresh_key)
         
         if strategies_df.empty:
             st.info("No strategies found")
@@ -811,8 +783,7 @@ def render_backtesting_tab():
                                 with st.spinner("Triggering backtest..."):
                                     success = run_backtest_via_github(row['id'])
                                     if success:
-                                        st.cache_resource.clear()
-                                        st.session_state.backtest_refresh_counter += 1
+                                        st.session_state[f'{TAB_ID}_refresh_counter'] += 1
                         elif row['run_status'] == 'running':
                             st.info("Running...")
                         else:
