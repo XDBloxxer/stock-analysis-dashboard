@@ -1,10 +1,13 @@
 """
-Backtesting Tab Module - COMPREHENSIVE FIXED VERSION
-✅ FIXES:
-- Fixed all KeyError issues with robust column checking
-- Restored ability to CREATE backtests from dashboard
-- Zero auto-egress (ttl=0, column limits)
-- Runs backtests via GitHub Actions API
+Backtesting Tab Module - TRUE PERSISTENT CACHE (survives browser refresh)
+CHANGES:
+- ✅ Removed session_state flags that reset on refresh
+- ✅ Data loads automatically on first access (from cache if available)
+- ✅ Manual refresh button to force new data fetch
+- ✅ Cache survives browser close/refresh
+- ✅ Fixed all KeyError issues with robust column checking
+- ✅ Restored ability to CREATE backtests from dashboard
+- ✅ Runs backtests via GitHub Actions API
 """
 
 import streamlit as st
@@ -43,7 +46,7 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_data(ttl=0)
+@st.cache_resource
 def get_date_range_from_db(_refresh_key: int = 0):
     """Get available date range from historical data"""
     try:
@@ -71,7 +74,7 @@ def get_date_range_from_db(_refresh_key: int = 0):
         st.warning(f"Could not get date range: {e}")
         return None, None
 
-@st.cache_data(ttl=0)
+@st.cache_resource
 def load_strategies(_refresh_key: int = 0):
     """Load all backtest strategies"""
     try:
@@ -98,7 +101,7 @@ def load_strategies(_refresh_key: int = 0):
         st.error(f"Error loading strategies: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=0)
+@st.cache_resource
 def load_strategy_results(strategy_id: int, _refresh_key: int = 0):
     """Load backtest results for a specific strategy"""
     try:
@@ -160,14 +163,8 @@ def save_strategy(name: str, description: str, start_date, end_date,
 # ============================================================================
 
 def run_backtest_via_github(strategy_id: int):
-    """
-    Trigger backtest via GitHub Actions
-    This assumes you have a GitHub workflow set up with:
-    - workflow_dispatch event
-    - GITHUB_TOKEN secret
-    """
+    """Trigger backtest via GitHub Actions"""
     try:
-        # Get GitHub credentials from secrets/env
         github_token = os.environ.get("GITHUB_TOKEN") or st.secrets.get("GITHUB_TOKEN")
         repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("GITHUB_REPO_OWNER")
         repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("GITHUB_REPO_NAME")
@@ -177,7 +174,6 @@ def run_backtest_via_github(strategy_id: int):
             st.error("❌ GitHub credentials not configured. Please set up secrets for GitHub integration.")
             return False
         
-        # GitHub API endpoint
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
         
         headers = {
@@ -186,9 +182,8 @@ def run_backtest_via_github(strategy_id: int):
             "X-GitHub-Api-Version": "2022-11-28"
         }
         
-        # Payload with strategy_id
         payload = {
-            "ref": "main",  # or your default branch
+            "ref": "main",
             "inputs": {
                 "strategy_id": str(strategy_id)
             }
@@ -217,7 +212,6 @@ def create_performance_chart(trades_df: pd.DataFrame):
     if trades_df.empty:
         return None
     
-    # Check if we have the date column
     date_col = None
     for possible_col in ['signal_date', 'date', 'trade_date']:
         if possible_col in trades_df.columns:
@@ -228,16 +222,13 @@ def create_performance_chart(trades_df: pd.DataFrame):
         st.warning("No date column found in trades data")
         return None
     
-    # Calculate daily metrics from trades
     trades_df = trades_df.copy()
     trades_df[date_col] = pd.to_datetime(trades_df[date_col]).dt.date
     
-    # Count matches and hits per day
     daily_stats = trades_df.groupby(date_col).agg({
-        'matched_criteria': 'sum',  # Count of matches per day
+        'matched_criteria': 'sum',
     }).reset_index()
     
-    # Calculate true positives (need to check if hit_target column exists)
     if 'hit_target' in trades_df.columns:
         true_positives = trades_df[trades_df['hit_target'] == True].groupby(date_col).size()
         daily_stats = daily_stats.merge(
@@ -250,7 +241,6 @@ def create_performance_chart(trades_df: pd.DataFrame):
     else:
         daily_stats['true_positives'] = 0
     
-    # Rename for clarity
     daily_stats.columns = [date_col, 'total_matches', 'true_positives']
     daily_stats['false_positives'] = daily_stats['total_matches'] - daily_stats['true_positives']
     
@@ -261,7 +251,6 @@ def create_performance_chart(trades_df: pd.DataFrame):
         vertical_spacing=0.1
     )
     
-    # Cumulative matches
     daily_stats_sorted = daily_stats.sort_values(date_col)
     daily_stats_sorted['cumulative_matches'] = daily_stats_sorted['total_matches'].cumsum()
     
@@ -275,7 +264,6 @@ def create_performance_chart(trades_df: pd.DataFrame):
         fillcolor='rgba(102, 126, 234, 0.2)'
     ), row=1, col=1)
     
-    # Daily metrics
     fig.add_trace(go.Bar(
         x=daily_stats[date_col],
         y=daily_stats['true_positives'],
@@ -306,7 +294,6 @@ def create_confusion_matrix(trades_df: pd.DataFrame):
     if trades_df.empty:
         return None
     
-    # Calculate confusion matrix values
     tp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['hit_target'] == True)])
     fp = len(trades_df[(trades_df['matched_criteria'] == True) & (trades_df['hit_target'] == False)])
     fn = len(trades_df[(trades_df['matched_criteria'] == False) & (trades_df['hit_target'] == True)])
@@ -371,23 +358,18 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
     if trades_df.empty:
         return None
     
-    # ✅ FIX: Check for actual column names in your database
-    # You have: exit_high, exit_low, max_possible_gain_pct, max_drawdown_pct
     required_cols = ['actual_gain_pct', 'matched_criteria']
     if not all(col in trades_df.columns for col in required_cols):
         return None
     
-    # Check for high/low columns with flexible naming
     high_col = None
     low_col = None
     
-    # Check for high column
     for possible_high in ['max_possible_gain_pct', 'high_pct', 'exit_high']:
         if possible_high in trades_df.columns:
             high_col = possible_high
             break
     
-    # Check for low column
     for possible_low in ['max_drawdown_pct', 'low_pct', 'exit_low']:
         if possible_low in trades_df.columns:
             low_col = possible_low
@@ -401,7 +383,6 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
     if matched.empty:
         return None
     
-    # ✅ FIX: Find the date column
     date_col = None
     for possible_col in ['signal_date', 'date', 'trade_date']:
         if possible_col in matched.columns:
@@ -409,7 +390,6 @@ def create_exit_analysis_chart(trades_df: pd.DataFrame):
             break
     
     if date_col is None:
-        # If no date column, just use index
         matched = matched.reset_index(drop=True)
     else:
         matched = matched.sort_values(date_col)
@@ -465,7 +445,6 @@ def create_cumulative_pnl(trades_df: pd.DataFrame):
     if trades_df.empty:
         return None
     
-    # ✅ FIX: Check column exists
     if 'actual_gain_pct' not in trades_df.columns or 'matched_criteria' not in trades_df.columns:
         return None
     
@@ -511,11 +490,11 @@ def render_backtesting_tab():
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
     
-    # Initialize session state
+    # Initialize refresh counter in session state
     if 'backtest_refresh_counter' not in st.session_state:
         st.session_state.backtest_refresh_counter = 0
-    if 'backtest_data_loaded' not in st.session_state:
-        st.session_state.backtest_data_loaded = False
+    
+    refresh_key = st.session_state.backtest_refresh_counter
     
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
@@ -526,38 +505,23 @@ def render_backtesting_tab():
         col1, col2 = st.columns([5, 1])
         with col2:
             if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
-                st.cache_data.clear()
+                st.cache_resource.clear()
                 st.session_state.backtest_refresh_counter += 1
-                st.session_state.backtest_data_loaded = True
                 st.rerun()
         
-        # CRITICAL: Don't load until refresh clicked
-        if not st.session_state.backtest_data_loaded:
-            st.info("👆 Click 'Refresh' to load backtesting results")
-            return
-        
-        # Use session state cache
-        cache_key = f"strategies_df_{st.session_state.backtest_refresh_counter}"
-        
-        if cache_key not in st.session_state:
-            strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
-            st.session_state[cache_key] = strategies_df
-        else:
-            strategies_df = st.session_state[cache_key]
-        
-        # Rest of your code...
+        # Load strategies automatically (from cache if available)
+        strategies_df = load_strategies(refresh_key)
         
         if strategies_df.empty:
             st.info("No strategies found. Create one in the 'Create Strategy' tab")
         else:
-            # Select strategy
             strategy_names = dict(zip(strategies_df['id'], strategies_df['name']))
             
             selected_id = st.selectbox(
                 "Select Strategy:",
                 options=list(strategy_names.keys()),
                 format_func=lambda x: strategy_names[x],
-                key=f"view_strategy_select_{st.session_state.backtest_refresh_counter}"
+                key=f"view_strategy_select_{refresh_key}"
             )
             
             if selected_id:
@@ -584,7 +548,7 @@ def render_backtesting_tab():
                                 st.write(f"{i}. **{cond.get('indicator', 'N/A')}** {cond.get('operator', '')} {cond.get('value', '')}")
                 
                 # Load results
-                daily_df, trades_df = load_strategy_results(selected_id, st.session_state.backtest_refresh_counter)
+                daily_df, trades_df = load_strategy_results(selected_id, refresh_key)
                 
                 # Display results if completed
                 if strategy['run_status'] == 'completed' and not daily_df.empty:
@@ -605,7 +569,7 @@ def render_backtesting_tab():
                         acc = strategy.get('accuracy_pct', 0)
                         st.metric("Accuracy", f"{acc}%" if acc else "N/A")
                     
-                    # Advanced metrics - ✅ FIX: Add robust column checking
+                    # Advanced metrics
                     if not trades_df.empty and 'actual_gain_pct' in trades_df.columns:
                         matched_trades = trades_df[trades_df['matched_criteria'] == True]
                         
@@ -621,33 +585,17 @@ def render_backtesting_tab():
                             total_losses = abs(losers['actual_gain_pct'].sum()) if len(losers) > 0 else 0
                             profit_factor = (total_gains / total_losses) if total_losses > 0 else None
                             
-                            # ✅ FIX: Proper intraday hit rate calculation
-                            # Check multiple possible column names
+                            # Intraday hit rate
                             intraday_hits = 0
                             intraday_col = None
                             
                             for possible_col in ['hit_target_intraday', 'target_hit_intraday', 'intraday_hit']:
                                 if possible_col in matched_trades.columns:
                                     intraday_col = possible_col
-                                    # Count True values
                                     intraday_hits = (matched_trades[possible_col] == True).sum()
                                     break
                             
                             intraday_rate = (intraday_hits / len(matched_trades) * 100) if len(matched_trades) > 0 else 0
-                            
-                            # ✅ DEBUG: Show what columns are available
-                            with st.expander("🔍 Debug: Intraday Hit Rate"):
-                                st.write(f"**Total matched trades:** {len(matched_trades)}")
-                                st.write(f"**Intraday hits found:** {intraday_hits}")
-                                st.write(f"**Intraday column found:** {intraday_col if intraday_col else 'NONE'}")
-                                st.write(f"**Available columns in trades_df:**")
-                                st.write(list(matched_trades.columns))
-                                
-                                # Show a sample of relevant columns
-                                relevant_cols = [col for col in matched_trades.columns if 'hit' in col.lower() or 'target' in col.lower() or 'intraday' in col.lower()]
-                                if relevant_cols:
-                                    st.write(f"**Columns with 'hit', 'target', or 'intraday':**")
-                                    st.dataframe(matched_trades[relevant_cols].head(10))
                             
                             st.markdown("#### Advanced Metrics")
                             col1, col2, col3, col4, col5 = st.columns(5)
@@ -688,23 +636,6 @@ def render_backtesting_tab():
                             st.plotly_chart(fig3, use_container_width=True)
                     
                     with col2:
-                        # ✅ DEBUG: Check why exit analysis might not appear
-                        with st.expander("🔍 Debug: Exit Analysis Chart"):
-                            st.write(f"**Trades DF empty?** {trades_df.empty}")
-                            if not trades_df.empty:
-                                st.write(f"**Columns in trades_df:** {list(trades_df.columns)}")
-                                
-                                # Check for actual column names
-                                st.write(f"**Column availability:**")
-                                st.write(f"  - actual_gain_pct: {'✅' if 'actual_gain_pct' in trades_df.columns else '❌'}")
-                                st.write(f"  - max_possible_gain_pct: {'✅' if 'max_possible_gain_pct' in trades_df.columns else '❌'}")
-                                st.write(f"  - max_drawdown_pct: {'✅' if 'max_drawdown_pct' in trades_df.columns else '❌'}")
-                                st.write(f"  - matched_criteria: {'✅' if 'matched_criteria' in trades_df.columns else '❌'}")
-                                
-                                if 'matched_criteria' in trades_df.columns:
-                                    matched_count = (trades_df['matched_criteria'] == True).sum()
-                                    st.write(f"**Matched criteria trades:** {matched_count}")
-                        
                         fig4 = create_exit_analysis_chart(trades_df)
                         if fig4:
                             st.plotly_chart(fig4, use_container_width=True)
@@ -716,7 +647,6 @@ def render_backtesting_tab():
                     if not trades_df.empty:
                         display_trades = trades_df.sort_values('signal_date', ascending=False).head(100)
                         
-                        # Select display columns
                         display_cols = ['signal_date', 'symbol', 'matched_criteria', 'hit_target', 
                                       'actual_gain_pct', 'high_pct', 'low_pct']
                         display_cols = [col for col in display_cols if col in display_trades.columns]
@@ -727,7 +657,6 @@ def render_backtesting_tab():
                             height=400
                         )
                         
-                        # Download button
                         csv = trades_df.to_csv(index=False)
                         st.download_button(
                             "📥 Download All Trades",
@@ -751,10 +680,8 @@ def render_backtesting_tab():
     with tab2:
         st.markdown("### Create New Strategy")
         
-        # ✅ Only load date range when creating strategy (not on every render)
-        min_date, max_date = None, None
-        if st.session_state.backtest_data_loaded:
-            min_date, max_date = get_date_range_from_db(st.session_state.backtest_refresh_counter)
+        # Load date range when needed
+        min_date, max_date = get_date_range_from_db(refresh_key)
         
         with st.form("create_strategy_form"):
             name = st.text_input("Strategy Name", placeholder="e.g., High RSI Momentum")
@@ -778,7 +705,6 @@ def render_backtesting_tab():
             st.markdown("#### Indicator Criteria")
             st.info("Add conditions that define when to signal a trade")
             
-            # Number of conditions
             num_conditions = st.number_input("Number of conditions", min_value=1, max_value=10, value=2)
             
             criteria = []
@@ -846,6 +772,7 @@ def render_backtesting_tab():
                     if strategy_id:
                         st.success(f"✅ Strategy created successfully! ID: {strategy_id}")
                         st.info("Go to 'Manage Strategies' tab to run the backtest")
+                        st.cache_resource.clear()
                         st.session_state.backtest_refresh_counter += 1
     
     # ========================================================================
@@ -857,11 +784,11 @@ def render_backtesting_tab():
         col1, col2 = st.columns([5, 1])
         with col2:
             if st.button("🔄 Refresh", key="manage_refresh", use_container_width=True):
-                st.cache_data.clear()
+                st.cache_resource.clear()
                 st.session_state.backtest_refresh_counter += 1
                 st.rerun()
         
-        strategies_df = load_strategies(st.session_state.backtest_refresh_counter)
+        strategies_df = load_strategies(refresh_key)
         
         if strategies_df.empty:
             st.info("No strategies found")
@@ -884,7 +811,7 @@ def render_backtesting_tab():
                                 with st.spinner("Triggering backtest..."):
                                     success = run_backtest_via_github(row['id'])
                                     if success:
-                                        st.cache_data.clear()
+                                        st.cache_resource.clear()
                                         st.session_state.backtest_refresh_counter += 1
                         elif row['run_status'] == 'running':
                             st.info("Running...")
