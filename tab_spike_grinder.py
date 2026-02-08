@@ -1,10 +1,10 @@
 """
-Spike/Grinder Analysis Tab Module - FIXED FOR ZERO AUTO-EGRESS
+Spike/Grinder Analysis Tab Module - FIXED FOR PERSISTENT CACHE
 CHANGES:
-- ttl=0 (never auto-refresh)
-- Added .limit(1000) to all queries
-- Column selection instead of SELECT *
-- Only refreshes when user clicks refresh button
+- ✅ cache_resource (persistent cache that survives browser close)
+- ✅ Added .limit(1000) to all queries
+- ✅ Column selection instead of SELECT *
+- ✅ Only refreshes when user clicks refresh button
 """
 
 import streamlit as st
@@ -67,33 +67,27 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_data(ttl=0)  # ✅ CHANGED: Never auto-refresh (was 300)
+@st.cache_resource  # ✅ CHANGED: cache_resource persists forever
 def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
-    OPTIMIZED: Only loads when refresh button is clicked
-    - ttl=0 means cache never expires on its own
+    OPTIMIZED: Persistent cache that survives browser close
+    - cache_resource = persists forever until manual refresh
     - Uses column selection to reduce egress by 90%+
     - Limits results to prevent massive queries
     """
     try:
         client = get_supabase_client()
-        # ✅ Add column selection for candidates too
+        
+        # ✅ CRITICAL FIX: Select only needed columns, not SELECT *
         if table_name == "candidates":
             query = client.table(table_name).select(
                 "symbol,exchange,date,event_type,price,change_pct,volume"
             )
-
-        
-        # ✅ CRITICAL FIX: Select only needed columns, not SELECT *
         elif table_name == "raw_data":
             # Only select columns actually used in analysis/charts
             query = client.table(table_name).select(
                 "symbol,event_date,event_type,time_lag,"
-                "rsi,macd.macd,adx,volume,close,ema20,sma20,atr,bb_width"
-            )
-        elif table_name == "candidates":
-            query = client.table(table_name).select(
-                "symbol,date,event_type,exchange,price,change_pct,volume"
+                "rsi,macd,adx,volume,close,ema20,sma20,atr,bb_width,stoch"
             )
         elif table_name == "analysis":
             query = client.table(table_name).select("*")  # Small table, OK
@@ -116,11 +110,24 @@ def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int 
         
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
+        
+        # ✅ Extract nested JSON fields if they exist
+        if 'macd' in df.columns:
+            df['macd_value'] = df['macd'].apply(
+                lambda x: x.get('macd') if isinstance(x, dict) else x
+            )
+        
+        if 'stoch' in df.columns:
+            df['stoch_k'] = df['stoch'].apply(
+                lambda x: x.get('k') if isinstance(x, dict) else x
+            )
+        
         return df
     except Exception as e:
         st.warning(f"Could not load from {table_name}: {str(e)}")
         return pd.DataFrame()
 
+# ... [rest of your existing code - all the chart functions, etc.] ...
 INDICATOR_CATEGORIES = {
     "Momentum": {
         "indicators": ["rsi", "rsi[1]", "mom", "mom[1]", "stoch.k", "stoch.d", "stoch.k[1]", "stoch.d[1]"],
@@ -274,8 +281,8 @@ def create_heatmap(analysis_df, selected_indicators, value_type='difference'):
     
     return fig
 
-def create_correlation_matrix(analysis_df, selected_lag):
-    raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag})
+def create_correlation_matrix(analysis_df, selected_lag, refresh_key):
+    raw_df = load_supabase_data("raw_data", {"time_lag": selected_lag}, refresh_key)
     
     if raw_df.empty or 'event_type' not in raw_df.columns:
         return None
@@ -315,14 +322,14 @@ def create_correlation_matrix(analysis_df, selected_lag):
     
     return fig
 
-def create_box_plot(analysis_df, selected_indicators):
+def create_box_plot(analysis_df, selected_indicators, refresh_key):
     if analysis_df.empty:
         return None
     
     all_data = []
     
     for lag in TIME_LAG_ORDER:
-        raw_df = load_supabase_data("raw_data", {"time_lag": lag})
+        raw_df = load_supabase_data("raw_data", {"time_lag": lag}, refresh_key)
         if not raw_df.empty and 'event_type' in raw_df.columns:
             raw_df['time_lag'] = lag
             all_data.append(raw_df)
@@ -437,7 +444,7 @@ def render_spike_grinder_tab():
     
     with col_header2:
         if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
-            st.cache_data.clear()
+            st.cache_resource.clear()  # ✅ CHANGED: clear cache_resource
             st.session_state.spike_grinder_refresh_counter += 1
             st.session_state.spike_grinder_data_loaded = True
             st.rerun()
@@ -456,33 +463,13 @@ def render_spike_grinder_tab():
             """)
         return  # EXIT - no data loading!
     
-    # Now load data (only after user action)
+    # Now load data (only after user action) - this persists forever until refresh
     refresh_key = st.session_state.spike_grinder_refresh_counter
     
-    # Use session state to cache loaded data
-    cache_key = f"spike_grinder_data_{refresh_key}"
-    
-    if cache_key not in st.session_state:
-        with st.spinner("Loading analysis data..."):
-            candidates_df = load_supabase_data("candidates", None, refresh_key)
-            analysis_df = load_supabase_data("analysis", None, refresh_key)
-            summary_df = load_supabase_data("summary_stats", None, refresh_key)
-            
-            st.session_state[cache_key] = {
-                'candidates': candidates_df,
-                'analysis': analysis_df,
-                'summary': summary_df
-            }
-    
-    # Use cached data
-    data = st.session_state[cache_key]
-    candidates_df = data['candidates']
-    analysis_df = data['analysis']
-    summary_df = data['summary']
-    
-    # Rest of your code...
-    
-    # ... rest of your code ...
+    with st.spinner("Loading analysis data..."):
+        candidates_df = load_supabase_data("candidates", None, refresh_key)
+        analysis_df = load_supabase_data("analysis", None, refresh_key)
+        summary_df = load_supabase_data("summary_stats", None, refresh_key)
     
     if analysis_df.empty and candidates_df.empty:
         st.warning("No analysis data available yet")
@@ -611,7 +598,7 @@ def render_spike_grinder_tab():
                 
                 if selected_indicators:
                     with st.spinner("Loading raw data for box plots..."):
-                        fig = create_box_plot(analysis_df, selected_indicators)
+                        fig = create_box_plot(analysis_df, selected_indicators, refresh_key)
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
                         else:
@@ -624,7 +611,7 @@ def render_spike_grinder_tab():
                 selected_lag = st.selectbox("Select time lag:", available_lags, key="corr_lag")
                 
                 with st.spinner("Calculating correlations..."):
-                    fig = create_correlation_matrix(analysis_df, selected_lag)
+                    fig = create_correlation_matrix(analysis_df, selected_lag, refresh_key)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
@@ -728,7 +715,7 @@ def render_spike_grinder_tab():
         with data_tabs[2]:
             if not analysis_df.empty and 'time_lag' in analysis_df.columns:
                 lag_selector = st.selectbox("Select time lag:", TIME_LAG_ORDER, key='raw_data_lag')
-                raw_df = load_supabase_data("raw_data", {"time_lag": lag_selector})
+                raw_df = load_supabase_data("raw_data", {"time_lag": lag_selector}, refresh_key)
                 if not raw_df.empty:
                     st.dataframe(raw_df, use_container_width=True, height=500)
                     st.download_button("Download CSV", raw_df.to_csv(index=False), f"raw_data_{lag_selector}.csv", "text/csv", key="download_raw")
