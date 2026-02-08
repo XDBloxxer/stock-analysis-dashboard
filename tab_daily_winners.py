@@ -143,7 +143,7 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
             'labels': {}
         },
         "Volume Indicators": {
-            'fields': ["obv", "cmf", "force_index", "vpt", "volume_sma20", "volume_ratio"],
+            'fields': ["volume_sma5", "volume_sma10", "volume_sma20"],
             'labels': {}
         },
         "Other": {
