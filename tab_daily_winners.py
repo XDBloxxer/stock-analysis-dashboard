@@ -1,9 +1,9 @@
 """
-Daily Winners Tab Module - TRUE PERSISTENT CACHE (survives browser refresh)
+Daily Winners Tab Module - PER-TAB PERSISTENT CACHE (survives browser refresh)
 CHANGES:
-- ✅ Removed session_state flags that reset on refresh
+- ✅ Per-tab refresh counter (only refreshes this tab's data)
 - ✅ Data loads automatically on first access (from cache if available)
-- ✅ Manual refresh button to force new data fetch
+- ✅ Manual refresh button only refreshes THIS tab's data
 - ✅ Cache survives browser close/refresh
 """
 
@@ -45,8 +45,8 @@ def get_supabase_client():
     return create_client(supabase_url, supabase_key)
 
 @st.cache_resource
-def load_available_dates(_refresh_key: int = 0):
-    """Load available dates - cached forever until manual refresh"""
+def load_available_dates(_tab_id: str, _refresh_key: int = 0):
+    """Load available dates - cached per tab with unique key"""
     try:
         client = get_supabase_client()
         response = client.table("daily_winners").select("detection_date").limit(100).execute()
@@ -58,9 +58,10 @@ def load_available_dates(_refresh_key: int = 0):
         return []
 
 @st.cache_resource
-def load_supabase_data(table_name: str, filters: dict = None, _refresh_key: int = 0):
+def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
     PERSISTENT cache - survives browser refresh!
+    _tab_id ensures each tab has separate cache
     Only refreshes when _refresh_key changes (manual refresh button)
     """
     try:
@@ -143,7 +144,7 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
             'labels': {}
         },
         "Volume Indicators": {
-            'fields': ["volume_sma5", "volume_sma10", "volume_sma20"],
+            'fields': ["obv", "cmf", "force_index", "vpt", "volume_sma20", "volume_ratio"],
             'labels': {}
         },
         "Other": {
@@ -179,7 +180,6 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                             display_val = f"{value/1e6:.1f}M"
                         else:
                             display_val = f"{value/1e3:.1f}K"
-                        
                     elif abs(value) >= 1000:
                         display_val = f"{value:.0f}"
                     elif abs(value) >= 10:
@@ -285,14 +285,16 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
     st.plotly_chart(fig, use_container_width=True)
 
 def render_daily_winners_tab():
-    # Initialize refresh counter in session state (persists during session)
-    if 'daily_winners_refresh_counter' not in st.session_state:
-        st.session_state.daily_winners_refresh_counter = 0
+    TAB_ID = "daily_winners"  # Unique ID for this tab's cache
     
-    refresh_key = st.session_state.daily_winners_refresh_counter
+    # Initialize PER-TAB refresh counter
+    if f'{TAB_ID}_refresh_counter' not in st.session_state:
+        st.session_state[f'{TAB_ID}_refresh_counter'] = 0
     
-    # Load available dates (from cache or fresh) - NO GATES
-    available_dates = load_available_dates(refresh_key)
+    refresh_key = st.session_state[f'{TAB_ID}_refresh_counter']
+    
+    # Load available dates (from cache or fresh) - with tab-specific key
+    available_dates = load_available_dates(TAB_ID, refresh_key)
     
     if not available_dates:
         st.warning("No daily winners data available yet")
@@ -311,10 +313,9 @@ def render_daily_winners_tab():
         )
     
     with col2:
-        # Manual refresh button - increments counter to bust ALL caches
+        # Manual refresh button - only increments THIS tab's counter
         if st.button("🔄 Refresh Data", use_container_width=True, key="daily_winners_refresh"):
-            st.cache_resource.clear()
-            st.session_state.daily_winners_refresh_counter += 1
+            st.session_state[f'{TAB_ID}_refresh_counter'] += 1
             st.rerun()
     
     with col3:
@@ -322,13 +323,13 @@ def render_daily_winners_tab():
         st.metric("Day of Week", date_obj.strftime("%A"))
     
     # Load data automatically (from cache if available, fresh if not)
-    # This will be INSTANT on browser refresh if data is cached!
+    # Uses tab-specific cache key
     with st.spinner(f"Loading data for {selected_date}..."):
-        winners_df = load_supabase_data("daily_winners", {"detection_date": selected_date}, refresh_key)
-        market_open_df = load_supabase_data("winners_market_open", {"detection_date": selected_date}, refresh_key)
-        market_close_df = load_supabase_data("winners_market_close", {"detection_date": selected_date}, refresh_key)
-        day_prior_open_df = load_supabase_data("winners_day_prior_open", {"detection_date": selected_date}, refresh_key)
-        day_prior_close_df = load_supabase_data("winners_day_prior_close", {"detection_date": selected_date}, refresh_key)
+        winners_df = load_supabase_data(TAB_ID, "daily_winners", {"detection_date": selected_date}, refresh_key)
+        market_open_df = load_supabase_data(TAB_ID, "winners_market_open", {"detection_date": selected_date}, refresh_key)
+        market_close_df = load_supabase_data(TAB_ID, "winners_market_close", {"detection_date": selected_date}, refresh_key)
+        day_prior_open_df = load_supabase_data(TAB_ID, "winners_day_prior_open", {"detection_date": selected_date}, refresh_key)
+        day_prior_close_df = load_supabase_data(TAB_ID, "winners_day_prior_close", {"detection_date": selected_date}, refresh_key)
     
     if winners_df.empty:
         st.warning(f"No winners data found for {selected_date}")
