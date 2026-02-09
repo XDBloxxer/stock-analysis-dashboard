@@ -3,7 +3,7 @@ Daily Winners Tab Module - FIXED PERSISTENT CACHE (PERMANENT - NO AUTO-EXPIRY)
 
 CHANGES FROM ORIGINAL:
 - ✅ Changed @st.cache_resource → @st.cache_data for load_supabase_data and load_available_dates
-- ✅ Removed underscores from parameter names (_tab_id → tab_id, _refresh_key → refresh_key)
+- ✅ Removed underscores from parameter names (tab_id → tab_id, _refresh_key → refresh_key)
 - ✅ NO TTL parameter = cache persists FOREVER (same as your original intent)
 - ✅ Refresh button now actually works (increments refresh_key to bypass cache)
 - ✅ Clear cache button properly clears all caches and resets counter
