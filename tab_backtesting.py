@@ -4,6 +4,7 @@ CHANGES:
 - ✅ Per-tab refresh counter (only refreshes this tab's data)
 - ✅ Data loads automatically on first access (from cache if available)
 - ✅ Manual refresh button only refreshes THIS tab's data
+- ✅ Separate clear cache button to force fresh database fetch
 - ✅ Cache survives browser close/refresh
 - ✅ Fixed all KeyError issues with robust column checking
 - ✅ Restored ability to CREATE backtests from dashboard
@@ -486,10 +487,22 @@ def render_backtesting_tab():
     with tab1:
         st.markdown("### Strategy Results")
         
-        col1, col2 = st.columns([5, 1])
+        col1, col2, col3 = st.columns([4, 1, 1])
+        
         with col2:
+            # Manual refresh button - increments counter (may use cache if available)
             if st.button("🔄 Refresh", key="view_refresh", use_container_width=True):
                 st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+                st.rerun()
+        
+        with col3:
+            # Clear cache button - forces fresh database fetch
+            if st.button("🗑️ Clear Cache", key="view_clear_cache", use_container_width=True):
+                load_strategies.clear()
+                load_strategy_results.clear()
+                get_date_range_from_db.clear()
+                st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+                st.success("Cache cleared!")
                 st.rerun()
         
         # Load strategies automatically with tab-specific cache
@@ -754,10 +767,20 @@ def render_backtesting_tab():
     with tab3:
         st.markdown("### Manage Strategies")
         
-        col1, col2 = st.columns([5, 1])
+        col1, col2, col3 = st.columns([4, 1, 1])
+        
         with col2:
+            # Manual refresh button
             if st.button("🔄 Refresh", key="manage_refresh", use_container_width=True):
                 st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+                st.rerun()
+        
+        with col3:
+            # Clear cache button
+            if st.button("🗑️ Clear Cache", key="manage_clear_cache", use_container_width=True):
+                load_strategies.clear()
+                st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+                st.success("Cache cleared!")
                 st.rerun()
         
         strategies_df = load_strategies(TAB_ID, refresh_key)
