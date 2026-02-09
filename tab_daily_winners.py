@@ -4,6 +4,7 @@ CHANGES:
 - ✅ Per-tab refresh counter (only refreshes this tab's data)
 - ✅ Data loads automatically on first access (from cache if available)
 - ✅ Manual refresh button only refreshes THIS tab's data
+- ✅ Separate clear cache button to force fresh database fetch
 - ✅ Cache survives browser close/refresh
 """
 
@@ -302,7 +303,7 @@ def render_daily_winners_tab():
         return
     
     # UI controls at top
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
     
     with col1:
         selected_date = st.selectbox(
@@ -313,12 +314,21 @@ def render_daily_winners_tab():
         )
     
     with col2:
-        # Manual refresh button - only increments THIS tab's counter
+        # Manual refresh button - increments counter (may use cache if available)
         if st.button("🔄 Refresh Data", use_container_width=True, key="daily_winners_refresh"):
             st.session_state[f'{TAB_ID}_refresh_counter'] += 1
             st.rerun()
     
     with col3:
+        # Clear cache button - forces fresh database fetch
+        if st.button("🗑️ Clear Cache", use_container_width=True, key="daily_winners_clear_cache"):
+            load_available_dates.clear()
+            load_supabase_data.clear()
+            st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+            st.success("Cache cleared!")
+            st.rerun()
+    
+    with col4:
         date_obj = datetime.fromisoformat(selected_date)
         st.metric("Day of Week", date_obj.strftime("%A"))
     
