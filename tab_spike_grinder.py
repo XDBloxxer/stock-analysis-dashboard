@@ -68,10 +68,10 @@ def get_supabase_client():
     return create_client(supabase_url, supabase_key)
 
 @st.cache_resource
-def load_supabase_data(tab_id: str, table_name: str, filters: dict = None, refresh_key: int = 0):
+def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _refresh_key: int = 0):
     """
     PERSISTENT cache with per-tab isolation
-    tab_id ensures spike_grinder tab has separate cache from other tabs
+    _tab_id ensures spike_grinder tab has separate cache from other tabs
     """
     try:
         client = get_supabase_client()
