@@ -1,11 +1,13 @@
 """
-Daily Winners Tab Module - PER-TAB PERSISTENT CACHE (survives browser refresh)
-CHANGES:
-- ✅ Per-tab refresh counter (only refreshes this tab's data)
-- ✅ Data loads automatically on first access (from cache if available)
-- ✅ Manual refresh button only refreshes THIS tab's data
-- ✅ Separate clear cache button to force fresh database fetch
-- ✅ Cache survives browser close/refresh
+Daily Winners Tab Module - FIXED PERSISTENT CACHE (PERMANENT - NO AUTO-EXPIRY)
+
+CHANGES FROM ORIGINAL:
+- ✅ Changed @st.cache_resource → @st.cache_data for load_supabase_data and load_available_dates
+- ✅ Removed underscores from parameter names (_tab_id → tab_id, _refresh_key → refresh_key)
+- ✅ NO TTL parameter = cache persists FOREVER (same as your original intent)
+- ✅ Refresh button now actually works (increments refresh_key to bypass cache)
+- ✅ Clear cache button properly clears all caches and resets counter
+- ✅ Extreme egress optimization maintained - only queries DB on manual refresh or first load
 """
 
 import streamlit as st
@@ -36,6 +38,7 @@ COLORS = {
 
 @st.cache_resource
 def get_supabase_client():
+    """Supabase client - cached permanently as a resource (connection reuse)"""
     supabase_url = os.environ.get("SUPABASE_URL") or st.secrets.get("supabase", {}).get("url")
     supabase_key = os.environ.get("SUPABASE_KEY") or st.secrets.get("supabase", {}).get("key")
     
@@ -45,9 +48,14 @@ def get_supabase_client():
     
     return create_client(supabase_url, supabase_key)
 
-@st.cache_resource
-def load_available_dates(_tab_id: str, _refresh_key: int = 0):
-    """Load available dates - cached per tab with unique key"""
+@st.cache_data  # NO TTL = permanent cache, refreshes only when refresh_key changes
+def load_available_dates(tab_id: str, refresh_key: int = 0):
+    """
+    Load available dates - PERMANENT cache with manual refresh capability
+    - tab_id: ensures this tab has separate cache from other tabs
+    - refresh_key: when incremented, fetches fresh data from database
+    - No TTL = cache persists forever until manually refreshed or cleared
+    """
     try:
         client = get_supabase_client()
         response = client.table("daily_winners").select("detection_date").limit(100).execute()
@@ -58,12 +66,15 @@ def load_available_dates(_tab_id: str, _refresh_key: int = 0):
         st.error(f"Error loading dates: {e}")
         return []
 
-@st.cache_resource
-def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _refresh_key: int = 0):
+@st.cache_data  # NO TTL = permanent cache, refreshes only when refresh_key changes
+def load_supabase_data(tab_id: str, table_name: str, filters: dict = None, refresh_key: int = 0):
     """
-    PERSISTENT cache - survives browser refresh!
-    _tab_id ensures each tab has separate cache
-    Only refreshes when _refresh_key changes (manual refresh button)
+    PERMANENT cache with manual refresh capability
+    - tab_id: ensures this tab has separate cache from other tabs
+    - refresh_key: when incremented, fetches fresh data from database
+    - filters: query filters (detection_date, symbol, etc.)
+    - No TTL = cache persists forever until manually refreshed or cleared
+    - MAXIMUM egress optimization: only queries database on first load or manual refresh
     """
     try:
         client = get_supabase_client()
@@ -294,7 +305,7 @@ def render_daily_winners_tab():
     
     refresh_key = st.session_state[f'{TAB_ID}_refresh_counter']
     
-    # Load available dates (from cache or fresh) - with tab-specific key
+    # Load available dates (from permanent cache, fresh only if refresh_key changed)
     available_dates = load_available_dates(TAB_ID, refresh_key)
     
     if not available_dates:
@@ -314,26 +325,27 @@ def render_daily_winners_tab():
         )
     
     with col2:
-        # Manual refresh button - increments counter (may use cache if available)
-        if st.button("🔄 Refresh Data", use_container_width=True, key="daily_winners_refresh"):
+        # Refresh button - increments counter to force fresh DB fetch
+        if st.button("🔄 Refresh", use_container_width=True, key="daily_winners_refresh", 
+                    help="Reload data from database"):
             st.session_state[f'{TAB_ID}_refresh_counter'] += 1
             st.rerun()
     
     with col3:
-        # Clear cache button - forces fresh database fetch
-        if st.button("🗑️ Clear Cache", use_container_width=True, key="daily_winners_clear_cache"):
+        # Clear cache button - clears all cached data and resets counter
+        if st.button("🗑️ Clear Cache", use_container_width=True, key="daily_winners_clear_cache",
+                    help="Clear all cached data and force fresh fetch"):
             load_available_dates.clear()
             load_supabase_data.clear()
-            st.session_state[f'{TAB_ID}_refresh_counter'] += 1
-            st.success("Cache cleared!")
+            st.session_state[f'{TAB_ID}_refresh_counter'] = 0
+            st.success("✅ Cache cleared!")
             st.rerun()
     
     with col4:
         date_obj = datetime.fromisoformat(selected_date)
         st.metric("Day of Week", date_obj.strftime("%A"))
     
-    # Load data automatically (from cache if available, fresh if not)
-    # Uses tab-specific cache key
+    # Load data (from permanent cache or fresh if refresh_key changed)
     with st.spinner(f"Loading data for {selected_date}..."):
         winners_df = load_supabase_data(TAB_ID, "daily_winners", {"detection_date": selected_date}, refresh_key)
         market_open_df = load_supabase_data(TAB_ID, "winners_market_open", {"detection_date": selected_date}, refresh_key)
