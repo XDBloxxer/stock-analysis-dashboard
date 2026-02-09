@@ -4,6 +4,7 @@ CHANGES:
 - ✅ Per-tab refresh counter (only refreshes this tab's data)
 - ✅ Data loads automatically on first access (from cache if available)
 - ✅ Manual refresh button only refreshes THIS tab's data
+- ✅ Separate clear cache button to force fresh database fetch
 - ✅ Cache survives browser close/refresh
 """
 
@@ -428,14 +429,23 @@ def render_spike_grinder_tab():
     if f'{TAB_ID}_refresh_counter' not in st.session_state:
         st.session_state[f'{TAB_ID}_refresh_counter'] = 0
     
-    col_header1, col_header2 = st.columns([4, 1])
+    col_header1, col_header2, col_header3 = st.columns([3, 1, 1])
     
     with col_header1:
         st.subheader("Spike/Grinder Analysis")
     
     with col_header2:
-        if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_manual_refresh"):
+        # Manual refresh button - increments counter (may use cache if available)
+        if st.button("🔄 Refresh Data", use_container_width=True, key="spike_grinder_refresh"):
             st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+            st.rerun()
+    
+    with col_header3:
+        # Clear cache button - forces fresh database fetch
+        if st.button("🗑️ Clear Cache", use_container_width=True, key="spike_grinder_clear_cache"):
+            load_supabase_data.clear()
+            st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+            st.success("Cache cleared!")
             st.rerun()
     
     refresh_key = st.session_state[f'{TAB_ID}_refresh_counter']
