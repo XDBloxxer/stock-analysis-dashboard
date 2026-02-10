@@ -6,6 +6,7 @@ CHANGES:
 - ✅ Manual refresh button only refreshes THIS tab's data
 - ✅ Separate clear cache button to force fresh database fetch
 - ✅ Cache survives browser close/refresh
+- ✅ FIXED: Date changes now properly use cache instead of making new requests
 """
 
 import streamlit as st
@@ -59,12 +60,16 @@ def load_available_dates(_tab_id: str, _refresh_key: int = 0):
         return []
 
 @st.cache_resource
-def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _refresh_key: int = 0):
+def _load_supabase_data_cached(_tab_id: str, table_name: str, filter_key: tuple = None, _refresh_key: int = 0):
     """
+    Internal cached function with proper hashable keys
     PERSISTENT cache - survives browser refresh!
     _tab_id ensures each tab has separate cache
     Only refreshes when _refresh_key changes (manual refresh button)
     """
+    # Convert filter_key back to dict
+    filters = dict(filter_key) if filter_key else None
+    
     try:
         client = get_supabase_client()
         
@@ -113,6 +118,11 @@ def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _ref
     except Exception as e:
         st.warning(f"Could not load from {table_name}: {str(e)}")
         return pd.DataFrame()
+
+def load_supabase_data(_tab_id: str, table_name: str, filters: dict = None, _refresh_key: int = 0):
+    """Public wrapper that converts filters dict to hashable tuple for proper caching"""
+    filter_key = tuple(sorted(filters.items())) if filters else None
+    return _load_supabase_data_cached(_tab_id, table_name, filter_key, _refresh_key)
 
 def render_indicator_snapshot(data_row, title, snapshot_type):
     """Render indicator snapshot with contextually appropriate price display"""
@@ -323,7 +333,7 @@ def render_daily_winners_tab():
         # Clear cache button - forces fresh database fetch
         if st.button("🗑️ Clear Cache", use_container_width=True, key="daily_winners_clear_cache"):
             load_available_dates.clear()
-            load_supabase_data.clear()
+            _load_supabase_data_cached.clear()
             st.session_state[f'{TAB_ID}_refresh_counter'] += 1
             st.success("Cache cleared!")
             st.rerun()
