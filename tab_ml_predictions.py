@@ -28,24 +28,17 @@ def get_supabase_client() -> Client:
 
 
 def trigger_screening_workflow():
-    """Trigger ML screening workflow via GitHub Actions"""
+
+        
     try:
-        github_token = st.secrets.get("secrets", {}).get("G_TOKEN")
-        github_repo = st.secrets.get("secrets", {}).get("GITHUB_REPO_OWNER", "/tradingview-analysis")
+        github_token = os.environ.get("GITHUB_TOKEN") or st.secrets.get("GITHUB_TOKEN")
+        repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("GITHUB_REPO_OWNER")
+        repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("GITHUB_REPO_NAME")
+        workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("GITHUB_WORKFLOW_ID", "ml_track_accuracy.yml")
         
-        if not github_token:
-            st.error("❌ GitHub token not configured.")
-            st.info("Set G_TOKEN in secrets to enable workflow triggers.")
+        if not all([github_token, repo_owner, repo_name]):
+            st.error("❌ GitHub credentials not configured.")
             return False
-        
-        # Parse repo owner and name
-        if "/" in github_repo:
-            repo_owner, repo_name = github_repo.split("/")
-        else:
-            st.error("❌ Invalid GitHub repo format. Should be 'owner/repo'")
-            return False
-        
-        workflow_id = "ml_screen_and_predict.yml"
         
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
         
