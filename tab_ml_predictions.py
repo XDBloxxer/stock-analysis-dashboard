@@ -31,7 +31,7 @@ def trigger_screening_workflow():
 
         
     try:
-        github_token = os.environ.get("GITHUB_TOKEN") or st.secrets.get("GITHUB_TOKEN")
+        github_token = os.environ.get("G_TOKEN") or st.secrets.get("GITHUB_TOKEN")
         repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("GITHUB_REPO_OWNER")
         repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("GITHUB_REPO_NAME")
         workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("GITHUB_WORKFLOW_ID", "ml_track_accuracy.yml")
