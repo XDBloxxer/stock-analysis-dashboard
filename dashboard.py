@@ -65,8 +65,8 @@ def main():
         st.stop()
     
     # Optional: GitHub token for triggering workflows
-    github_token = st.secrets.get("secrets", {}.get("G_TOKEN")
-    github_repo = st.secrets.get("secrets", {}.get("GITHUB_REPO_NAME", "XDBloxxer/tradingview-analysis")
+    github_token = st.secrets.get("secrets", {}).get("G_TOKEN")
+    github_repo = st.secrets.get("secrets", {}).get("GITHUB_REPO_NAME", "XDBloxxer/tradingview-analysis")
     
     # Store in session state for tabs to access
     st.session_state.github_token = github_token
