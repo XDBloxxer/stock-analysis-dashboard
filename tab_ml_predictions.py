@@ -18,8 +18,8 @@ import requests
 @st.cache_resource
 def get_supabase_client() -> Client:
     """Get Supabase client - cached"""
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    url = st.secrets.get("supabase", {}).get("url")
+    key = st.secrets.get("supabase", {}).get("key")
     
     if not url or not key:
         raise ValueError("Missing Supabase credentials")
