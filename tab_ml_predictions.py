@@ -31,7 +31,7 @@ def trigger_screening_workflow():
     """Trigger ML screening workflow via GitHub Actions"""
     try:
         github_token = st.secrets.get("secrets", {}).get("G_TOKEN")
-        github_repo = st.secrets.get("secrets", {}).get("GITHUB_REPO_NAME", "XDBloxxer/tradingview-analysis")
+        github_repo = st.secrets.get("secrets", {}).get("GITHUB_REPO_OWNER", "/tradingview-analysis")
         
         if not github_token:
             st.error("❌ GitHub token not configured.")
