@@ -156,7 +156,7 @@ def save_strategy(name: str, description: str, start_date, end_date,
 def run_backtest_via_github(strategy_id: int):
     """Trigger backtest via GitHub Actions"""
     try:
-        github_token = os.environ.get("GITHUB_TOKEN") or st.secrets.get("GITHUB_TOKEN")
+        github_token = os.environ.get("GITHUB_TOKEN") or st.secrets.get("G_TOKEN")
         repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("GITHUB_REPO_OWNER")
         repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("GITHUB_REPO_NAME")
         workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("GITHUB_WORKFLOW_ID", "backtest.yml")
