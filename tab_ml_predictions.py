@@ -1,6 +1,6 @@
 """
 ML Predictions Tab - AUTONOMOUS SYSTEM
-Shows predictions from screening, comprehensive accuracy tracking
+PERSISTENT CACHE - survives browser refresh, minimizes egress
 """
 
 import streamlit as st
@@ -34,7 +34,7 @@ def trigger_workflow(workflow_name: str, inputs: dict = None) -> bool:
     
     if not github_token:
         st.warning("⚠️ GitHub token not configured. Cannot trigger workflows.")
-        st.info("Set GITHUB_TOKEN environment variable to enable workflow triggers.")
+        st.info("Set G_TOKEN environment variable to enable workflow triggers.")
         return False
     
     url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_name}/dispatches"
@@ -57,6 +57,48 @@ def trigger_workflow(workflow_name: str, inputs: dict = None) -> bool:
     except Exception as e:
         st.error(f"Failed to trigger workflow: {e}")
         return False
+
+
+@st.cache_resource
+def _load_ml_data(_tab_id: str, table_name: str, filter_key: tuple = None, order_by: tuple = None, limit: int = 100, _refresh_key: int = 0):
+    """
+    PERSISTENT CACHE - only refreshes when _refresh_key changes
+    Survives browser close/refresh
+    Per-tab isolation via _tab_id
+    """
+    filters = dict(filter_key) if filter_key else None
+    order_col, order_dir = order_by if order_by else (None, None)
+    
+    try:
+        client = get_supabase_client()
+        query = client.table(table_name).select("*")
+        
+        if filters:
+            for key, value in filters.items():
+                query = query.eq(key, value)
+        
+        if order_col:
+            query = query.order(order_col, desc=(order_dir == 'desc'))
+        
+        if limit:
+            query = query.limit(limit)
+        
+        response = query.execute()
+        
+        if not response.data:
+            return pd.DataFrame()
+        
+        return pd.DataFrame(response.data)
+    
+    except Exception as e:
+        st.warning(f"Could not load from {table_name}: {str(e)}")
+        return pd.DataFrame()
+
+
+def load_ml_data(_tab_id: str, table_name: str, filters: dict = None, order_by: tuple = None, limit: int = 100, _refresh_key: int = 0):
+    """Public wrapper that converts filters to hashable tuple"""
+    filter_key = tuple(sorted(filters.items())) if filters else None
+    return _load_ml_data(_tab_id, table_name, filter_key, order_by, limit, _refresh_key)
 
 
 # ===== MAIN TAB FUNCTION =====
@@ -82,20 +124,19 @@ def render_ml_predictions_tab():
             st.rerun()
     
     with col2:
+        if st.button("🗑️ Clear Cache", key=f"{TAB_ID}_clear_cache"):
+            _load_ml_data.clear()
+            st.session_state[f'{TAB_ID}_refresh_counter'] += 1
+            st.success("Cache cleared!")
+            st.rerun()
+    
+    with col3:
         if st.button("🔍 Screen Stocks", key=f"{TAB_ID}_screen", help="Trigger screening workflow"):
             with st.spinner("Triggering screening workflow..."):
                 if trigger_workflow("ml_screen_and_predict.yml", {"universe": "auto", "top_n": "50"}):
                     st.success("✓ Screening workflow triggered! Check back in 15-30 minutes.")
                 else:
                     st.info("💡 Manually run: `python ml_screen_and_predict.py`")
-    
-    with col3:
-        if st.button("📊 Track Accuracy", key=f"{TAB_ID}_track", help="Trigger accuracy tracking"):
-            with st.spinner("Triggering accuracy tracking..."):
-                if trigger_workflow("ml_track_accuracy.yml"):
-                    st.success("✓ Accuracy tracking triggered!")
-                else:
-                    st.info("💡 Manually run: `python ml_track_comprehensive_accuracy.py`")
     
     # Info banner
     st.info("""
@@ -136,26 +177,17 @@ def render_ml_predictions_tab():
 def render_latest_predictions(tab_id: str, refresh_key: int):
     """Show latest predictions from autonomous screening"""
     
-    client = get_supabase_client()
+    # Get available dates (cached)
+    dates_df = load_ml_data(tab_id, "ml_explosion_predictions", 
+                           order_by=("prediction_date", "desc"), 
+                           limit=30, _refresh_key=refresh_key)
     
-    # Get available dates
-    try:
-        response = client.table("ml_explosion_predictions")\
-            .select("prediction_date")\
-            .order("prediction_date", desc=True)\
-            .limit(30)\
-            .execute()
-        
-        if not response.data:
-            st.warning("📭 No predictions available yet.")
-            st.info("Run the screening workflow or wait for the scheduled run (daily at 3 PM Estonia).")
-            return
-        
-        dates = sorted(list(set(row['prediction_date'] for row in response.data)), reverse=True)
-        
-    except Exception as e:
-        st.error(f"Failed to load dates: {e}")
+    if dates_df.empty:
+        st.warning("📭 No predictions available yet.")
+        st.info("Run the screening workflow or wait for the scheduled run (daily at 3 PM Estonia).")
         return
+    
+    dates = sorted(dates_df['prediction_date'].unique().tolist(), reverse=True)
     
     # Date selector
     col1, col2 = st.columns([1, 3])
@@ -170,7 +202,6 @@ def render_latest_predictions(tab_id: str, refresh_key: int):
     
     with col2:
         st.markdown(f"**Prediction Date:** {selected_date}")
-        # Check if this is for today or future
         prediction_dt = datetime.fromisoformat(selected_date).date()
         today = datetime.now().date()
         if prediction_dt >= today:
@@ -178,22 +209,15 @@ def render_latest_predictions(tab_id: str, refresh_key: int):
         else:
             st.info("📊 Historical predictions - check Predictions vs Actuals for results")
     
-    # Load predictions
-    try:
-        response = client.table("ml_explosion_predictions")\
-            .select("*")\
-            .eq("prediction_date", selected_date)\
-            .order("explosion_probability", desc=True)\
-            .execute()
-        
-        if not response.data:
-            st.warning(f"No predictions for {selected_date}")
-            return
-        
-        df = pd.DataFrame(response.data)
-        
-    except Exception as e:
-        st.error(f"Failed to load predictions: {e}")
+    # Load predictions for selected date (cached)
+    df = load_ml_data(tab_id, "ml_explosion_predictions",
+                     filters={"prediction_date": selected_date},
+                     order_by=("explosion_probability", "desc"),
+                     limit=200,
+                     _refresh_key=refresh_key)
+    
+    if df.empty:
+        st.warning(f"No predictions for {selected_date}")
         return
     
     # Summary metrics
@@ -369,26 +393,18 @@ def render_predictions_vs_actuals(tab_id: str, refresh_key: int):
     st.markdown("### 🎯 Prediction Accuracy Analysis")
     st.info("Compare predictions against actual market outcomes. Updated daily after market close.")
     
-    client = get_supabase_client()
+    # Get available dates (cached)
+    dates_df = load_ml_data(tab_id, "ml_prediction_accuracy",
+                           order_by=("prediction_date", "desc"),
+                           limit=30,
+                           _refresh_key=refresh_key)
     
-    # Get available dates with accuracy data
-    try:
-        response = client.table("ml_prediction_accuracy")\
-            .select("prediction_date")\
-            .order("prediction_date", desc=True)\
-            .limit(30)\
-            .execute()
-        
-        if not response.data:
-            st.warning("📭 No accuracy data available yet.")
-            st.info("Accuracy tracking runs automatically after market close (5:30 AM Estonia).")
-            return
-        
-        dates = sorted(list(set(row['prediction_date'] for row in response.data)), reverse=True)
-        
-    except Exception as e:
-        st.error(f"Failed to load accuracy dates: {e}")
+    if dates_df.empty:
+        st.warning("📭 No accuracy data available yet.")
+        st.info("Accuracy tracking runs automatically after market close (5:30 AM Estonia).")
         return
+    
+    dates = sorted(dates_df['prediction_date'].unique().tolist(), reverse=True)
     
     selected_date = st.selectbox(
         "Select Date:",
@@ -397,21 +413,14 @@ def render_predictions_vs_actuals(tab_id: str, refresh_key: int):
         key=f"{tab_id}_accuracy_date_{refresh_key}"
     )
     
-    # Load accuracy data
-    try:
-        response = client.table("ml_prediction_accuracy")\
-            .select("*")\
-            .eq("prediction_date", selected_date)\
-            .execute()
-        
-        if not response.data:
-            st.warning(f"No accuracy data for {selected_date}")
-            return
-        
-        accuracy_df = pd.DataFrame(response.data)
-        
-    except Exception as e:
-        st.error(f"Failed to load accuracy data: {e}")
+    # Load accuracy data (cached)
+    accuracy_df = load_ml_data(tab_id, "ml_prediction_accuracy",
+                               filters={"prediction_date": selected_date},
+                               limit=500,
+                               _refresh_key=refresh_key)
+    
+    if accuracy_df.empty:
+        st.warning(f"No accuracy data for {selected_date}")
         return
     
     # Summary metrics
@@ -513,24 +522,14 @@ def render_missed_opportunities(tab_id: str, refresh_key: int):
     st.markdown("### ❌ Missed Opportunities (Recall Analysis)")
     st.info("Winners we didn't predict. Critical for improving the model's ability to catch opportunities.")
     
-    client = get_supabase_client()
+    # Get missed opportunities summary (cached)
+    summary_df = load_ml_data(tab_id, "v_ml_missed_summary",
+                             order_by=("detection_date", "desc"),
+                             limit=30,
+                             _refresh_key=refresh_key)
     
-    # Get missed opportunities
-    try:
-        response = client.table("v_ml_missed_summary")\
-            .select("*")\
-            .order("detection_date", desc=True)\
-            .limit(30)\
-            .execute()
-        
-        if not response.data:
-            st.warning("📭 No missed opportunities data yet.")
-            return
-        
-        summary_df = pd.DataFrame(response.data)
-        
-    except Exception as e:
-        st.error(f"Failed to load data: {e}")
+    if summary_df.empty:
+        st.warning("📭 No missed opportunities data yet.")
         return
     
     # Select date
@@ -559,22 +558,15 @@ def render_missed_opportunities(tab_id: str, refresh_key: int):
     with col4:
         st.metric("Avg Missed Gain", f"+{date_summary['avg_missed_gain']:.1f}%")
     
-    # Get detailed missed opportunities
-    try:
-        response = client.table("ml_missed_opportunities")\
-            .select("*")\
-            .eq("detection_date", selected_date)\
-            .order("actual_gain_pct", desc=True)\
-            .execute()
-        
-        if not response.data:
-            st.info("No detailed data for this date")
-            return
-        
-        missed_df = pd.DataFrame(response.data)
-        
-    except Exception as e:
-        st.error(f"Failed to load details: {e}")
+    # Get detailed missed opportunities (cached)
+    missed_df = load_ml_data(tab_id, "ml_missed_opportunities",
+                            filters={"detection_date": selected_date},
+                            order_by=("actual_gain_pct", "desc"),
+                            limit=200,
+                            _refresh_key=refresh_key)
+    
+    if missed_df.empty:
+        st.info("No detailed data for this date")
         return
     
     st.markdown("#### Why We Missed Them")
@@ -624,26 +616,17 @@ def render_performance_trends(tab_id: str, refresh_key: int):
     
     st.markdown("### 📈 Model Performance Trends")
     
-    client = get_supabase_client()
+    # Get accuracy summary (cached)
+    summary_df = load_ml_data(tab_id, "v_ml_daily_accuracy_summary",
+                             order_by=("prediction_date", "desc"),
+                             limit=30,
+                             _refresh_key=refresh_key)
     
-    # Get accuracy summary
-    try:
-        response = client.table("v_ml_daily_accuracy_summary")\
-            .select("*")\
-            .order("prediction_date", desc=True)\
-            .limit(30)\
-            .execute()
-        
-        if not response.data:
-            st.warning("No performance data yet")
-            return
-        
-        summary_df = pd.DataFrame(response.data)
-        summary_df = summary_df.sort_values('prediction_date')
-        
-    except Exception as e:
-        st.error(f"Failed to load data: {e}")
+    if summary_df.empty:
+        st.warning("No performance data yet")
         return
+    
+    summary_df = summary_df.sort_values('prediction_date')
     
     # Accuracy over time
     fig = go.Figure()
@@ -677,49 +660,43 @@ def render_performance_trends(tab_id: str, refresh_key: int):
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Signal performance
+    # Signal performance (cached)
     st.markdown("#### Performance by Signal")
     
-    try:
-        response = client.table("v_ml_signal_performance")\
-            .select("*")\
-            .execute()
-        
-        if response.data:
-            signal_df = pd.DataFrame(response.data)
-            
-            fig = go.Figure(data=[go.Bar(
-                x=signal_df['predicted_signal'],
-                y=signal_df['success_rate_pct'],
-                text=signal_df['success_rate_pct'].apply(lambda x: f"{x:.1f}%"),
-                textposition='auto',
-                marker_color=['#10b981', '#667eea', '#f59e0b', '#ef4444']
-            )])
-            
-            fig.update_layout(
-                title="Success Rate by Signal Type",
-                xaxis_title="Signal",
-                yaxis_title="Success Rate (%)",
-                height=400,
-                plot_bgcolor='rgba(26, 29, 41, 0.6)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='#e8eaf0')
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.dataframe(
-                signal_df.style.format({
-                    'success_rate_pct': '{:.2f}%',
-                    'avg_confidence': '{:.2f}%',
-                    'avg_gain_when_correct': '+{:.2f}%',
-                    'avg_loss_when_wrong': '{:.2f}%'
-                }, na_rep='-'),
-                use_container_width=True
-            )
+    signal_df = load_ml_data(tab_id, "v_ml_signal_performance",
+                            limit=10,
+                            _refresh_key=refresh_key)
     
-    except Exception as e:
-        st.error(f"Failed to load signal performance: {e}")
+    if not signal_df.empty:
+        fig = go.Figure(data=[go.Bar(
+            x=signal_df['predicted_signal'],
+            y=signal_df['success_rate_pct'],
+            text=signal_df['success_rate_pct'].apply(lambda x: f"{x:.1f}%"),
+            textposition='auto',
+            marker_color=['#10b981', '#667eea', '#f59e0b', '#ef4444']
+        )])
+        
+        fig.update_layout(
+            title="Success Rate by Signal Type",
+            xaxis_title="Signal",
+            yaxis_title="Success Rate (%)",
+            height=400,
+            plot_bgcolor='rgba(26, 29, 41, 0.6)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#e8eaf0')
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.dataframe(
+            signal_df.style.format({
+                'success_rate_pct': '{:.2f}%',
+                'avg_confidence': '{:.2f}%',
+                'avg_gain_when_correct': '+{:.2f}%',
+                'avg_loss_when_wrong': '{:.2f}%'
+            }, na_rep='-'),
+            use_container_width=True
+        )
 
 
 # ===== SUB-TAB 5: SYSTEM INFO =====
@@ -729,59 +706,52 @@ def render_system_info(tab_id: str, refresh_key: int):
     
     st.markdown("### ℹ️ System Information")
     
-    client = get_supabase_client()
+    # Get latest screening log (cached)
+    log_df = load_ml_data(tab_id, "ml_screening_logs",
+                         order_by=("screening_date", "desc"),
+                         limit=1,
+                         _refresh_key=refresh_key)
     
-    # Get latest screening log
-    try:
-        response = client.table("ml_screening_logs")\
-            .select("*")\
-            .order("screening_date", desc=True)\
-            .limit(1)\
-            .execute()
+    if not log_df.empty:
+        log = log_df.iloc[0]
         
-        if response.data:
-            log = response.data[0]
-            
-            st.markdown("#### Latest Screening Run")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Date", log['screening_date'])
-            
-            with col2:
-                st.metric("Stocks Attempted", log['total_symbols_attempted'])
-            
-            with col3:
-                success_rate = (log['symbols_fetched_successfully'] / log['total_symbols_attempted'] * 100) if log['total_symbols_attempted'] > 0 else 0
-                st.metric("Fetch Success", f"{success_rate:.1f}%")
-            
-            with col4:
-                st.metric("Predictions Made", log['total_predictions'])
-            
-            st.markdown("#### Screening Statistics")
-            
-            stats_df = pd.DataFrame([{
-                'Metric': 'Total Attempted',
-                'Value': log['total_symbols_attempted']
-            }, {
-                'Metric': 'Successfully Fetched',
-                'Value': log['symbols_fetched_successfully']
-            }, {
-                'Metric': 'After Price Filter',
-                'Value': log['symbols_after_price_filter']
-            }, {
-                'Metric': 'After Volume Filter',
-                'Value': log['symbols_after_volume_filter']
-            }, {
-                'Metric': 'Final Predictions',
-                'Value': log['total_predictions']
-            }])
-            
-            st.dataframe(stats_df, use_container_width=True, hide_index=True)
-    
-    except Exception as e:
-        st.warning(f"No screening logs available: {e}")
+        st.markdown("#### Latest Screening Run")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Date", log['screening_date'])
+        
+        with col2:
+            st.metric("Stocks Attempted", log['total_symbols_attempted'])
+        
+        with col3:
+            success_rate = (log['symbols_fetched_successfully'] / log['total_symbols_attempted'] * 100) if log['total_symbols_attempted'] > 0 else 0
+            st.metric("Fetch Success", f"{success_rate:.1f}%")
+        
+        with col4:
+            st.metric("Predictions Made", log['total_predictions'])
+        
+        st.markdown("#### Screening Statistics")
+        
+        stats_df = pd.DataFrame([{
+            'Metric': 'Total Attempted',
+            'Value': log['total_symbols_attempted']
+        }, {
+            'Metric': 'Successfully Fetched',
+            'Value': log['symbols_fetched_successfully']
+        }, {
+            'Metric': 'After Price Filter',
+            'Value': log['symbols_after_price_filter']
+        }, {
+            'Metric': 'After Volume Filter',
+            'Value': log['symbols_after_volume_filter']
+        }, {
+            'Metric': 'Final Predictions',
+            'Value': log['total_predictions']
+        }])
+        
+        st.dataframe(stats_df, use_container_width=True, hide_index=True)
     
     # System schedule
     st.markdown("---")
