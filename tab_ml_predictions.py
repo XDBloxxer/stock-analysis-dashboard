@@ -31,10 +31,10 @@ def trigger_screening_workflow():
 
         
     try:
-        github_token = os.environ.get("G_TOKEN") or st.secrets.get("G_TOKEN")
-        repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("GITHUB_REPO_OWNER")
-        repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("GITHUB_REPO_NAME")
-        workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("GITHUB_WORKFLOW_ID", "ml_track_accuracy.yml")
+        github_token = os.environ.get("G_TOKEN") or st.secrets.get("secrets", {}).get("G_TOKEN")
+        repo_owner = os.environ.get("GITHUB_REPO_OWNER") or st.secrets.get("secrets", {}).get("GITHUB_REPO_OWNER")
+        repo_name = os.environ.get("GITHUB_REPO_NAME") or st.secrets.get("secrets", {}).get("GITHUB_REPO_NAME")
+        workflow_id = os.environ.get("GITHUB_WORKFLOW_ID") or st.secrets.get("secrets", {}).get("GITHUB_WORKFLOW_ID", "ml_track_accuracy.yml")
         
         if not all([github_token, repo_owner, repo_name]):
             st.error("❌ GitHub credentials not configured.")
