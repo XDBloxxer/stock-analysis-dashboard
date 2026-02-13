@@ -27,35 +27,97 @@ def get_supabase_client() -> Client:
     return create_client(url, key)
 
 
-def trigger_workflow(workflow_name: str, inputs: dict = None) -> bool:
-    """Trigger a workflow in tradingview-analysis repo"""
-    github_token = st.session_state.get('github_token')
-    github_repo = st.session_state.get('github_repo')
-    
-    if not github_token:
-        st.warning("⚠️ GitHub token not configured. Cannot trigger workflows.")
-        st.info("Set G_TOKEN environment variable to enable workflow triggers.")
-        return False
-    
-    url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_name}/dispatches"
-    
-    headers = {
-        "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
-    }
-    
-    payload = {
-        "ref": "main",
-        "inputs": inputs or {}
-    }
-    
+def trigger_screening_workflow():
+    """Trigger ML screening workflow via GitHub Actions"""
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        response.raise_for_status()
-        return True
+        github_token = st.secrets.get("secrets", {}).get("G_TOKEN")
+        github_repo = st.secrets.get("secrets", {}).get("GITHUB_REPO_NAME", "XDBloxxer/tradingview-analysis")
+        
+        if not github_token:
+            st.error("❌ GitHub token not configured.")
+            st.info("Set G_TOKEN in secrets to enable workflow triggers.")
+            return False
+        
+        # Parse repo owner and name
+        if "/" in github_repo:
+            repo_owner, repo_name = github_repo.split("/")
+        else:
+            st.error("❌ Invalid GitHub repo format. Should be 'owner/repo'")
+            return False
+        
+        workflow_id = "ml_screen_and_predict.yml"
+        
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
+        
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+        
+        payload = {
+            "ref": "main",
+            "inputs": {}
+        }
+        
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 204:
+            st.success(f"✅ Screening workflow triggered successfully!")
+            st.info("The screening will run in a few moments. Refresh this page in 15-30 minutes to see results.")
+            return True
+        else:
+            st.error(f"Failed to trigger workflow: {response.status_code} - {response.text}")
+            return False
+            
     except Exception as e:
-        st.error(f"Failed to trigger workflow: {e}")
+        st.error(f"Error triggering GitHub workflow: {e}")
+        return False
+
+
+def trigger_accuracy_tracking_workflow():
+    """Trigger ML accuracy tracking workflow via GitHub Actions"""
+    try:
+        github_token = st.secrets.get("secrets", {}).get("G_TOKEN")
+        github_repo = st.secrets.get("secrets", {}).get("GITHUB_REPO_NAME", "XDBloxxer/tradingview-analysis")
+        
+        if not github_token:
+            st.error("❌ GitHub token not configured.")
+            return False
+        
+        # Parse repo owner and name
+        if "/" in github_repo:
+            repo_owner, repo_name = github_repo.split("/")
+        else:
+            st.error("❌ Invalid GitHub repo format. Should be 'owner/repo'")
+            return False
+        
+        workflow_id = "ml_track_accuracy.yml"
+        
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
+        
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+        
+        payload = {
+            "ref": "main",
+            "inputs": {}
+        }
+        
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code == 204:
+            st.success(f"✅ Accuracy tracking workflow triggered!")
+            return True
+        else:
+            st.error(f"Failed to trigger workflow: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error triggering GitHub workflow: {e}")
         return False
 
 
@@ -116,7 +178,7 @@ def render_ml_predictions_tab():
     st.subheader("🤖 ML Explosion Predictions (Autonomous)")
     
     # Control buttons
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     
     with col1:
         if st.button("🔄 Refresh", key=f"{TAB_ID}_refresh"):
@@ -133,10 +195,12 @@ def render_ml_predictions_tab():
     with col3:
         if st.button("🔍 Screen Stocks", key=f"{TAB_ID}_screen", help="Trigger screening workflow"):
             with st.spinner("Triggering screening workflow..."):
-                if trigger_workflow("ml_screen_and_predict.yml", {"universe": "auto", "top_n": "50"}):
-                    st.success("✓ Screening workflow triggered! Check back in 15-30 minutes.")
-                else:
-                    st.info("💡 Manually run: `python ml_screen_and_predict.py`")
+                trigger_screening_workflow()
+    
+    with col4:
+        if st.button("📊 Track Accuracy", key=f"{TAB_ID}_track", help="Trigger accuracy tracking"):
+            with st.spinner("Triggering accuracy tracking..."):
+                trigger_accuracy_tracking_workflow()
     
     # Info banner
     st.info("""
