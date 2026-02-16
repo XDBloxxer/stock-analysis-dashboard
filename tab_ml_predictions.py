@@ -374,7 +374,7 @@ def render_latest_predictions(tab_id: str, refresh_key: int):
     with col2:
         min_prob = st.slider(
             "Min Probability:",
-            0, 100, 50,
+            0, 100, 0,
             key=f"{tab_id}_min_prob_{refresh_key}"
         )
     
