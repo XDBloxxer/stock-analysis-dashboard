@@ -580,7 +580,7 @@ def render_missed_opportunities(tab_id: str, refresh_key: int):
     st.info("Winners we didn't predict. Critical for improving the model's ability to catch opportunities.")
     
     # Get missed opportunities summary (cached)
-    summary_df = load_ml_data(tab_id, "v_ml_missed_summary",
+    summary_df = load_ml_data(tab_id, "ml_missed_opportunities",
                              order_by=("detection_date", "desc"),
                              limit=30,
                              _refresh_key=refresh_key)
