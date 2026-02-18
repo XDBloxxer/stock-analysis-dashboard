@@ -367,7 +367,7 @@ def render_latest_predictions(tab_id: str, refresh_key: int):
         signal_filter = st.multiselect(
             "Signal:",
             options=['STRONG BUY', 'BUY', 'HOLD', 'AVOID'],
-            default=[],
+            default=['STRONG BUY', 'BUY', 'HOLD', 'AVOID'],
             key=f"{tab_id}_signal_filter_{refresh_key}"
         )
     
