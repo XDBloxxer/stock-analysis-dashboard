@@ -582,8 +582,8 @@ def render_daily_winners_tab():
     col3.metric("Change", f"{winner_info['change_pct']:+.2f}%",
                 delta=f"{winner_info['change_pct']:.2f}%")
     col4.metric("Volume", f"{winner_info['volume']/1e6:.1f}M")
-    col5.metric("High",   f"${winner_info['high']:.2f}"   if pd.notna(winner_info.get('high'))   else "—")
-    col6.metric("Low",    f"${winner_info['low']:.2f}"    if pd.notna(winner_info.get('low'))    else "—")
+    col5.metric("High",   f"${winner_info['high']:.2f}"  if 'high' in winner_info.index and pd.notna(winner_info['high'])  else "—")
+    col6.metric("Low",    f"${winner_info['low']:.2f}"   if 'low'  in winner_info.index and pd.notna(winner_info['low'])   else "—")
 
     st.markdown("---")
     st.markdown("### Technical Indicator Snapshots")
