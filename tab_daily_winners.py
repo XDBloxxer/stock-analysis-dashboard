@@ -733,7 +733,7 @@ def render_daily_winners_tab():
     selected_symbol = selected_symbol.strip().upper()
     winner_info = winners_df[winners_df['symbol'] == selected_symbol].iloc[0]
 
-    col1, col2, col3, col4, col5, col6, col17 = st.columns(7)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     col1.metric("Symbol", selected_symbol)
     col2.metric("Open",  f"${winner_info['open']:.2f}")
     col3.metric("Close",  f"${winner_info['price']:.2f}")
