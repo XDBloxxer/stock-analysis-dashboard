@@ -96,22 +96,8 @@ def _fetch_table_for_date(table_name: str, date: str) -> pd.DataFrame:
     try:
         client = get_supabase_client()
 
-        if table_name == "daily_winners":
-            query = client.table(table_name).select(
-                "symbol,exchange,price,change_pct,volume,detection_date"
-            )
-        elif table_name in [
-            "winners_market_open", "winners_market_close",
-            "winners_day_prior_open", "winners_day_prior_close",
-        ]:
-            query = client.table(table_name).select(
-                'symbol,exchange,detection_date,snapshot_type,snapshot_time,'
-                'open,high,low,close,volume,'
-                'rsi,"macd.macd","macd.signal",adx,ema20,sma20,atr,bb_width,'
-                '"stoch.k","stoch.d","w.r",ao,cci20'
-            )
-        else:
-            query = client.table(table_name).select("*")
+        # Always fetch every column — no indicators left behind
+        query = client.table(table_name).select("*")
 
         response = query.eq("detection_date", date).limit(200).execute()
 
@@ -121,9 +107,25 @@ def _fetch_table_for_date(table_name: str, date: str) -> pd.DataFrame:
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all').dropna(axis=1, how='all')
 
+        # Rename dotted / bracketed column names to safe Python identifiers
         rename_map = {
-            'macd.macd': 'macd_value', 'macd.signal': 'macd_signal',
-            'stoch.k': 'stoch_k', 'stoch.d': 'stoch_d', 'w.r': 'w_r',
+            'macd.macd':    'macd_value',
+            'macd.signal':  'macd_signal',
+            'macd_diff':    'macd_diff',
+            'stoch.k':      'stoch_k',
+            'stoch.d':      'stoch_d',
+            'stoch.k[1]':   'stoch_k1',
+            'stoch.d[1]':   'stoch_d1',
+            'w.r':          'w_r',
+            'rsi[1]':       'rsi_1',
+            'rsi[2]':       'rsi_2',
+            'mom[1]':       'mom_1',
+            'adx+di':       'adx_plus_di',
+            'adx-di':       'adx_minus_di',
+            'bb.upper':     'bb_upper',
+            'bb.lower':     'bb_lower',
+            'bb.middle':    'bb_middle',
+            'gap_%':        'gap_pct',
         }
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
@@ -224,33 +226,124 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
     price_label = 'Opening Price' if price_field == 'open' else 'Closing Price'
 
     indicator_groups = {
-        "Price & Volume": {
-            'fields': [price_field, 'volume'],
-            'labels': {price_field: price_label, 'volume': 'Volume'},
+        "Price & OHLC": {
+            'fields': [price_field, 'open', 'high', 'low', 'close', 'volume'],
+            'labels': {
+                price_field: price_label, 'open': 'Open', 'high': 'High',
+                'low': 'Low', 'close': 'Close', 'volume': 'Volume',
+            },
         },
         "Momentum": {
-            'fields': ["rsi", "rsi[1]", "rsi[2]", "stoch_k", "stoch_d", "mom", "w_r", "roc", "tsi", "kama"],
-            'labels': {},
+            'fields': [
+                "rsi", "rsi_1", "rsi_2",
+                "stoch_k", "stoch_d", "stoch_k1", "stoch_d1",
+                "mom", "mom_1", "roc", "w_r", "ao", "uo",
+                "tsi", "kama", "cci20",
+                "dpo", "kst", "kst_signal",
+                "vortex_pos", "vortex_neg", "mass_index",
+            ],
+            'labels': {
+                "rsi_1": "RSI [1]", "rsi_2": "RSI [2]",
+                "stoch_k": "Stoch K", "stoch_d": "Stoch D",
+                "stoch_k1": "Stoch K [1]", "stoch_d1": "Stoch D [1]",
+                "mom_1": "Mom [1]", "w_r": "W %R", "ao": "AO",
+                "uo": "UO", "cci20": "CCI 20", "dpo": "DPO",
+                "kst": "KST", "kst_signal": "KST Signal",
+                "vortex_pos": "Vortex +", "vortex_neg": "Vortex −",
+                "mass_index": "Mass Index",
+            },
         },
         "Trend": {
-            'fields': ["macd_value", "macd_signal", "adx", "adx+di", "adx-di",
-                       "ema20", "ema50", "ema200", "sma20", "sma50", "sma200",
-                       "aroon_up", "aroon_down", "psar"],
-            'labels': {},
+            'fields': [
+                "macd_value", "macd_signal", "macd_diff",
+                "adx", "adx_plus_di", "adx_minus_di",
+                "aroon_up", "aroon_down", "aroon_indicator",
+                "psar", "psar_up", "psar_down",
+                "ema5", "ema10", "ema20", "ema50", "ema100", "ema200",
+                "sma5", "sma10", "sma20", "sma50", "sma100", "sma200",
+                "vwap",
+            ],
+            'labels': {
+                "macd_value": "MACD", "macd_signal": "MACD Signal",
+                "macd_diff": "MACD Diff",
+                "adx_plus_di": "ADX +DI", "adx_minus_di": "ADX −DI",
+                "aroon_indicator": "Aroon Ind.",
+                "psar_up": "PSAR Up", "psar_down": "PSAR Down",
+            },
         },
         "Volatility": {
-            'fields': ["atr", "atr_pct", "bb.upper", "bb.lower", "bb_width",
-                       "volatility_20d", "keltner_upper", "keltner_lower",
-                       "donchian_upper", "donchian_lower"],
-            'labels': {},
+            'fields': [
+                "atr", "atr_pct", "bb_upper", "bb_lower", "bb_middle",
+                "bb_width", "bbpower",
+                "keltner_upper", "keltner_lower", "keltner_middle",
+                "donchian_upper", "donchian_lower", "donchian_middle",
+                "volatility_10d", "volatility_20d", "volatility_30d",
+            ],
+            'labels': {
+                "atr_pct": "ATR %",
+                "bb_upper": "BB Upper", "bb_lower": "BB Lower",
+                "bb_middle": "BB Middle", "bb_width": "BB Width",
+                "bbpower": "BB Power",
+                "keltner_upper": "Keltner Upper",
+                "keltner_lower": "Keltner Lower",
+                "keltner_middle": "Keltner Mid",
+                "donchian_upper": "Donchian Upper",
+                "donchian_lower": "Donchian Lower",
+                "donchian_middle": "Donchian Mid",
+                "volatility_10d": "Volatility 10d",
+                "volatility_20d": "Volatility 20d",
+                "volatility_30d": "Volatility 30d",
+            },
         },
-        "Volume Indicators": {
-            'fields': ["obv", "cmf", "force_index", "vpt", "volume_sma20", "volume_ratio"],
-            'labels': {},
+        "Volume": {
+            'fields': [
+                "obv", "cmf", "force_index", "eom", "eom_signal",
+                "vpt", "nvi",
+                "volume_sma5", "volume_sma10", "volume_sma20", "volume_ratio",
+            ],
+            'labels': {
+                "obv": "OBV", "cmf": "CMF", "force_index": "Force Index",
+                "eom": "EOM", "eom_signal": "EOM Signal",
+                "vpt": "VPT", "nvi": "NVI",
+                "volume_sma5": "Vol SMA 5", "volume_sma10": "Vol SMA 10",
+                "volume_sma20": "Vol SMA 20", "volume_ratio": "Vol Ratio",
+            },
         },
-        "Other": {
-            'fields': ["cci20", "ao", "uo", "vwap", "high_52w", "low_52w", "gap_%"],
-            'labels': {},
+        "Price Context": {
+            'fields': [
+                "price_change_1d", "price_change_2d", "price_change_3d",
+                "price_change_5d", "price_change_10d", "price_change_20d",
+                "price_change_30d",
+                "high_52w", "low_52w", "price_vs_high_52w", "price_vs_low_52w",
+                "gap_pct",
+            ],
+            'labels': {
+                "price_change_1d": "Change 1d %", "price_change_2d": "Change 2d %",
+                "price_change_3d": "Change 3d %", "price_change_5d": "Change 5d %",
+                "price_change_10d": "Change 10d %", "price_change_20d": "Change 20d %",
+                "price_change_30d": "Change 30d %",
+                "high_52w": "52W High", "low_52w": "52W Low",
+                "price_vs_high_52w": "vs 52W High %", "price_vs_low_52w": "vs 52W Low %",
+                "gap_pct": "Gap %",
+            },
+        },
+        "Signals": {
+            'fields': [
+                "ema20_above_ema50", "ema50_above_ema200", "price_above_ema20",
+                "ema10_above_ema20", "sma50_above_sma200",
+                "doji", "hammer", "bullish_engulfing",
+                "gap_up", "gap_down",
+            ],
+            'labels': {
+                "ema20_above_ema50": "EMA20 > EMA50",
+                "ema50_above_ema200": "EMA50 > EMA200",
+                "price_above_ema20": "Price > EMA20",
+                "ema10_above_ema20": "EMA10 > EMA20",
+                "sma50_above_sma200": "SMA50 > SMA200",
+                "doji": "Doji", "hammer": "Hammer",
+                "bullish_engulfing": "Bull Engulf.",
+                "gap_up": "Gap Up", "gap_down": "Gap Down",
+            },
         },
     }
 
@@ -269,17 +362,34 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
             for j, field in enumerate(available):
                 with cols[j % 4]:
                     value = data_row[field]
-                    if field == "volume":
-                        display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
-                    elif abs(value) >= 1000:
-                        display_val = f"{value:.0f}"
-                    elif abs(value) >= 10:
-                        display_val = f"{value:.2f}"
-                    else:
-                        display_val = f"{value:.3f}"
                     label = group_info['labels'].get(
                         field, field.replace(".", " ").replace("_", " ").upper()
                     )
+                    # Boolean / signal fields (0 or 1)
+                    bool_fields = {
+                        "ema20_above_ema50", "ema50_above_ema200", "price_above_ema20",
+                        "ema10_above_ema20", "sma50_above_sma200",
+                        "doji", "hammer", "bullish_engulfing", "gap_up", "gap_down",
+                    }
+                    if field in bool_fields:
+                        display_val = "✅ Yes" if value else "❌ No"
+                    elif field == "volume":
+                        display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
+                    elif field in ("volume_sma5", "volume_sma10", "volume_sma20",
+                                   "obv", "force_index", "vpt", "nvi", "eom", "eom_signal"):
+                        # Large absolute numbers
+                        if abs(value) >= 1_000_000:
+                            display_val = f"{value/1e6:.2f}M"
+                        elif abs(value) >= 1_000:
+                            display_val = f"{value/1e3:.1f}K"
+                        else:
+                            display_val = f"{value:.2f}"
+                    elif abs(value) >= 1000:
+                        display_val = f"{value:.2f}"
+                    elif abs(value) >= 1:
+                        display_val = f"{value:.3f}"
+                    else:
+                        display_val = f"{value:.4f}"
                     st.metric(label, display_val)
 
 
@@ -310,9 +420,10 @@ def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_c
         return
 
     common_indicators = [
-        "rsi", "macd_value", "adx", "volume", "close", "atr",
-        "bb_width", "stoch_k", "ema20", "ema50", "sma20",
-        "volatility_20d", "volume_ratio",
+        "rsi", "rsi_1", "macd_value", "macd_signal", "adx",
+        "volume", "close", "atr", "bb_width", "stoch_k",
+        "ema20", "ema50", "sma20", "volatility_20d", "volume_ratio",
+        "obv", "cmf", "w_r", "ao", "cci20", "mom",
     ]
     available_indicators = [
         ind for ind in common_indicators
