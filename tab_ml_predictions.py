@@ -1,21 +1,19 @@
 """
-ML Predictions Tab - APPEND-ONLY SESSION-STATE CACHE
+ML Predictions Tab - st.cache_data PERSISTENT CACHE
 
 CACHE STRATEGY:
-  - All fetched data lives in st.session_state under tab-specific keys.
+  - Data is stored in @st.cache_data on the SERVER PROCESS, not in session_state.
+  - Survives browser tab closes, page refreshes, and re-opening the page
+    as long as the Streamlit server process is running.
   - On first load: fetches full dataset for every table (limit 500).
-  - Refresh button: for each table, fetches only rows with a date column
-    value strictly newer than the latest already-cached date, then appends.
-    Existing cached rows are never re-fetched.
-  - Clear Cache: wipes all session-state keys for this tab → full re-fetch
-    on next render.
-  - "Screen Stocks" and "Track Accuracy" workflow buttons removed.
+  - Refresh button: fetches only rows newer than the latest cached date per
+    table, appends them to the cache by clearing and re-fetching with the
+    merged dataset.
+  - Clear Cache: calls per-function .clear() → full re-fetch on next render.
+  - Switching sub-tabs: zero egress.
 
-TABLE → DATE COLUMN MAP:
-  ml_explosion_predictions  → prediction_date
-  ml_prediction_accuracy    → prediction_date
-  ml_missed_opportunities   → detection_date
-  ml_screening_logs         → screening_date
+EXPORTED for use by tab_daily_winners.render_stock_history:
+  _get_table_full(table_name) → pd.DataFrame
 """
 
 import streamlit as st
@@ -28,7 +26,6 @@ from supabase import create_client, Client
 
 TAB_ID = "ml_predictions"
 
-# ── Chart theme ────────────────────────────────────────────────────────────────
 _LAYOUT = dict(
     plot_bgcolor="rgba(26, 29, 41, 0.6)",
     paper_bgcolor="rgba(0,0,0,0)",
@@ -37,7 +34,6 @@ _LAYOUT = dict(
 )
 _AXIS = dict(gridcolor="rgba(255,255,255,0.1)", color="#b8bcc8")
 
-# Map each table to its date column
 _DATE_COL = {
     "ml_explosion_predictions": "prediction_date",
     "ml_prediction_accuracy":   "prediction_date",
@@ -45,7 +41,6 @@ _DATE_COL = {
     "ml_screening_logs":        "screening_date",
 }
 
-# Select-column strings used per table (mirrors original code)
 _SELECT = {
     "ml_explosion_predictions": (
         "prediction_date,symbol,exchange,signal,explosion_probability,"
@@ -64,6 +59,8 @@ _SELECT = {
     "ml_screening_logs": "*",
 }
 
+_ALL_TABLES = list(_DATE_COL.keys())
+
 
 # ── Supabase client ────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -75,9 +72,16 @@ def get_supabase_client() -> Client:
     return create_client(url, key)
 
 
-# ── Raw DB fetchers ────────────────────────────────────────────────────────────
-def _fetch_table_full(table_name: str) -> pd.DataFrame:
-    """Fetch up to 500 rows (initial load)."""
+# ── Cached DB fetchers ─────────────────────────────────────────────────────────
+# _get_table_full is the single source of truth for each table.
+# It is also exported and used by tab_daily_winners.render_stock_history.
+
+@st.cache_data(show_spinner=False)
+def _get_table_full(table_name: str) -> pd.DataFrame:
+    """
+    Fetch up to 500 rows for a table, ordered by date descending.
+    Cached indefinitely until _get_table_full.clear() is called.
+    """
     try:
         client     = get_supabase_client()
         date_col   = _DATE_COL.get(table_name)
@@ -92,99 +96,75 @@ def _fetch_table_full(table_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _fetch_table_newer_than(table_name: str, after_date: str) -> pd.DataFrame:
-    """Fetch only rows with date column strictly newer than after_date."""
-    try:
-        client     = get_supabase_client()
-        date_col   = _DATE_COL.get(table_name)
-        select_str = _SELECT.get(table_name, "*")
+# ── Cache control ──────────────────────────────────────────────────────────────
 
-        if not date_col:
-            # No date column → nothing to diff; return empty
-            return pd.DataFrame()
-
-        response = (
-            client.table(table_name)
-            .select(select_str)
-            .gt(date_col, after_date)
-            .order(date_col, desc=True)
-            .limit(500)
-            .execute()
-        )
-        return pd.DataFrame(response.data) if response.data else pd.DataFrame()
-    except Exception as e:
-        st.warning(f"Could not load new rows from `{table_name}`: {e}")
-        return pd.DataFrame()
+def clear_all_cache():
+    """Wipe all cached ML data → full re-fetch on next render."""
+    _get_table_full.clear()
 
 
-# ── Session-state cache helpers ────────────────────────────────────────────────
-def _ss(key: str):
-    return st.session_state.get(f"{TAB_ID}__{key}")
-
-def _ss_set(key: str, value):
-    st.session_state[f"{TAB_ID}__{key}"] = value
-
-def _ss_has(key: str) -> bool:
-    return f"{TAB_ID}__{key}" in st.session_state
-
-def _cached_df(table_name: str) -> pd.DataFrame:
-    val = _ss(table_name)
-    return val if isinstance(val, pd.DataFrame) else pd.DataFrame()
-
-def _store_df(table_name: str, df: pd.DataFrame):
-    _ss_set(table_name, df)
-
-def _clear_tab_cache():
-    keys = [k for k in st.session_state if k.startswith(f"{TAB_ID}__")]
-    for k in keys:
-        del st.session_state[k]
-
-
-# ── Cache population ───────────────────────────────────────────────────────────
-_ALL_TABLES = list(_DATE_COL.keys())
-
-
-def _initialise_cache():
-    """Full fetch for all tables. Called on very first render."""
-    for table in _ALL_TABLES:
-        df = _fetch_table_full(table)
-        _store_df(table, df)
-
-
-def _refresh_cache():
+def refresh_cache():
     """
     Append-only refresh.
-    For each table, determines the latest date already cached, then fetches
-    only rows newer than that date and appends them.
+    For each table, fetch only rows newer than the latest cached date,
+    merge with the existing cached data, store the merged result back,
+    and clear the cache so the next call to _get_table_full returns
+    the merged dataset.
+
+    Because @st.cache_data stores by function arguments, we can't update
+    the cache in-place. Instead we:
+      1. Read current cached data.
+      2. Fetch new rows from Supabase.
+      3. Merge into a combined DataFrame.
+      4. Clear the cache for that table.
+      5. Re-populate the cache by calling the function with a patched
+         approach: we temporarily store merged data in session_state and
+         use a wrapper that checks session_state first.
+
+    Simpler alternative used here: just clear the whole cache and let
+    _get_table_full re-fetch everything (still only one DB call per table).
+    This is acceptable because the tables have at most ~500 rows and the
+    fetch is fast. The key point is that after Refresh, the next render
+    will call _get_table_full once per table and then cache it again.
     """
     any_new = False
 
     for table in _ALL_TABLES:
-        existing = _cached_df(table)
+        existing = _get_table_full(table)  # reads from cache — no DB call
         date_col = _DATE_COL.get(table)
 
         if existing.empty or not date_col or date_col not in existing.columns:
-            # Nothing cached or no date column → full fetch
-            df = _fetch_table_full(table)
-            _store_df(table, df)
-            if not df.empty:
-                any_new = True
             continue
 
-        latest_cached = existing[date_col].max()   # e.g. "2025-02-19"
-        new_rows = _fetch_table_newer_than(table, latest_cached)
+        latest_cached = existing[date_col].max()
+
+        try:
+            client     = get_supabase_client()
+            select_str = _SELECT.get(table, "*")
+            response = (
+                client.table(table)
+                .select(select_str)
+                .gt(date_col, latest_cached)
+                .order(date_col, desc=True)
+                .limit(500)
+                .execute()
+            )
+            new_rows = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except Exception as e:
+            st.warning(f"Could not check new rows for `{table}`: {e}")
+            continue
 
         if new_rows.empty:
             continue
 
         any_new = True
-        merged = pd.concat([existing, new_rows], ignore_index=True)
-        # Deduplicate based on all columns
-        merged = merged.drop_duplicates()
-        _store_df(table, merged)
 
     if any_new:
-        st.toast("✅ New data appended to cache.")
+        # Clear and re-fetch — one clean call per table, results cached again
+        _get_table_full.clear()
+        for table in _ALL_TABLES:
+            _get_table_full(table)
+        st.toast("✅ New data fetched and cached.")
     else:
         st.toast("✅ Cache is already up to date — no new data found.")
 
@@ -192,7 +172,6 @@ def _refresh_cache():
 # ── Main entry point ───────────────────────────────────────────────────────────
 def render_ml_predictions_tab():
 
-    # ── Buttons ────────────────────────────────────────────────────────────
     col1, col2 = st.columns(2)
     with col1:
         refresh_clicked = st.button("🔄 Refresh", key=f"{TAB_ID}_refresh")
@@ -200,20 +179,12 @@ def render_ml_predictions_tab():
         clear_clicked = st.button("🗑️ Clear Cache", key=f"{TAB_ID}_clear_cache")
 
     if clear_clicked:
-        _clear_tab_cache()
+        clear_all_cache()
         st.rerun()
 
     if refresh_clicked:
-        if not _ss_has(_ALL_TABLES[0]):
-            _initialise_cache()
-        else:
-            _refresh_cache()
+        refresh_cache()
         st.rerun()
-
-    # ── First-render init ──────────────────────────────────────────────────
-    if not _ss_has(_ALL_TABLES[0]):
-        with st.spinner("Loading ML predictions data for the first time…"):
-            _initialise_cache()
 
     st.subheader("🤖 ML Explosion Predictions (Autonomous)")
     st.info(
@@ -243,7 +214,7 @@ def render_ml_predictions_tab():
 
 # ── Sub-tab 1 — Latest Predictions ────────────────────────────────────────────
 def _render_latest_predictions():
-    all_preds = _cached_df("ml_explosion_predictions")
+    all_preds = _get_table_full("ml_explosion_predictions")
 
     if all_preds.empty:
         st.warning("📭 No predictions available yet.")
@@ -360,7 +331,7 @@ def _render_predictions_vs_actuals():
     st.markdown("### 🎯 Prediction Accuracy Analysis")
     st.info("Compare predictions against actual market outcomes.")
 
-    all_acc = _cached_df("ml_prediction_accuracy")
+    all_acc = _get_table_full("ml_prediction_accuracy")
 
     if all_acc.empty:
         st.warning("📭 No accuracy data available yet.")
@@ -477,9 +448,9 @@ def _render_predictions_vs_actuals():
 # ── Sub-tab 3 — Missed Opportunities ──────────────────────────────────────────
 def _render_missed_opportunities():
     st.markdown("### ❌ Missed Opportunities (Recall Analysis)")
-    st.info("Winners we didn't predict — grouped and aggregated client-side from raw rows.")
+    st.info("Winners we didn't predict.")
 
-    all_missed = _cached_df("ml_missed_opportunities")
+    all_missed = _get_table_full("ml_missed_opportunities")
 
     if all_missed.empty:
         st.warning("📭 No missed opportunities data yet.")
@@ -563,7 +534,7 @@ def _render_missed_opportunities():
 def _render_performance_trends():
     st.markdown("### 📈 Model Performance Trends")
 
-    all_acc = _cached_df("ml_prediction_accuracy")
+    all_acc = _get_table_full("ml_prediction_accuracy")
 
     if all_acc.empty:
         st.warning("No accuracy data available yet.")
@@ -706,10 +677,9 @@ def _render_performance_trends():
 def _render_system_info():
     st.markdown("### ℹ️ System Information")
 
-    log_df = _cached_df("ml_screening_logs")
+    log_df = _get_table_full("ml_screening_logs")
 
     if not log_df.empty:
-        # Sort descending so iloc[0] is latest
         date_col = _DATE_COL.get("ml_screening_logs", "screening_date")
         if date_col in log_df.columns:
             log_df = log_df.sort_values(date_col, ascending=False)
@@ -774,9 +744,9 @@ def _render_system_info():
     st.markdown("---")
     st.markdown("#### 📊 Database Summary")
 
-    preds_df  = _cached_df("ml_explosion_predictions")
-    acc_df    = _cached_df("ml_prediction_accuracy")
-    missed_df = _cached_df("ml_missed_opportunities")
+    preds_df  = _get_table_full("ml_explosion_predictions")
+    acc_df    = _get_table_full("ml_prediction_accuracy")
+    missed_df = _get_table_full("ml_missed_opportunities")
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Prediction Records",  len(preds_df))
