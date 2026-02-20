@@ -15,7 +15,6 @@ CACHE STRATEGY:
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime
 import os
 from supabase import create_client, Client
@@ -394,81 +393,239 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     st.metric(label, display_val)
 
 
-def render_indicator_evolution(symbol, open_df, close_df, prior_open_df, prior_close_df):
+def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_df):
+    """
+    4-candle OHLC chart across the two trading days, with a line
+    connecting the close prices to show the price journey.
+    """
     symbol = symbol.strip().upper()
 
     def _row(df):
         if df.empty or 'symbol' not in df.columns:
             return None
-        df = df.copy()
-        df['symbol'] = df['symbol'].str.strip().str.upper()
-        matches = df[df['symbol'] == symbol]
-        return matches.iloc[0] if not matches.empty else None
+        d = df.copy()
+        d['symbol'] = d['symbol'].str.strip().str.upper()
+        m = d[d['symbol'] == symbol]
+        return m.iloc[0] if not m.empty else None
 
-    timepoints = []
-    for label, df in [
-        ("T-1 Open",     prior_open_df),
-        ("T-1 Close",    prior_close_df),
-        ("Market Open",  open_df),
-        ("Market Close", close_df),
-    ]:
-        row = _row(df)
-        if row is not None:
-            timepoints.append((label, row))
-
-    if len(timepoints) < 2:
-        st.info(f"Need at least 2 time points for comparison. Found {len(timepoints)}.")
-        return
-
-    common_indicators = [
-        "rsi", "rsi_1", "macd_value", "macd_signal", "adx",
-        "volume", "close", "atr", "bb_width", "stoch_k",
-        "ema20", "ema50", "sma20", "volatility_20d", "volume_ratio",
-        "obv", "cmf", "w_r", "ao", "cci20", "mom",
+    # Collect the 4 timepoints in chronological order
+    snapshots = [
+        ("T-1 Open",     _row(prior_open_df)),
+        ("T-1 Close",    _row(prior_close_df)),
+        ("Market Open",  _row(open_df)),
+        ("Market Close", _row(close_df)),
     ]
-    available_indicators = [
-        ind for ind in common_indicators
-        if all(ind in data.index and pd.notna(data[ind]) for _, data in timepoints)
-    ]
+    available = [(lbl, row) for lbl, row in snapshots if row is not None]
 
-    if not available_indicators:
-        st.warning("No common indicators found across all available time points.")
+    if len(available) < 2:
+        st.info(f"Need at least 2 timepoints for chart. Found {len(available)}.")
         return
 
-    selected_indicators = st.multiselect(
-        "Select indicators to plot:", available_indicators,
-        default=available_indicators[:4],
-        key=f"indicator_evolution_select_{symbol}",
-    )
-    if not selected_indicators:
-        return
+    labels = [lbl for lbl, _ in available]
+    # For each timepoint use open/close depending on snapshot type;
+    # high and low come from the row directly
+    opens, highs, lows, closes = [], [], [], []
+    for lbl, row in available:
+        # open-type snapshots: the "price" is the open field
+        # close-type snapshots: the "price" is the close field
+        is_open_snap = "Open" in lbl
+        o = float(row['open'])  if pd.notna(row.get('open'))  else None
+        c = float(row['close']) if pd.notna(row.get('close')) else None
+        h = float(row['high'])  if pd.notna(row.get('high'))  else None
+        l = float(row['low'])   if pd.notna(row.get('low'))   else None
+        opens.append(o)
+        highs.append(h)
+        lows.append(l)
+        closes.append(c)
 
-    rows = (len(selected_indicators) + 1) // 2
-    fig = make_subplots(
-        rows=rows, cols=2,
-        subplot_titles=selected_indicators,
-        vertical_spacing=0.15, horizontal_spacing=0.1,
-    )
+    fig = go.Figure()
 
-    for idx, indicator in enumerate(selected_indicators):
-        r, c = idx // 2 + 1, idx % 2 + 1
-        fig.add_trace(go.Scatter(
-            x=[name for name, _ in timepoints],
-            y=[data[indicator] for _, data in timepoints],
-            mode='lines+markers', name=indicator, showlegend=False,
-            marker=dict(size=10, color='#6366f1'),
-            line=dict(width=3, color='#6366f1'),
-        ), row=r, col=c)
-        fig.update_xaxes(title_text="", row=r, col=c, **CHART_THEME['xaxis'])
-        fig.update_yaxes(title_text=indicator, row=r, col=c, **CHART_THEME['yaxis'])
+    # Candlestick bars
+    fig.add_trace(go.Candlestick(
+        x=labels,
+        open=opens, high=highs, low=lows, close=closes,
+        name="OHLC",
+        increasing=dict(line=dict(color='#10b981'), fillcolor='rgba(16,185,129,0.3)'),
+        decreasing=dict(line=dict(color='#ef4444'), fillcolor='rgba(239,68,68,0.3)'),
+        whiskerwidth=0.5,
+    ))
+
+    # Line connecting the close prices
+    close_vals = [c for c in closes if c is not None]
+    close_lbls = [labels[i] for i, c in enumerate(closes) if c is not None]
+    fig.add_trace(go.Scatter(
+        x=close_lbls, y=close_vals,
+        mode='lines+markers',
+        name='Close',
+        line=dict(color='#667eea', width=2, dash='dot'),
+        marker=dict(size=7, color='#667eea'),
+        showlegend=True,
+    ))
 
     fig.update_layout(
-        height=300 * rows,
-        title_text=f"<b>Indicator Evolution for {symbol}</b>",
-        showlegend=False,
+        title=f"<b>Price Journey — {symbol}</b>",
+        yaxis_title="Price ($)",
+        height=420,
+        xaxis_rangeslider_visible=False,
+        hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         **CHART_THEME,
     )
+    fig.update_xaxes(**CHART_THEME['xaxis'])
+    fig.update_yaxes(**CHART_THEME['yaxis'])
+
     st.plotly_chart(fig, use_container_width=True)
+
+
+def render_stock_history(symbol: str):
+    """
+    Unified historical view for a symbol, pulling from cached ML prediction
+    and accuracy data. Zero extra DB calls — reads from session state.
+    """
+    # Pull from ml_predictions tab cache (stored under 'ml_predictions__...' keys)
+    def _ml_cache(table: str) -> pd.DataFrame:
+        key = f"ml_predictions__{table}__*__None__500"
+        # Try the exact key pattern used by tab_ml_predictions
+        for k, v in st.session_state.items():
+            if k.startswith(f"ml_predictions__{table}") and isinstance(v, pd.DataFrame):
+                return v
+        return pd.DataFrame()
+
+    preds_df = _ml_cache("ml_explosion_predictions")
+    acc_df   = _ml_cache("ml_prediction_accuracy")
+
+    has_preds = not preds_df.empty and 'symbol' in preds_df.columns
+    has_acc   = not acc_df.empty   and 'symbol' in acc_df.columns
+
+    if not has_preds and not has_acc:
+        st.info("No ML prediction history available. Visit the ML Predictions tab first to load the data.")
+        return
+
+    sym_preds = preds_df[preds_df['symbol'].str.upper() == symbol].copy() if has_preds else pd.DataFrame()
+    sym_acc   = acc_df[acc_df['symbol'].str.upper() == symbol].copy()     if has_acc  else pd.DataFrame()
+
+    if sym_preds.empty and sym_acc.empty:
+        st.info(f"**{symbol}** has never appeared in ML predictions.")
+        return
+
+    # ── Appearance count ───────────────────────────────────────────────────
+    total_appearances = len(sym_preds) if not sym_preds.empty else len(sym_acc)
+    date_col_p = 'prediction_date' if 'prediction_date' in (sym_preds.columns if not sym_preds.empty else []) else None
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Times Predicted", total_appearances)
+
+    if not sym_acc.empty:
+        sym_acc['became_winner']      = sym_acc['became_winner'].astype(bool)
+        sym_acc['prediction_correct'] = sym_acc['prediction_correct'].astype(bool)
+        sym_acc['actual_gain_pct']    = pd.to_numeric(sym_acc['actual_gain_pct'], errors='coerce')
+
+        overall_win_rate = sym_acc['became_winner'].mean() * 100
+        correct_gains    = sym_acc.loc[ sym_acc['became_winner'] & sym_acc['actual_gain_pct'].notna(), 'actual_gain_pct']
+        incorrect_gains  = sym_acc.loc[~sym_acc['became_winner'] & sym_acc['actual_gain_pct'].notna(), 'actual_gain_pct']
+
+        col2.metric("Win Rate",        f"{overall_win_rate:.1f}%")
+        col3.metric("Avg Gain (Win)",  f"+{correct_gains.mean():.2f}%"   if not correct_gains.empty  else "—")
+        col4.metric("Avg Gain (Loss)", f"{incorrect_gains.mean():.2f}%"  if not incorrect_gains.empty else "—")
+
+        # ── Win rate by signal type ────────────────────────────────────────
+        if 'predicted_signal' in sym_acc.columns:
+            st.markdown("##### Win Rate by Signal Type")
+            sig_grp = (
+                sym_acc.groupby('predicted_signal')
+                .agg(
+                    times=('became_winner', 'count'),
+                    wins=('became_winner', 'sum'),
+                    avg_gain=('actual_gain_pct', 'mean'),
+                )
+                .reset_index()
+            )
+            sig_grp['win_rate'] = sig_grp['wins'] / sig_grp['times'] * 100
+
+            _sig_colors = {
+                "STRONG BUY": "#10b981", "BUY": "#667eea",
+                "HOLD": "#f59e0b", "AVOID": "#ef4444",
+            }
+            fig = go.Figure(go.Bar(
+                x=sig_grp['predicted_signal'],
+                y=sig_grp['win_rate'],
+                text=sig_grp.apply(lambda r: f"{r['win_rate']:.0f}% ({int(r['wins'])}/{int(r['times'])})", axis=1),
+                textposition='outside',
+                marker_color=[_sig_colors.get(s, '#999') for s in sig_grp['predicted_signal']],
+            ))
+            fig.update_layout(
+                height=280, yaxis_title="Win Rate %",
+                yaxis_range=[0, 115],
+                showlegend=False,
+                **CHART_THEME,
+            )
+            fig.update_xaxes(**CHART_THEME['xaxis'])
+            fig.update_yaxes(**CHART_THEME['yaxis'])
+            st.plotly_chart(fig, use_container_width=True)
+
+        # ── Gain distribution: wins vs losses ─────────────────────────────
+        gain_data = sym_acc['actual_gain_pct'].dropna()
+        if not gain_data.empty:
+            st.markdown("##### Actual Gain Distribution")
+            fig = go.Figure()
+            w = sym_acc.loc[ sym_acc['became_winner'] & sym_acc['actual_gain_pct'].notna(), 'actual_gain_pct']
+            l = sym_acc.loc[~sym_acc['became_winner'] & sym_acc['actual_gain_pct'].notna(), 'actual_gain_pct']
+            if not w.empty:
+                fig.add_trace(go.Histogram(x=w, name='Winner',     marker_color='#10b981', opacity=0.75, nbinsx=15))
+            if not l.empty:
+                fig.add_trace(go.Histogram(x=l, name='Non-Winner', marker_color='#ef4444', opacity=0.75, nbinsx=15))
+            fig.update_layout(
+                barmode='overlay', height=260,
+                xaxis_title='Actual Gain %', yaxis_title='Count',
+                **CHART_THEME,
+            )
+            fig.update_xaxes(**CHART_THEME['xaxis'])
+            fig.update_yaxes(**CHART_THEME['yaxis'])
+            st.plotly_chart(fig, use_container_width=True)
+
+        # ── Full prediction history table ──────────────────────────────────
+        st.markdown("##### Every Prediction & Outcome")
+        show_cols = [c for c in [
+            'prediction_date', 'predicted_signal', 'predicted_probability',
+            'predicted_target_gain', 'became_winner', 'actual_gain_pct',
+            'actual_high_pct', 'prediction_correct',
+        ] if c in sym_acc.columns]
+
+        _SIG_BG = {
+            "STRONG BUY": "#10b98133", "BUY": "#667eea33",
+            "HOLD": "#f59e0b33",       "AVOID": "#ef444433",
+        }
+
+        def _row_color(row):
+            if 'predicted_signal' in row.index:
+                bg = _SIG_BG.get(row['predicted_signal'], '')
+                return [f'background-color: {bg}'] * len(row)
+            return [''] * len(row)
+
+        fmt = {
+            'predicted_probability': '{:.2%}',
+            'predicted_target_gain': '{:.2f}%',
+            'actual_gain_pct':       '{:.2f}%',
+            'actual_high_pct':       '{:.2f}%',
+        }
+        st.dataframe(
+            sym_acc[show_cols]
+            .sort_values('prediction_date', ascending=False)
+            .style.format({k: v for k, v in fmt.items() if k in show_cols}, na_rep='—')
+            .apply(_row_color, axis=1),
+            use_container_width=True,
+            height=300,
+        )
+    elif not sym_preds.empty:
+        # Accuracy data not loaded yet — show predictions only
+        st.markdown("##### Prediction History (no accuracy data loaded yet)")
+        show_cols = [c for c in [
+            'prediction_date', 'signal', 'explosion_probability', 'target_gain_pct',
+        ] if c in sym_preds.columns]
+        st.dataframe(
+            sym_preds[show_cols].sort_values('prediction_date', ascending=False),
+            use_container_width=True, height=300,
+        )
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
@@ -617,10 +774,14 @@ def render_daily_winners_tab():
         _show_snapshot(market_close_df,    "Market Close — 4:00 PM",        'market_close')
 
     st.markdown("---")
-    st.markdown("### Indicator Evolution")
-    st.info("📊 Compare indicators across 4 timepoints: T-1 Open → T-1 Close → Market Open → Market Close")
-    render_indicator_evolution(
+    st.markdown("### Price Journey")
+    st.caption("Candlestick chart across T-1 Open → T-1 Close → Market Open → Market Close")
+    render_price_journey(
         selected_symbol,
         market_open_df, market_close_df,
         day_prior_open_df, day_prior_close_df,
     )
+
+    st.markdown("---")
+    with st.expander(f"📊 Full ML History for {selected_symbol}", expanded=False):
+        render_stock_history(selected_symbol)
