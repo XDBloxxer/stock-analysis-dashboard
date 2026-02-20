@@ -227,10 +227,10 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
 
     indicator_groups = {
         "Price & OHLC": {
-            'fields': [price_field, 'open', 'high', 'low', 'close', 'volume'],
+            'fields': [price_field, 'high', 'low', 'volume'],
             'labels': {
-                price_field: price_label, 'open': 'Open', 'high': 'High',
-                'low': 'Low', 'close': 'Close', 'volume': 'Volume',
+                price_field: price_label, 'high': 'High',
+                'low': 'Low', 'volume': 'Volume',
             },
         },
         "Momentum": {
