@@ -1,15 +1,25 @@
 """
-Daily Winners Tab Module - APPEND-ONLY SESSION-STATE CACHE
+Daily Winners Tab Module - st.cache_data PERSISTENT CACHE
 
 CACHE STRATEGY:
-  - All fetched data lives in st.session_state under tab-specific keys.
-  - On first load: fetches everything available.
-  - Refresh button: fetches only the date list, finds dates newer than the
-    latest already cached date, fetches table data for those new dates only,
-    then appends them. Existing cached dates are never re-fetched.
-  - Clear Cache: wipes all session-state keys for this tab → full re-fetch
-    on next render.
-  - Switching dates or tabs: zero egress (reads from session state).
+  - Data is stored in @st.cache_data on the SERVER PROCESS, not in session_state.
+  - This means the cache survives browser tab closes, page refreshes, and
+    re-opening the page — as long as the Streamlit server process is running.
+  - On first load: fetches all dates + table data for every date.
+  - Refresh button: fetches only dates newer than the latest cached date,
+    fetches table data for those new dates only, then busts the relevant
+    cached functions so they re-run with the expanded date list.
+  - Clear Cache: calls the per-function .clear() to wipe everything → full
+    re-fetch on next render.
+  - Switching dates or tabs: zero egress (reads from cache_data).
+
+HOW INVALIDATION WORKS:
+  - _get_all_dates() is cached. To force a re-fetch, call _get_all_dates.clear().
+  - _get_table_for_date(table, date) is cached per (table, date) pair.
+    Once fetched, a specific date is NEVER re-fetched (stable historical data).
+  - On Refresh: we fetch new dates, store them via a cache-busting sentinel in
+    session_state, then clear only _get_all_dates so it re-runs; individual
+    date caches are left untouched.
 """
 
 import streamlit as st
@@ -19,7 +29,6 @@ from datetime import datetime
 import os
 from supabase import create_client, Client
 
-# ── Constants ──────────────────────────────────────────────────────────────────
 TAB_ID = "daily_winners"
 
 CHART_THEME = {
@@ -36,7 +45,6 @@ COLORS = {
     'danger': '#ef4444',  'warning': '#f59e0b', 'info': '#3b82f6'
 }
 
-# Tables that need indicator data for a given date
 DATE_TABLES = [
     "daily_winners",
     "winners_market_open",
@@ -57,9 +65,15 @@ def get_supabase_client():
     return create_client(supabase_url, supabase_key)
 
 
-# ── Raw DB fetchers (no caching — session state handles that) ──────────────────
-def _fetch_all_dates() -> list[str]:
-    """Fetch the full list of available detection_dates."""
+# ── Cached DB fetchers ─────────────────────────────────────────────────────────
+# These live on the server process and survive browser close/refresh.
+
+@st.cache_data(show_spinner=False)
+def _get_all_dates() -> list[str]:
+    """
+    Fetch the full list of available detection_dates.
+    Cached indefinitely until _get_all_dates.clear() is called.
+    """
     try:
         client = get_supabase_client()
         response = client.table("daily_winners").select("detection_date").limit(500).execute()
@@ -71,42 +85,29 @@ def _fetch_all_dates() -> list[str]:
         return []
 
 
-def _fetch_dates_newer_than(after_date: str) -> list[str]:
-    """Fetch only detection_dates strictly newer than after_date."""
+@st.cache_data(show_spinner=False)
+def _get_table_for_date(table_name: str, date: str) -> pd.DataFrame:
+    """
+    Fetch all rows for a given (table, date) pair.
+    Cached indefinitely per unique (table_name, date) combination.
+    Historical data never changes, so this never needs to be invalidated
+    for existing dates — only new dates get fetched.
+    """
     try:
         client = get_supabase_client()
         response = (
-            client.table("daily_winners")
-            .select("detection_date")
-            .gt("detection_date", after_date)
-            .limit(500)
+            client.table(table_name)
+            .select("*")
+            .eq("detection_date", date)
+            .limit(200)
             .execute()
         )
-        if response.data:
-            return sorted(set(row["detection_date"] for row in response.data), reverse=True)
-        return []
-    except Exception as e:
-        st.error(f"Error loading new dates: {e}")
-        return []
-
-
-def _fetch_table_for_date(table_name: str, date: str) -> pd.DataFrame:
-    """Fetch all rows for a given table + date."""
-    try:
-        client = get_supabase_client()
-
-        # Always fetch every column — no indicators left behind
-        query = client.table(table_name).select("*")
-
-        response = query.eq("detection_date", date).limit(200).execute()
-
         if not response.data:
             return pd.DataFrame()
 
         df = pd.DataFrame(response.data)
-        df = df.dropna(how='all')  # only drop fully-empty rows; keep all columns
+        df = df.dropna(how='all')
 
-        # Rename dotted / bracketed column names to safe Python identifiers
         rename_map = {
             'macd.macd':    'macd_value',
             'macd.signal':  'macd_signal',
@@ -137,83 +138,64 @@ def _fetch_table_for_date(table_name: str, date: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-# ── Session-state cache helpers ────────────────────────────────────────────────
-def _ss(key: str):
-    """Shorthand getter."""
-    return st.session_state.get(f"{TAB_ID}__{key}")
+# ── Cache control ──────────────────────────────────────────────────────────────
 
-def _ss_set(key: str, value):
-    st.session_state[f"{TAB_ID}__{key}"] = value
-
-def _ss_has(key: str) -> bool:
-    return f"{TAB_ID}__{key}" in st.session_state
-
-def _cached_dates() -> list:
-    val = _ss("dates")
-    return val if val is not None else []
-
-def _cached_table(table_name: str, date: str) -> pd.DataFrame:
-    val = _ss(f"{table_name}__{date}")
-    return val if isinstance(val, pd.DataFrame) else pd.DataFrame()
-
-def _store_table(table_name: str, date: str, df: pd.DataFrame):
-    _ss_set(f"{table_name}__{date}", df)
-
-def _date_is_cached(date: str) -> bool:
-    # A date is fully cached if the primary table has been stored for it
-    return _ss_has(f"daily_winners__{date}")
-
-def _clear_tab_cache():
-    keys = [k for k in st.session_state if k.startswith(f"{TAB_ID}__")]
-    for k in keys:
-        del st.session_state[k]
+def clear_all_cache():
+    """Wipe all cached data → full re-fetch on next render."""
+    _get_all_dates.clear()
+    _get_table_for_date.clear()
 
 
-# ── Cache population helpers ───────────────────────────────────────────────────
-def _fetch_and_store_date(date: str):
-    """Fetch all tables for a single date and store them in session state."""
-    for table in DATE_TABLES:
-        df = _fetch_table_for_date(table, date)
-        _store_table(table, date, df)
-
-
-def _initialise_cache():
+def refresh_cache():
     """
-    Called on very first render (nothing cached yet).
-    Fetches full date list + all table data for every date.
+    Append-only refresh: fetch only dates newer than the latest cached date.
+    New (table, date) pairs will be fetched automatically by _get_table_for_date
+    since they won't be in the cache yet.
+    We only need to clear _get_all_dates so it re-runs and returns the expanded list.
+    Individual (table, date) caches are left completely untouched.
     """
-    all_dates = _fetch_all_dates()
-    _ss_set("dates", all_dates)
-    for date in all_dates:
-        _fetch_and_store_date(date)
-
-
-def _refresh_cache():
-    """
-    Called when Refresh button is pressed.
-    Fetches only dates newer than the most recent cached date.
-    Appends new dates; never re-fetches existing ones.
-    """
-    existing_dates = _cached_dates()
+    existing_dates = _get_all_dates()
 
     if not existing_dates:
-        # Nothing cached yet → do a full init instead
-        _initialise_cache()
+        # Nothing cached yet — clearing will trigger a full re-fetch
+        _get_all_dates.clear()
         return
 
-    latest_cached = max(existing_dates)   # e.g. "2025-02-19"
-    new_dates = _fetch_dates_newer_than(latest_cached)
+    latest_cached = max(existing_dates)
+
+    # Peek at Supabase for newer dates (lightweight: only detection_date column)
+    try:
+        client = get_supabase_client()
+        response = (
+            client.table("daily_winners")
+            .select("detection_date")
+            .gt("detection_date", latest_cached)
+            .limit(500)
+            .execute()
+        )
+        new_dates = []
+        if response.data:
+            new_dates = sorted(
+                set(row["detection_date"] for row in response.data), reverse=True
+            )
+    except Exception as e:
+        st.error(f"Error checking for new dates: {e}")
+        return
 
     if not new_dates:
         st.toast("✅ Cache is already up to date — no new dates found.")
         return
 
-    for date in new_dates:
-        _fetch_and_store_date(date)
+    # Clear the date-list cache so it re-fetches and includes the new dates.
+    # Individual (table, date) caches for existing dates are untouched.
+    # New dates will be fetched on-demand by _get_table_for_date when selected.
+    _get_all_dates.clear()
 
-    # Merge date lists (deduplicated, sorted descending)
-    merged = sorted(set(existing_dates) | set(new_dates), reverse=True)
-    _ss_set("dates", merged)
+    # Pre-warm the cache for the new dates so they're ready immediately.
+    for date in new_dates:
+        for table in DATE_TABLES:
+            _get_table_for_date(table, date)
+
     st.toast(f"✅ Loaded {len(new_dates)} new date(s): {', '.join(new_dates)}")
 
 
@@ -352,8 +334,6 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
     tabs = st.tabs(list(indicator_groups.keys()))
     for i, (group_name, group_info) in enumerate(indicator_groups.items()):
         with tabs[i]:
-            # Boolean fields: show if column exists even if value is 0
-            # Numeric fields: show if column exists and value is not NaN
             available = [
                 f for f in group_info['fields']
                 if f in data_row.index and (
@@ -377,7 +357,6 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                         display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
                     elif field in ("volume_sma5", "volume_sma10", "volume_sma20",
                                    "obv", "force_index", "vpt", "nvi", "eom", "eom_signal"):
-                        # Large absolute numbers
                         if abs(value) >= 1_000_000:
                             display_val = f"{value/1e6:.2f}M"
                         elif abs(value) >= 1_000:
@@ -394,10 +373,6 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
 
 
 def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_df):
-    """
-    4-candle OHLC chart across the two trading days, with a line
-    connecting the close prices to show the price journey.
-    """
     symbol = symbol.strip().upper()
 
     def _row(df):
@@ -408,7 +383,6 @@ def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_d
         m = d[d['symbol'] == symbol]
         return m.iloc[0] if not m.empty else None
 
-    # Collect the 4 timepoints in chronological order
     snapshots = [
         ("T-1 Open",     _row(prior_open_df)),
         ("T-1 Close",    _row(prior_close_df)),
@@ -422,13 +396,8 @@ def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_d
         return
 
     labels = [lbl for lbl, _ in available]
-    # For each timepoint use open/close depending on snapshot type;
-    # high and low come from the row directly
     opens, highs, lows, closes = [], [], [], []
     for lbl, row in available:
-        # open-type snapshots: the "price" is the open field
-        # close-type snapshots: the "price" is the close field
-        is_open_snap = "Open" in lbl
         o = float(row['open'])  if pd.notna(row.get('open'))  else None
         c = float(row['close']) if pd.notna(row.get('close')) else None
         h = float(row['high'])  if pd.notna(row.get('high'))  else None
@@ -439,8 +408,6 @@ def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_d
         closes.append(c)
 
     fig = go.Figure()
-
-    # Candlestick bars
     fig.add_trace(go.Candlestick(
         x=labels,
         open=opens, high=highs, low=lows, close=closes,
@@ -450,7 +417,6 @@ def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_d
         whiskerwidth=0.5,
     ))
 
-    # Line connecting the close prices
     close_vals = [c for c in closes if c is not None]
     close_lbls = [labels[i] for i, c in enumerate(closes) if c is not None]
     fig.add_trace(go.Scatter(
@@ -473,26 +439,22 @@ def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_d
     )
     fig.update_xaxes(**CHART_THEME['xaxis'])
     fig.update_yaxes(**CHART_THEME['yaxis'])
-
     st.plotly_chart(fig, use_container_width=True)
 
 
 def render_stock_history(symbol: str):
     """
-    Unified historical view for a symbol, pulling from cached ML prediction
-    and accuracy data. Zero extra DB calls — reads from session state.
+    Reads from the ML predictions tab's cache_data functions.
+    Imported here to avoid circular imports — we call the cached functions directly.
     """
-    # Pull from ml_predictions tab cache (stored under 'ml_predictions__...' keys)
-    def _ml_cache(table: str) -> pd.DataFrame:
-        key = f"ml_predictions__{table}__*__None__500"
-        # Try the exact key pattern used by tab_ml_predictions
-        for k, v in st.session_state.items():
-            if k.startswith(f"ml_predictions__{table}") and isinstance(v, pd.DataFrame):
-                return v
-        return pd.DataFrame()
+    try:
+        from tab_ml_predictions import _get_table_full as _ml_get
+    except ImportError:
+        st.info("ML predictions module not available.")
+        return
 
-    preds_df = _ml_cache("ml_explosion_predictions")
-    acc_df   = _ml_cache("ml_prediction_accuracy")
+    preds_df = _ml_get("ml_explosion_predictions")
+    acc_df   = _ml_get("ml_prediction_accuracy")
 
     has_preds = not preds_df.empty and 'symbol' in preds_df.columns
     has_acc   = not acc_df.empty   and 'symbol' in acc_df.columns
@@ -508,9 +470,7 @@ def render_stock_history(symbol: str):
         st.info(f"**{symbol}** has never appeared in ML predictions.")
         return
 
-    # ── Appearance count ───────────────────────────────────────────────────
     total_appearances = len(sym_preds) if not sym_preds.empty else len(sym_acc)
-    date_col_p = 'prediction_date' if 'prediction_date' in (sym_preds.columns if not sym_preds.empty else []) else None
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Times Predicted", total_appearances)
@@ -525,10 +485,9 @@ def render_stock_history(symbol: str):
         incorrect_gains  = sym_acc.loc[~sym_acc['became_winner'] & sym_acc['actual_gain_pct'].notna(), 'actual_gain_pct']
 
         col2.metric("Win Rate",        f"{overall_win_rate:.1f}%")
-        col3.metric("Avg Gain (Win)",  f"+{correct_gains.mean():.2f}%"   if not correct_gains.empty  else "—")
-        col4.metric("Avg Gain (Loss)", f"{incorrect_gains.mean():.2f}%"  if not incorrect_gains.empty else "—")
+        col3.metric("Avg Gain (Win)",  f"+{correct_gains.mean():.2f}%"  if not correct_gains.empty  else "—")
+        col4.metric("Avg Gain (Loss)", f"{incorrect_gains.mean():.2f}%" if not incorrect_gains.empty else "—")
 
-        # ── Win rate by signal type ────────────────────────────────────────
         if 'predicted_signal' in sym_acc.columns:
             st.markdown("##### Win Rate by Signal Type")
             sig_grp = (
@@ -553,17 +512,12 @@ def render_stock_history(symbol: str):
                 textposition='outside',
                 marker_color=[_sig_colors.get(s, '#999') for s in sig_grp['predicted_signal']],
             ))
-            fig.update_layout(
-                height=280, yaxis_title="Win Rate %",
-                yaxis_range=[0, 115],
-                showlegend=False,
-                **CHART_THEME,
-            )
+            fig.update_layout(height=280, yaxis_title="Win Rate %", yaxis_range=[0, 115],
+                              showlegend=False, **CHART_THEME)
             fig.update_xaxes(**CHART_THEME['xaxis'])
             fig.update_yaxes(**CHART_THEME['yaxis'])
             st.plotly_chart(fig, use_container_width=True)
 
-        # ── Gain distribution: wins vs losses ─────────────────────────────
         gain_data = sym_acc['actual_gain_pct'].dropna()
         if not gain_data.empty:
             st.markdown("##### Actual Gain Distribution")
@@ -574,16 +528,12 @@ def render_stock_history(symbol: str):
                 fig.add_trace(go.Histogram(x=w, name='Winner',     marker_color='#10b981', opacity=0.75, nbinsx=15))
             if not l.empty:
                 fig.add_trace(go.Histogram(x=l, name='Non-Winner', marker_color='#ef4444', opacity=0.75, nbinsx=15))
-            fig.update_layout(
-                barmode='overlay', height=260,
-                xaxis_title='Actual Gain %', yaxis_title='Count',
-                **CHART_THEME,
-            )
+            fig.update_layout(barmode='overlay', height=260,
+                              xaxis_title='Actual Gain %', yaxis_title='Count', **CHART_THEME)
             fig.update_xaxes(**CHART_THEME['xaxis'])
             fig.update_yaxes(**CHART_THEME['yaxis'])
             st.plotly_chart(fig, use_container_width=True)
 
-        # ── Full prediction history table ──────────────────────────────────
         st.markdown("##### Every Prediction & Outcome")
         show_cols = [c for c in [
             'prediction_date', 'predicted_signal', 'predicted_probability',
@@ -617,7 +567,6 @@ def render_stock_history(symbol: str):
             height=300,
         )
     elif not sym_preds.empty:
-        # Accuracy data not loaded yet — show predictions only
         st.markdown("##### Prediction History (no accuracy data loaded yet)")
         show_cols = [c for c in [
             'prediction_date', 'signal', 'explosion_probability', 'target_gain_pct',
@@ -631,7 +580,6 @@ def render_stock_history(symbol: str):
 # ── Main entry point ───────────────────────────────────────────────────────────
 def render_daily_winners_tab():
 
-    # ── Controls ───────────────────────────────────────────────────────────
     col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
     with col2:
@@ -641,31 +589,28 @@ def render_daily_winners_tab():
         clear_clicked = st.button("🗑️ Clear Cache", use_container_width=True,
                                   key="daily_winners_clear_cache")
 
-    # ── Cache actions ──────────────────────────────────────────────────────
     if clear_clicked:
-        _clear_tab_cache()
+        clear_all_cache()
         st.rerun()
 
     if refresh_clicked:
-        if not _cached_dates():
-            _initialise_cache()
-        else:
-            _refresh_cache()
+        refresh_cache()
         st.rerun()
 
-    # ── Initialise on very first render ───────────────────────────────────
-    if not _cached_dates():
-        with st.spinner("Loading daily winners data for the first time…"):
-            _initialise_cache()
+    # On first render (or after clear), the cache_data functions will fetch
+    # from Supabase automatically. On subsequent renders (including after
+    # browser close/reopen), they return the cached result instantly.
+    available_dates = _get_all_dates()
 
-    available_dates = _cached_dates()
+    if not available_dates:
+        with st.spinner("Loading daily winners data…"):
+            available_dates = _get_all_dates()
 
     if not available_dates:
         st.warning("No daily winners data available yet.")
         st.info("Run `python daily_winners_main.py` to collect data.")
         return
 
-    # ── Date selector ──────────────────────────────────────────────────────
     with col1:
         selected_date = st.selectbox(
             "Select Date:", available_dates,
@@ -675,21 +620,21 @@ def render_daily_winners_tab():
     with col4:
         st.metric("Day of Week", datetime.fromisoformat(selected_date).strftime("%A"))
 
-    # ── Read data from cache (zero egress) ────────────────────────────────
-    winners_df        = _cached_table("daily_winners",          selected_date)
-    market_open_df    = _cached_table("winners_market_open",    selected_date)
-    market_close_df   = _cached_table("winners_market_close",   selected_date)
-    day_prior_open_df = _cached_table("winners_day_prior_open",  selected_date)
-    day_prior_close_df= _cached_table("winners_day_prior_close", selected_date)
+    # All reads go through cache_data — zero egress on repeat views
+    winners_df         = _get_table_for_date("daily_winners",          selected_date)
+    market_open_df     = _get_table_for_date("winners_market_open",    selected_date)
+    market_close_df    = _get_table_for_date("winners_market_close",   selected_date)
+    day_prior_open_df  = _get_table_for_date("winners_day_prior_open",  selected_date)
+    day_prior_close_df = _get_table_for_date("winners_day_prior_close", selected_date)
 
     if winners_df.empty:
         st.warning(f"No winners data found for {selected_date}.")
         return
 
     if 'symbol' in winners_df.columns:
+        winners_df = winners_df.copy()
         winners_df['symbol'] = winners_df['symbol'].str.strip().str.upper()
 
-    # ── Summary metrics ────────────────────────────────────────────────────
     st.subheader(f"Top {len(winners_df)} Winners — {selected_date}")
 
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -699,7 +644,6 @@ def render_daily_winners_tab():
     col4.metric("Avg Price",      f"${winners_df['price'].mean():.2f}")
     col5.metric("Avg Volume",     f"{winners_df['volume'].mean()/1e6:.1f}M")
 
-    # ── Winners list table ─────────────────────────────────────────────────
     st.markdown("### Winners List")
 
     display_df = (
@@ -708,7 +652,7 @@ def render_daily_winners_tab():
         .sort_values('change_pct', ascending=False)
         .reset_index(drop=True)
     )
-    display_df.index  = display_df.index + 1
+    display_df.index   = display_df.index + 1
     display_df.columns = ['Symbol', 'Exchange', 'Price ($)', 'Change (%)', 'Volume']
 
     st.dataframe(
@@ -719,8 +663,6 @@ def render_daily_winners_tab():
     )
 
     st.markdown("---")
-
-    # ── Detailed stock analysis ────────────────────────────────────────────
     st.subheader("Detailed Stock Analysis")
 
     symbols = sorted(winners_df['symbol'].unique())
@@ -735,7 +677,7 @@ def render_daily_winners_tab():
 
     col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     col1.metric("Symbol", selected_symbol)
-    col2.metric("Open",  f"${winner_info['open']:.2f}")
+    col2.metric("Open",   f"${winner_info['open']:.2f}")
     col3.metric("Close",  f"${winner_info['price']:.2f}")
     col4.metric("Change", f"{winner_info['change_pct']:+.2f}%",
                 delta=f"{winner_info['change_pct']:.2f}%")
