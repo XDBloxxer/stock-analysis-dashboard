@@ -147,11 +147,13 @@ def _ss_set(key: str, value):
 def _ss_has(key: str) -> bool:
     return f"{TAB_ID}__{key}" in st.session_state
 
-def _cached_dates() -> list[str]:
-    return _ss("dates") or []
+def _cached_dates() -> list:
+    val = _ss("dates")
+    return val if val is not None else []
 
 def _cached_table(table_name: str, date: str) -> pd.DataFrame:
-    return _ss(f"{table_name}__{date}") or pd.DataFrame()
+    val = _ss(f"{table_name}__{date}")
+    return val if isinstance(val, pd.DataFrame) else pd.DataFrame()
 
 def _store_table(table_name: str, date: str, df: pd.DataFrame):
     _ss_set(f"{table_name}__{date}", df)
