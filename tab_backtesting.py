@@ -1,13 +1,15 @@
 """
-Backtesting Tab Module - APPEND-ONLY SESSION-STATE CACHE
+Backtesting Tab Module - st.cache_data PERSISTENT CACHE
 
 CACHE STRATEGY:
-  - All fetched data lives in st.session_state under tab-specific keys.
+  - Data is stored in @st.cache_data on the SERVER PROCESS, not in session_state.
+  - Survives browser tab closes, page refreshes, and re-opening the page
+    as long as the Streamlit server process is running.
   - On first load: fetches all strategies + results for every strategy_id.
-  - Refresh button: fetches only strategies created after the latest cached
-    created_at, loads results for those new strategies, appends everything.
-    Existing strategies and their results are never re-fetched.
-  - Clear Cache: wipes all session-state keys for this tab → full re-fetch.
+  - Refresh button: fetches only strategies newer than the latest cached
+    created_at, loads results for new strategies only.
+    Existing strategy results are never re-fetched.
+  - Clear Cache: calls .clear() on all cached functions → full re-fetch.
   - Switching strategies or sub-tabs: zero egress.
 """
 
@@ -23,7 +25,6 @@ from supabase import create_client, Client
 
 TAB_ID = "backtesting"
 
-# ── Chart theme ────────────────────────────────────────────────────────────────
 CHART_THEME = {
     'plot_bgcolor': 'rgba(26, 29, 41, 0.6)',
     'paper_bgcolor': 'rgba(0,0,0,0)',
@@ -45,8 +46,14 @@ def get_supabase_client():
     return create_client(supabase_url, supabase_key)
 
 
-# ── Raw DB fetchers ────────────────────────────────────────────────────────────
-def _fetch_all_strategies() -> pd.DataFrame:
+# ── Cached DB fetchers ─────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False)
+def _get_all_strategies() -> pd.DataFrame:
+    """
+    Fetch all strategies, ordered by created_at descending.
+    Cached indefinitely until _get_all_strategies.clear() is called.
+    """
     try:
         client   = get_supabase_client()
         response = (client.table("backtest_strategies")
@@ -67,30 +74,12 @@ def _fetch_all_strategies() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _fetch_strategies_newer_than(after_created_at: str) -> pd.DataFrame:
-    """Fetch strategies created strictly after after_created_at."""
-    try:
-        client   = get_supabase_client()
-        response = (client.table("backtest_strategies")
-                    .select("*")
-                    .gt("created_at", after_created_at)
-                    .order("created_at", desc=True)
-                    .limit(100)
-                    .execute())
-        if not response.data:
-            return pd.DataFrame()
-        df = pd.DataFrame(response.data)
-        if 'indicator_criteria' in df.columns:
-            df['indicator_criteria'] = df['indicator_criteria'].apply(
-                lambda x: json.loads(x) if isinstance(x, str) else x
-            )
-        return df
-    except Exception as e:
-        st.error(f"Error loading new strategies: {e}")
-        return pd.DataFrame()
-
-
-def _fetch_strategy_results(strategy_id: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+@st.cache_data(show_spinner=False)
+def _get_strategy_results(strategy_id: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Fetch daily results and trades for a single strategy.
+    Cached indefinitely per strategy_id.
+    """
     try:
         client = get_supabase_client()
         daily_resp = (client.table("backtest_results")
@@ -113,7 +102,8 @@ def _fetch_strategy_results(strategy_id: int) -> tuple[pd.DataFrame, pd.DataFram
         return pd.DataFrame(), pd.DataFrame()
 
 
-def _fetch_date_range() -> tuple:
+@st.cache_data(show_spinner=False)
+def _get_date_range() -> tuple:
     try:
         client = get_supabase_client()
         min_r  = (client.table("historical_market_data")
@@ -129,93 +119,57 @@ def _fetch_date_range() -> tuple:
         return None, None
 
 
-# ── Session-state cache helpers ────────────────────────────────────────────────
-def _ss(key: str):
-    return st.session_state.get(f"{TAB_ID}__{key}")
+# ── Cache control ──────────────────────────────────────────────────────────────
 
-def _ss_set(key: str, value):
-    st.session_state[f"{TAB_ID}__{key}"] = value
-
-def _ss_has(key: str) -> bool:
-    return f"{TAB_ID}__{key}" in st.session_state
-
-def _cached_strategies() -> pd.DataFrame:
-    val = _ss("strategies")
-    return val if isinstance(val, pd.DataFrame) else pd.DataFrame()
-
-def _cached_results(strategy_id: int) -> tuple[pd.DataFrame, pd.DataFrame]:
-    daily  = _ss(f"results_daily_{strategy_id}")
-    trades = _ss(f"results_trades_{strategy_id}")
-    return (daily  if isinstance(daily,  pd.DataFrame) else pd.DataFrame(),
-            trades if isinstance(trades, pd.DataFrame) else pd.DataFrame())
-
-def _store_strategies(df: pd.DataFrame):
-    _ss_set("strategies", df)
-
-def _store_results(strategy_id: int, daily_df: pd.DataFrame, trades_df: pd.DataFrame):
-    _ss_set(f"results_daily_{strategy_id}",  daily_df)
-    _ss_set(f"results_trades_{strategy_id}", trades_df)
-
-def _results_cached(strategy_id: int) -> bool:
-    return _ss_has(f"results_daily_{strategy_id}")
-
-def _clear_tab_cache():
-    keys = [k for k in st.session_state if k.startswith(f"{TAB_ID}__")]
-    for k in keys:
-        del st.session_state[k]
+def clear_all_cache():
+    """Wipe all cached backtesting data → full re-fetch on next render."""
+    _get_all_strategies.clear()
+    _get_strategy_results.clear()
+    _get_date_range.clear()
 
 
-# ── Cache population ───────────────────────────────────────────────────────────
-def _initialise_cache():
-    """Full fetch on very first render."""
-    strategies = _fetch_all_strategies()
-    _store_strategies(strategies)
-    if not strategies.empty:
-        for sid in strategies['id'].tolist():
-            daily, trades = _fetch_strategy_results(sid)
-            _store_results(sid, daily, trades)
-
-
-def _refresh_cache():
+def refresh_cache():
     """
     Append-only refresh.
-    Fetches strategies newer than the latest cached created_at,
-    loads results for those new strategies, and appends to cache.
+    Checks for strategies newer than the latest cached created_at.
+    If found, clears _get_all_strategies so it re-fetches the full list,
+    then pre-warms results for the new strategy IDs.
+    Existing strategy result caches are untouched.
     """
-    existing = _cached_strategies()
+    existing = _get_all_strategies()  # reads from cache
 
     if existing.empty:
-        _initialise_cache()
+        _get_all_strategies.clear()
         return
 
     latest_created = existing['created_at'].max()
-    new_strategies = _fetch_strategies_newer_than(latest_created)
 
-    if new_strategies.empty:
+    try:
+        client   = get_supabase_client()
+        response = (client.table("backtest_strategies")
+                    .select("id,created_at")
+                    .gt("created_at", latest_created)
+                    .order("created_at", desc=True)
+                    .limit(100)
+                    .execute())
+        new_ids = [row['id'] for row in response.data] if response.data else []
+    except Exception as e:
+        st.error(f"Error checking for new strategies: {e}")
+        return
+
+    if not new_ids:
         st.toast("✅ Cache is already up to date — no new strategies found.")
         return
 
-    # Fetch results for new strategies only
-    for sid in new_strategies['id'].tolist():
-        daily, trades = _fetch_strategy_results(sid)
-        _store_results(sid, daily, trades)
+    # Clear strategy list so it re-fetches with new entries included
+    _get_all_strategies.clear()
+    _get_all_strategies()  # re-populate immediately
 
-    # Merge strategy lists
-    merged = pd.concat([existing, new_strategies], ignore_index=True).drop_duplicates(subset=['id'])
-    merged = merged.sort_values('created_at', ascending=False).reset_index(drop=True)
-    _store_strategies(merged)
-    st.toast(f"✅ Loaded {len(new_strategies)} new strategy(ies).")
+    # Pre-warm results for new strategies only
+    for sid in new_ids:
+        _get_strategy_results(sid)
 
-
-def _ensure_results_cached(strategy_id: int):
-    """
-    Lazily load results for a strategy that may have been loaded before
-    its results existed (e.g. it was pending at init time).
-    Only re-fetches if not already cached.
-    """
-    if not _results_cached(strategy_id):
-        daily, trades = _fetch_strategy_results(strategy_id)
-        _store_results(strategy_id, daily, trades)
+    st.toast(f"✅ Loaded {len(new_ids)} new strategy(ies).")
 
 
 # ── Chart helpers ──────────────────────────────────────────────────────────────
@@ -399,6 +353,8 @@ def save_strategy(name, description, start_date, end_date, indicator_criteria, t
         }
         response = client.table("backtest_strategies").insert(strategy).execute()
         if response.data:
+            # Clear strategy list so the new strategy appears on next render
+            _get_all_strategies.clear()
             return response.data[0]['id']
         return None
     except Exception as e:
@@ -440,7 +396,6 @@ def render_backtesting_tab():
     st.subheader("Strategy Backtesting")
     st.markdown("Test your trading strategies against historical data")
 
-    # ── Buttons ────────────────────────────────────────────────────────────
     col_r, col_c = st.columns(2)
     with col_r:
         refresh_clicked = st.button("🔄 Refresh", key=f"{TAB_ID}_refresh", use_container_width=True)
@@ -448,27 +403,19 @@ def render_backtesting_tab():
         clear_clicked = st.button("🗑️ Clear Cache", key=f"{TAB_ID}_clear_cache", use_container_width=True)
 
     if clear_clicked:
-        _clear_tab_cache()
+        clear_all_cache()
         st.rerun()
 
     if refresh_clicked:
-        if not _ss_has("strategies"):
-            _initialise_cache()
-        else:
-            _refresh_cache()
+        refresh_cache()
         st.rerun()
-
-    # ── First-render init ──────────────────────────────────────────────────
-    if not _ss_has("strategies"):
-        with st.spinner("Loading backtesting data for the first time…"):
-            _initialise_cache()
 
     tab1, tab2, tab3 = st.tabs(["View Results", "Create Strategy", "Manage Strategies"])
 
     # ──────────────────────────────────────────────────────────────────────
     with tab1:
         st.markdown("### Strategy Results")
-        strategies_df = _cached_strategies()
+        strategies_df = _get_all_strategies()
 
         if strategies_df.empty:
             st.info("No strategies found. Create one in the 'Create Strategy' tab.")
@@ -498,9 +445,8 @@ def render_backtesting_tab():
                             else:
                                 st.write(f"{i}. **{cond.get('indicator')}** {cond.get('operator')} {cond.get('value')}")
 
-                # Lazy-load results if not yet cached (e.g. strategy was pending at init)
-                _ensure_results_cached(selected_id)
-                daily_df, trades_df = _cached_results(selected_id)
+                # Results are cached per strategy_id — zero egress on repeat views
+                daily_df, trades_df = _get_strategy_results(selected_id)
 
                 if strategy['run_status'] == 'completed' and not daily_df.empty:
                     st.markdown("---")
@@ -536,11 +482,11 @@ def render_backtesting_tab():
 
                             st.markdown("#### Advanced Metrics")
                             col1, col2, col3, col4, col5 = st.columns(5)
-                            col1.metric("Win Rate",         f"{win_rate:.1f}%")
-                            col2.metric("Avg Winner",       f"{avg_winner:.2f}%")
-                            col3.metric("Avg Loser",        f"{avg_loser:.2f}%")
-                            col4.metric("Profit Factor",    f"{profit_factor:.2f}" if profit_factor else "N/A")
-                            col5.metric("Intraday Hit Rate",f"{intraday_rate:.1f}%")
+                            col1.metric("Win Rate",          f"{win_rate:.1f}%")
+                            col2.metric("Avg Winner",        f"{avg_winner:.2f}%")
+                            col3.metric("Avg Loser",         f"{avg_loser:.2f}%")
+                            col4.metric("Profit Factor",     f"{profit_factor:.2f}" if profit_factor else "N/A")
+                            col5.metric("Intraday Hit Rate", f"{intraday_rate:.1f}%")
 
                     st.markdown("### Performance Charts")
 
@@ -594,11 +540,7 @@ def render_backtesting_tab():
     with tab2:
         st.markdown("### Create New Strategy")
 
-        # Date range: cache separately so it's fetched only once
-        if not _ss_has("date_range"):
-            min_date, max_date = _fetch_date_range()
-            _ss_set("date_range", (min_date, max_date))
-        min_date, max_date = _ss("date_range")
+        min_date, max_date = _get_date_range()
 
         with st.form("create_strategy_form"):
             name        = st.text_input("Strategy Name", placeholder="e.g., High RSI Momentum")
@@ -655,13 +597,12 @@ def render_backtesting_tab():
                                                 criteria, target_gain)
                     if strategy_id:
                         st.success(f"✅ Strategy created! ID: {strategy_id}")
-                        st.info("Go to 'Manage Strategies' to run the backtest. "
-                                "Hit Refresh to see the new strategy in the list.")
+                        st.info("Go to 'Manage Strategies' to run the backtest.")
 
     # ──────────────────────────────────────────────────────────────────────
     with tab3:
         st.markdown("### Manage Strategies")
-        strategies_df = _cached_strategies()
+        strategies_df = _get_all_strategies()
 
         if strategies_df.empty:
             st.info("No strategies found.")
