@@ -105,7 +105,7 @@ def _fetch_table_for_date(table_name: str, date: str) -> pd.DataFrame:
             return pd.DataFrame()
 
         df = pd.DataFrame(response.data)
-        df = df.dropna(how='all').dropna(axis=1, how='all')
+        df = df.dropna(how='all')  # only drop fully-empty rows; keep all columns
 
         # Rename dotted / bracketed column names to safe Python identifiers
         rename_map = {
@@ -227,11 +227,8 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
 
     indicator_groups = {
         "Price & OHLC": {
-            'fields': [price_field, 'high', 'low', 'volume'],
-            'labels': {
-                price_field: price_label, 'high': 'High',
-                'low': 'Low', 'volume': 'Volume',
-            },
+            'fields': [price_field, 'volume'],
+            'labels': {price_field: price_label, 'volume': 'Volume'},
         },
         "Momentum": {
             'fields': [
@@ -347,12 +344,22 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
         },
     }
 
+    bool_fields = {
+        "ema20_above_ema50", "ema50_above_ema200", "price_above_ema20",
+        "ema10_above_ema20", "sma50_above_sma200",
+        "doji", "hammer", "bullish_engulfing", "gap_up", "gap_down",
+    }
+
     tabs = st.tabs(list(indicator_groups.keys()))
     for i, (group_name, group_info) in enumerate(indicator_groups.items()):
         with tabs[i]:
+            # Boolean fields: show if column exists even if value is 0
+            # Numeric fields: show if column exists and value is not NaN
             available = [
                 f for f in group_info['fields']
-                if f in data_row.index and pd.notna(data_row[f])
+                if f in data_row.index and (
+                    f in bool_fields or pd.notna(data_row[f])
+                )
             ]
             if not available:
                 st.info(f"No {group_name} indicators available")
@@ -365,12 +372,6 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     label = group_info['labels'].get(
                         field, field.replace(".", " ").replace("_", " ").upper()
                     )
-                    # Boolean / signal fields (0 or 1)
-                    bool_fields = {
-                        "ema20_above_ema50", "ema50_above_ema200", "price_above_ema20",
-                        "ema10_above_ema20", "sma50_above_sma200",
-                        "doji", "hammer", "bullish_engulfing", "gap_up", "gap_down",
-                    }
                     if field in bool_fields:
                         display_val = "✅ Yes" if value else "❌ No"
                     elif field == "volume":
@@ -575,12 +576,14 @@ def render_daily_winners_tab():
     selected_symbol = selected_symbol.strip().upper()
     winner_info = winners_df[winners_df['symbol'] == selected_symbol].iloc[0]
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Symbol", selected_symbol)
-    col2.metric("Price",  f"${winner_info['price']:.2f}")
+    col2.metric("Close",  f"${winner_info['price']:.2f}")
     col3.metric("Change", f"{winner_info['change_pct']:+.2f}%",
                 delta=f"{winner_info['change_pct']:.2f}%")
     col4.metric("Volume", f"{winner_info['volume']/1e6:.1f}M")
+    col5.metric("High",   f"${winner_info['high']:.2f}"   if pd.notna(winner_info.get('high'))   else "—")
+    col6.metric("Low",    f"${winner_info['low']:.2f}"    if pd.notna(winner_info.get('low'))    else "—")
 
     st.markdown("---")
     st.markdown("### Technical Indicator Snapshots")
