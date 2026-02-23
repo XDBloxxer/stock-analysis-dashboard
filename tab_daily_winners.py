@@ -206,6 +206,85 @@ def _extract_symbol_row(df: pd.DataFrame, symbol: str):
 
 
 # ── Indicator Timeline chart ──────────────────────────────────────────────────
+
+# Indicators where "rising = bullish" for prediction signal logic
+_BULLISH_ON_RISE = {
+    'rsi', 'rsi_1', 'rsi_2', 'macd_value', 'macd_diff', 'adx',
+    'stoch_k', 'stoch_d', 'stoch_k1', 'stoch_d1', 'mom', 'mom_1',
+    'roc', 'ao', 'uo', 'tsi', 'cci20', 'obv', 'cmf', 'vpt',
+    'aroon_up', 'aroon_indicator', 'vortex_pos', 'close', 'open',
+    'volume', 'volume_ratio', 'kst', 'dpo', 'ema5', 'ema10', 'ema20',
+    'ema50', 'ema100', 'ema200', 'sma5', 'sma10', 'sma20', 'sma50',
+    'sma100', 'sma200', 'vwap', 'adx_plus_di', 'price_change_1d',
+    'price_change_2d', 'price_change_3d', 'price_change_5d',
+}
+# Indicators where "falling = bullish" (oversold, inverse, etc.)
+_BULLISH_ON_FALL = {
+    'w_r', 'aroon_down', 'vortex_neg', 'adx_minus_di',
+    'price_vs_high_52w',  # negative = far from high = potential upside
+}
+# Indicators with meaningful threshold context
+_INDICATOR_THRESHOLDS = {
+    'rsi':     {'oversold': 30, 'overbought': 70},
+    'rsi_1':   {'oversold': 30, 'overbought': 70},
+    'rsi_2':   {'oversold': 30, 'overbought': 70},
+    'stoch_k': {'oversold': 20, 'overbought': 80},
+    'stoch_d': {'oversold': 20, 'overbought': 80},
+    'w_r':     {'oversold': -80, 'overbought': -20},
+    'adx':     {'weak': 20, 'strong': 40},
+    'cci20':   {'oversold': -100, 'overbought': 100},
+    'cmf':     {'negative': 0},
+    'macd_diff': {'zero': 0},
+    'macd_value': {'zero': 0},
+}
+
+def _prediction_signal(indicator: str, val_first, val_last) -> tuple[str, str]:
+    """
+    Returns (signal_emoji, signal_text) based on direction of change
+    and what that means for upward price prediction.
+    """
+    if pd.isna(val_first) or pd.isna(val_last):
+        return '—', '—'
+    delta = val_last - val_first
+    if delta == 0:
+        return '➡️', 'Flat'
+
+    rising = delta > 0
+    ind = indicator.lower()
+
+    if ind in _BULLISH_ON_RISE:
+        return ('📈 Bullish', '🟢') if rising else ('📉 Bearish', '🔴')
+    elif ind in _BULLISH_ON_FALL:
+        return ('📈 Bullish', '🟢') if not rising else ('📉 Bearish', '🔴')
+    else:
+        # Neutral / unknown — just show direction
+        return ('↑ Rising', '🔵') if rising else ('↓ Falling', '🟠')
+
+
+def _momentum_label(val_first, val_last, available_vals) -> str:
+    """Classify the shape of movement: accelerating, decelerating, reversing, etc."""
+    if len(available_vals) < 3:
+        return '—'
+    mid = available_vals[1] if len(available_vals) >= 3 else None
+    if mid is None:
+        return '—'
+    first_half = mid - val_first
+    second_half = val_last - mid
+    if first_half > 0 and second_half > first_half:
+        return '⚡ Accelerating ↑'
+    elif first_half > 0 and second_half < 0:
+        return '🔄 Reversed ↓'
+    elif first_half > 0 and 0 <= second_half <= first_half:
+        return '🐢 Slowing ↑'
+    elif first_half < 0 and second_half < first_half:
+        return '⚡ Accelerating ↓'
+    elif first_half < 0 and second_half > 0:
+        return '🔄 Reversed ↑'
+    elif first_half < 0 and first_half <= second_half < 0:
+        return '🐢 Slowing ↓'
+    return '➡️ Steady'
+
+
 def render_indicator_timeline(symbol: str,
                                open_df: pd.DataFrame,
                                close_df: pd.DataFrame,
@@ -214,11 +293,10 @@ def render_indicator_timeline(symbol: str,
     """
     Builds a dynamic indicator timeline using ONLY the already-cached dataframes
     (zero extra Supabase calls). Shows indicator values across the 4 timepoints
-    plus a change-summary table.
+    plus a prediction-focused change-summary table.
     """
     symbol = symbol.strip().upper()
 
-    # Map timepoint key → dataframe
     df_map = {
         "day_prior_open":  prior_open_df,
         "day_prior_close": prior_close_df,
@@ -226,7 +304,6 @@ def render_indicator_timeline(symbol: str,
         "market_close":    close_df,
     }
 
-    # Extract rows for this symbol from each timepoint
     rows = {}
     for label, key in TIMEPOINTS:
         row = _extract_symbol_row(df_map[key], symbol)
@@ -238,7 +315,7 @@ def render_indicator_timeline(symbol: str,
         st.info("Need at least 2 timepoints with data to display the indicator timeline.")
         return
 
-    # Collect all numeric indicator columns available across any timepoint
+    # Collect all numeric indicator columns
     all_numeric_cols = set()
     for lbl in available_timepoints:
         row = rows[lbl]
@@ -259,7 +336,7 @@ def render_indicator_timeline(symbol: str,
 
     sorted_cols = sorted(all_numeric_cols)
 
-    # ── Build a summary dataframe: one row per indicator, one col per timepoint
+    # Build summary dataframe
     summary_data = {}
     for lbl in available_timepoints:
         row = rows[lbl]
@@ -275,10 +352,9 @@ def render_indicator_timeline(symbol: str,
         summary_data[lbl] = col_vals
 
     summary_df = pd.DataFrame(summary_data, index=sorted_cols)
-    # Only keep indicators with at least 2 non-null values (so we can chart them)
     summary_df = summary_df[summary_df.notna().sum(axis=1) >= 2]
 
-    # Compute change metrics
+    # Delta = T-1 Open (first available) → Day Close (last available)
     first_valid = summary_df.apply(lambda r: r.dropna().iloc[0]  if r.dropna().size else None, axis=1)
     last_valid  = summary_df.apply(lambda r: r.dropna().iloc[-1] if r.dropna().size else None, axis=1)
 
@@ -288,125 +364,146 @@ def render_indicator_timeline(symbol: str,
     summary_df['Min']    = summary_df[available_timepoints].min(axis=1).round(4)
     summary_df['Range']  = (summary_df['Max'] - summary_df['Min']).round(4)
 
+    # Prediction signal columns
+    signals, momentums = [], []
+    for ind in summary_df.index:
+        fv = first_valid[ind]
+        lv = last_valid[ind]
+        sig_text, sig_dot = _prediction_signal(ind, fv, lv)
+        signals.append(f"{sig_dot} {sig_text}")
+        # build available vals list for momentum
+        av = [summary_df.loc[ind, tp] for tp in available_timepoints
+              if tp in summary_df.columns and pd.notna(summary_df.loc[ind, tp])]
+        momentums.append(_momentum_label(fv, lv, av) if len(av) >= 2 else '—')
+
+    summary_df['Signal']   = signals
+    summary_df['Momentum'] = momentums
+
     # ── Section header
     st.markdown("---")
     st.markdown("### 📉 Indicator Timeline")
-    st.caption("Track how any indicator evolves across T-1 Open → T-1 Close → Day Open → Day Close. Uses only already-loaded data — zero extra database calls.")
+
+    tp_first = available_timepoints[0]
+    tp_last  = available_timepoints[-1]
+    st.caption(
+        f"Δ (delta) = **{tp_last}** minus **{tp_first}** — the change from first to last available snapshot. "
+        f"Zero extra database calls; uses already-loaded data."
+    )
 
     # ── Indicator multi-select
-    # Smart defaults: pick a handful of interesting ones if present
     default_candidates = ['rsi', 'macd_value', 'adx', 'volume', 'close', 'stoch_k']
-    defaults = [c for c in default_candidates if c in summary_df.index][:4]
+    defaults = [c for c in default_candidates if c in summary_df.index][:6]
     if not defaults:
-        defaults = list(summary_df.index[:3])
+        defaults = list(summary_df.index[:4])
 
     selected_indicators = st.multiselect(
         "Select indicators to chart:",
         options=list(summary_df.index),
         default=defaults,
         key=f"indicator_timeline_select_{symbol}",
-        help="You can select any combination of numeric indicators from the database."
+        help="Pick any numeric indicators. Each gets its own panel in a 2-column grid."
     )
+
+    PALETTE = ['#667eea', '#10b981', '#f59e0b', '#ef4444', '#3b82f6',
+               '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16']
 
     if not selected_indicators:
         st.info("Select at least one indicator above to see the chart.")
     else:
-        # ── Chart: separate y-axes if scales differ wildly
-        # Use a subplot per indicator if scales are very different, else overlay
+        # Build per-indicator data
         indicator_values = {}
         for ind in selected_indicators:
-            vals = []
-            lbls = []
+            vals, lbls = [], []
             for lbl in available_timepoints:
                 v = summary_df.loc[ind, lbl] if lbl in summary_df.columns else None
                 if pd.notna(v):
-                    vals.append(v)
+                    vals.append(float(v))
                     lbls.append(lbl)
             if vals:
                 indicator_values[ind] = (lbls, vals)
 
         if indicator_values:
-            # Check if we should use dual-axis (scales differ by >10x)
-            ranges = []
-            for ind, (lbls, vals) in indicator_values.items():
-                r = max(vals) - min(vals) if vals else 0
-                ranges.append(abs(max(vals)) if max(abs(v) for v in vals) > 0 else 1)
+            inds = list(indicator_values.keys())
+            n    = len(inds)
 
-            use_subplots = len(indicator_values) > 1 and (max(ranges) / max(min(ranges), 0.001) > 20)
+            # Always render in 2-column pairs, each indicator gets its own subplot panel
+            pairs = [(inds[i], inds[i + 1] if i + 1 < n else None) for i in range(0, n, 2)]
 
-            PALETTE = ['#667eea', '#10b981', '#f59e0b', '#ef4444', '#3b82f6',
-                       '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16']
+            for left_ind, right_ind in pairs:
+                col_left, col_right = st.columns(2)
 
-            if use_subplots:
-                n = len(indicator_values)
-                fig = make_subplots(
-                    rows=n, cols=1,
-                    subplot_titles=list(indicator_values.keys()),
-                    vertical_spacing=0.08,
-                    shared_xaxes=True,
-                )
-                for i, (ind, (lbls, vals)) in enumerate(indicator_values.items(), 1):
-                    color = PALETTE[(i - 1) % len(PALETTE)]
-                    fig.add_trace(
-                        go.Scatter(
-                            x=lbls, y=vals,
-                            mode='lines+markers',
-                            name=ind,
-                            line=dict(color=color, width=2.5),
-                            marker=dict(size=9, color=color,
-                                        line=dict(color='white', width=1.5)),
-                            hovertemplate=f'<b>{ind}</b><br>%{{x}}: %{{y:.4f}}<extra></extra>',
-                        ),
-                        row=i, col=1,
-                    )
-                    fig.update_yaxes(gridcolor='rgba(255,255,255,0.08)',
-                                     color='#b8bcc8', row=i, col=1)
+                for col_widget, ind in [(col_left, left_ind), (col_right, right_ind)]:
+                    if ind is None:
+                        continue
+                    lbls, vals = indicator_values[ind]
+                    color = PALETTE[inds.index(ind) % len(PALETTE)]
 
-                fig.update_layout(
-                    height=max(280 * n, 400),
-                    showlegend=False,
-                    hovermode='x unified',
-                    **{k: v for k, v in CHART_THEME.items()
-                       if k not in ('xaxis', 'yaxis')},
-                )
-                fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', color='#b8bcc8')
+                    delta_val = summary_df.loc[ind, 'Δ %'] if ind in summary_df.index else None
+                    delta_abs = summary_df.loc[ind, 'Δ Abs'] if ind in summary_df.index else None
+                    delta_str = f"Δ {delta_abs:+.4f} ({delta_val:+.2f}%)" if pd.notna(delta_val) and pd.notna(delta_abs) else ""
 
-            else:
-                fig = go.Figure()
-                for i, (ind, (lbls, vals)) in enumerate(indicator_values.items()):
-                    color = PALETTE[i % len(PALETTE)]
+                    fig = go.Figure()
+
+                    # Add threshold reference lines where meaningful
+                    if ind in _INDICATOR_THRESHOLDS:
+                        thresh = _INDICATOR_THRESHOLDS[ind]
+                        for tname, tval in thresh.items():
+                            fig.add_hline(
+                                y=tval,
+                                line_dash='dot',
+                                line_color='rgba(255,255,255,0.25)',
+                                annotation_text=f" {tname}={tval}",
+                                annotation_font_color='rgba(255,255,255,0.4)',
+                                annotation_font_size=10,
+                            )
+
                     fig.add_trace(go.Scatter(
                         x=lbls, y=vals,
                         mode='lines+markers',
                         name=ind,
                         line=dict(color=color, width=2.5),
-                        marker=dict(size=9, color=color,
-                                    line=dict(color='white', width=1.5)),
+                        marker=dict(
+                            size=10,
+                            color=color,
+                            line=dict(color='white', width=1.5),
+                        ),
+                        fill='tozeroy',
+                        fillcolor=color.replace('#', 'rgba(').rstrip(')') + ',0.07)' if color.startswith('#') else 'rgba(102,126,234,0.07)',
                         hovertemplate=f'<b>{ind}</b><br>%{{x}}: %{{y:.4f}}<extra></extra>',
                     ))
 
-                fig.update_layout(
-                    height=420,
-                    hovermode='x unified',
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                                xanchor='right', x=1),
-                    **{k: v for k, v in CHART_THEME.items()
-                       if k not in ('xaxis', 'yaxis')},
-                )
-                fig.update_xaxes(**CHART_THEME['xaxis'])
-                fig.update_yaxes(**CHART_THEME['yaxis'])
+                    title_color = '#10b981' if (pd.notna(delta_val) and delta_val > 0) else ('#ef4444' if (pd.notna(delta_val) and delta_val < 0) else '#e8eaf0')
 
-            st.plotly_chart(fig, use_container_width=True)
+                    fig.update_layout(
+                        title=dict(
+                            text=f"<b>{ind}</b>   <span style='font-size:12px;color:{title_color}'>{delta_str}</span>",
+                            font=dict(size=14, color='#e8eaf0'),
+                        ),
+                        height=260,
+                        showlegend=False,
+                        hovermode='x unified',
+                        margin=dict(t=40, b=30, l=40, r=10),
+                        **{k: v for k, v in CHART_THEME.items() if k not in ('xaxis', 'yaxis', 'title_font')},
+                    )
+                    fig.update_xaxes(gridcolor='rgba(255,255,255,0.07)', color='#b8bcc8', tickfont=dict(size=10))
+                    fig.update_yaxes(gridcolor='rgba(255,255,255,0.07)', color='#b8bcc8', tickfont=dict(size=10))
 
-    # ── Summary / change table ────────────────────────────────────────────────
-    st.markdown("#### 📊 Indicator Change Summary")
-    st.caption("Shows how every numeric indicator shifted across the 4 timepoints. Sorted by absolute % change by default.")
+                    with col_widget:
+                        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Prediction-focused summary table ─────────────────────────────────────
+    st.markdown("#### 🔮 Indicator Prediction Table")
+    st.caption(
+        f"**Δ = {tp_last} value minus {tp_first} value** (T-1 Open → Day Close, i.e. the full observed window). "
+        f"**Signal** = whether the direction of change is historically bullish or bearish for next-day price. "
+        f"**Momentum** = shape of the move across all 4 snapshots."
+    )
 
     col_sort, col_filter, col_top = st.columns([2, 2, 1])
     with col_sort:
         sort_by = st.selectbox(
             "Sort by:",
-            ["Δ % (abs)", "Δ Abs (abs)", "Range", "Indicator name"],
+            ["Δ % (abs)", "Bullish first", "Bearish first", "Δ Abs (abs)", "Range", "Indicator name"],
             key=f"summary_sort_{symbol}",
         )
     with col_filter:
@@ -417,7 +514,7 @@ def render_indicator_timeline(symbol: str,
         )
     with col_top:
         show_top = st.number_input("Show top N:", min_value=5, max_value=len(summary_df),
-                                   value=min(30, len(summary_df)),
+                                   value=min(40, len(summary_df)),
                                    key=f"summary_top_{symbol}")
 
     display_summary = summary_df.copy()
@@ -433,6 +530,18 @@ def render_indicator_timeline(symbol: str,
         display_summary = display_summary.reindex(
             display_summary['Δ %'].abs().sort_values(ascending=False).index
         )
+    elif sort_by == "Bullish first":
+        display_summary = display_summary.reindex(
+            display_summary['Signal'].apply(
+                lambda s: 0 if 'Bullish' in str(s) else (1 if 'Bearish' in str(s) else 2)
+            ).sort_values().index
+        )
+    elif sort_by == "Bearish first":
+        display_summary = display_summary.reindex(
+            display_summary['Signal'].apply(
+                lambda s: 0 if 'Bearish' in str(s) else (1 if 'Bullish' in str(s) else 2)
+            ).sort_values().index
+        )
     elif sort_by == "Δ Abs (abs)":
         display_summary = display_summary.reindex(
             display_summary['Δ Abs'].abs().sort_values(ascending=False).index
@@ -444,85 +553,97 @@ def render_indicator_timeline(symbol: str,
 
     display_summary = display_summary.head(int(show_top))
 
-    # Round timepoint columns
     for col in available_timepoints:
         if col in display_summary.columns:
             display_summary[col] = display_summary[col].round(4)
 
-    # Styling: colour Δ% column green/red
-    def _style_delta(val):
+    def _style_signal(val):
+        if 'Bullish' in str(val):
+            return 'color: #10b981; font-weight: 600'
+        elif 'Bearish' in str(val):
+            return 'color: #ef4444; font-weight: 600'
+        elif 'Rising' in str(val):
+            return 'color: #3b82f6; font-weight: 600'
+        elif 'Falling' in str(val):
+            return 'color: #f59e0b; font-weight: 600'
+        return 'color: #b8bcc8'
+
+    def _style_delta_pct(val):
         if pd.isna(val):
             return ''
-        if val > 0:
-            intensity = min(int(abs(val) / 5 * 180), 180)
-            return f'color: #10b981; font-weight: 600'
-        elif val < 0:
-            return f'color: #ef4444; font-weight: 600'
-        return ''
+        return 'color: #10b981; font-weight: 600' if val > 0 else ('color: #ef4444; font-weight: 600' if val < 0 else '')
 
-    def _style_row_bg(row):
-        delta = row.get('Δ %', 0)
-        if pd.isna(delta) or delta == 0:
-            return [''] * len(row)
-        if delta > 10:
-            bg = 'background-color: rgba(16,185,129,0.07)'
-        elif delta < -10:
-            bg = 'background-color: rgba(239,68,68,0.07)'
-        else:
-            bg = ''
-        return [bg] * len(row)
+    def _style_momentum(val):
+        if 'Accel' in str(val) and '↑' in str(val):
+            return 'color: #10b981'
+        elif 'Accel' in str(val) and '↓' in str(val):
+            return 'color: #ef4444'
+        elif 'Revers' in str(val) and '↑' in str(val):
+            return 'color: #f59e0b'
+        elif 'Revers' in str(val) and '↓' in str(val):
+            return 'color: #f59e0b'
+        return 'color: #b8bcc8'
 
-    show_cols = available_timepoints + ['Δ Abs', 'Δ %', 'Range']
+    show_cols = available_timepoints + ['Δ Abs', 'Δ %', 'Signal', 'Momentum', 'Range']
+    fmt = {
+        **{c: '{:.4f}' for c in available_timepoints},
+        'Δ Abs': '{:+.4f}',
+        'Δ %':   '{:+.2f}%',
+        'Range': '{:.4f}',
+    }
     styled = (
         display_summary[show_cols]
         .style
-        .format({
-            **{c: '{:.4f}' for c in available_timepoints},
-            'Δ Abs': '{:+.4f}',
-            'Δ %':   '{:+.2f}%',
-            'Range': '{:.4f}',
-        }, na_rep='—')
-        .applymap(_style_delta, subset=['Δ %'])
-        .apply(_style_row_bg, axis=1)
+        .format({k: v for k, v in fmt.items() if k in show_cols}, na_rep='—')
+        .applymap(_style_signal,    subset=['Signal'])
+        .applymap(_style_delta_pct, subset=['Δ %'])
+        .applymap(_style_momentum,  subset=['Momentum'])
     )
 
-    st.dataframe(styled, use_container_width=True, height=500)
+    st.dataframe(styled, use_container_width=True, height=520)
 
     # ── Top movers highlight ──────────────────────────────────────────────────
-    st.markdown("#### 🏆 Biggest Movers")
-    movers_df = summary_df[['Δ %', 'Δ Abs']].copy()
-    movers_df['Δ % abs_sort'] = movers_df['Δ %'].abs()
-    movers_df = movers_df[movers_df['Δ % abs_sort'].notna()].sort_values('Δ % abs_sort', ascending=False)
+    st.markdown("#### 🏆 Biggest Movers (T-1 Open → Day Close)")
+    movers_df = summary_df[['Δ %', 'Δ Abs', 'Signal']].copy()
+    movers_df['_abs_sort'] = movers_df['Δ %'].abs()
+    movers_df = movers_df[movers_df['_abs_sort'].notna()].sort_values('_abs_sort', ascending=False)
 
     top_movers = movers_df.head(10)
 
     if not top_movers.empty:
-        colors = ['#10b981' if v >= 0 else '#ef4444' for v in top_movers['Δ %']]
+        bar_colors = []
+        for _, r in top_movers.iterrows():
+            if 'Bullish' in str(r['Signal']):
+                bar_colors.append('#10b981')
+            elif 'Bearish' in str(r['Signal']):
+                bar_colors.append('#ef4444')
+            else:
+                bar_colors.append('#667eea')
+
         fig_bar = go.Figure(go.Bar(
             x=top_movers.index.tolist(),
             y=top_movers['Δ %'].tolist(),
-            marker_color=colors,
+            marker_color=bar_colors,
             text=[f"{v:+.2f}%" for v in top_movers['Δ %']],
             textposition='outside',
             hovertemplate='<b>%{x}</b><br>Δ: %{y:+.2f}%<extra></extra>',
         ))
-        fig_bar.add_hline(y=0, line_color='rgba(255,255,255,0.2)', line_width=1)
+        fig_bar.add_hline(y=0, line_color='rgba(255,255,255,0.15)', line_width=1)
         fig_bar.update_layout(
-            title=f"Top 10 Indicators by % Change (T-1 Open → Day Close)",
             xaxis_title="Indicator",
-            yaxis_title="% Change",
-            height=360,
+            yaxis_title="Δ % (T-1 Open → Day Close)",
+            height=340,
             showlegend=False,
-            **{k: v for k, v in CHART_THEME.items() if k not in ('xaxis', 'yaxis')},
+            **{k: v for k, v in CHART_THEME.items() if k not in ('xaxis', 'yaxis', 'title_font')},
         )
         fig_bar.update_xaxes(**CHART_THEME['xaxis'])
         fig_bar.update_yaxes(**CHART_THEME['yaxis'])
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        # Biggest absolute movers
+        # Quick-scan metric cards for top 5 absolute movers
         movers_abs = movers_df.sort_values('Δ Abs', key=lambda s: s.abs(), ascending=False).head(5)
-        col1, col2, col3, col4, col5 = st.columns(5)
-        for col_widget, (idx, row) in zip([col1, col2, col3, col4, col5], movers_abs.iterrows()):
+        metric_cols = st.columns(5)
+        for col_widget, (idx, row) in zip(metric_cols, movers_abs.iterrows()):
             delta_pct = row['Δ %']
             col_widget.metric(
                 label=idx,
