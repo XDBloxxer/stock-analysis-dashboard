@@ -25,6 +25,7 @@ HOW INVALIDATION WORKS:
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime
 import os
 from supabase import create_client, Client
@@ -53,6 +54,27 @@ DATE_TABLES = [
     "winners_day_prior_close",
 ]
 
+# Timepoint labels in chronological order
+TIMEPOINTS = [
+    ("T-1 Open",    "day_prior_open"),
+    ("T-1 Close",   "day_prior_close"),
+    ("Day Open",    "market_open"),
+    ("Day Close",   "market_close"),
+]
+
+# Columns that are boolean flags — excluded from the indicator timeline
+BOOL_FIELDS = {
+    "ema20_above_ema50", "ema50_above_ema200", "price_above_ema20",
+    "ema10_above_ema20", "sma50_above_sma200",
+    "doji", "hammer", "bullish_engulfing", "gap_up", "gap_down",
+}
+
+# Columns that are metadata / not indicators
+META_FIELDS = {
+    "id", "symbol", "exchange", "detection_date", "created_at",
+    "updated_at", "name", "description",
+}
+
 
 # ── Supabase client ────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -66,14 +88,8 @@ def get_supabase_client():
 
 
 # ── Cached DB fetchers ─────────────────────────────────────────────────────────
-# These live on the server process and survive browser close/refresh.
-
 @st.cache_data(show_spinner=False)
 def _get_all_dates() -> list[str]:
-    """
-    Fetch the full list of available detection_dates.
-    Cached indefinitely until _get_all_dates.clear() is called.
-    """
     try:
         client = get_supabase_client()
         response = client.table("daily_winners").select("detection_date").limit(500).execute()
@@ -87,12 +103,6 @@ def _get_all_dates() -> list[str]:
 
 @st.cache_data(show_spinner=False)
 def _get_table_for_date(table_name: str, date: str) -> pd.DataFrame:
-    """
-    Fetch all rows for a given (table, date) pair.
-    Cached indefinitely per unique (table_name, date) combination.
-    Historical data never changes, so this never needs to be invalidated
-    for existing dates — only new dates get fetched.
-    """
     try:
         client = get_supabase_client()
         response = (
@@ -141,29 +151,19 @@ def _get_table_for_date(table_name: str, date: str) -> pd.DataFrame:
 # ── Cache control ──────────────────────────────────────────────────────────────
 
 def clear_all_cache():
-    """Wipe all cached data → full re-fetch on next render."""
     _get_all_dates.clear()
     _get_table_for_date.clear()
 
 
 def refresh_cache():
-    """
-    Append-only refresh: fetch only dates newer than the latest cached date.
-    New (table, date) pairs will be fetched automatically by _get_table_for_date
-    since they won't be in the cache yet.
-    We only need to clear _get_all_dates so it re-runs and returns the expanded list.
-    Individual (table, date) caches are left completely untouched.
-    """
     existing_dates = _get_all_dates()
 
     if not existing_dates:
-        # Nothing cached yet — clearing will trigger a full re-fetch
         _get_all_dates.clear()
         return
 
     latest_cached = max(existing_dates)
 
-    # Peek at Supabase for newer dates (lightweight: only detection_date column)
     try:
         client = get_supabase_client()
         response = (
@@ -186,17 +186,349 @@ def refresh_cache():
         st.toast("✅ Cache is already up to date — no new dates found.")
         return
 
-    # Clear the date-list cache so it re-fetches and includes the new dates.
-    # Individual (table, date) caches for existing dates are untouched.
-    # New dates will be fetched on-demand by _get_table_for_date when selected.
     _get_all_dates.clear()
 
-    # Pre-warm the cache for the new dates so they're ready immediately.
     for date in new_dates:
         for table in DATE_TABLES:
             _get_table_for_date(table, date)
 
     st.toast(f"✅ Loaded {len(new_dates)} new date(s): {', '.join(new_dates)}")
+
+
+# ── Helper: extract a symbol's row from a snapshot df ────────────────────────
+def _extract_symbol_row(df: pd.DataFrame, symbol: str):
+    if df.empty or 'symbol' not in df.columns:
+        return None
+    d = df.copy()
+    d['symbol'] = d['symbol'].str.strip().str.upper()
+    m = d[d['symbol'] == symbol]
+    return m.iloc[0] if not m.empty else None
+
+
+# ── Indicator Timeline chart ──────────────────────────────────────────────────
+def render_indicator_timeline(symbol: str,
+                               open_df: pd.DataFrame,
+                               close_df: pd.DataFrame,
+                               prior_open_df: pd.DataFrame,
+                               prior_close_df: pd.DataFrame):
+    """
+    Builds a dynamic indicator timeline using ONLY the already-cached dataframes
+    (zero extra Supabase calls). Shows indicator values across the 4 timepoints
+    plus a change-summary table.
+    """
+    symbol = symbol.strip().upper()
+
+    # Map timepoint key → dataframe
+    df_map = {
+        "day_prior_open":  prior_open_df,
+        "day_prior_close": prior_close_df,
+        "market_open":     open_df,
+        "market_close":    close_df,
+    }
+
+    # Extract rows for this symbol from each timepoint
+    rows = {}
+    for label, key in TIMEPOINTS:
+        row = _extract_symbol_row(df_map[key], symbol)
+        rows[label] = row
+
+    available_timepoints = [lbl for lbl, _ in TIMEPOINTS if rows[lbl] is not None]
+
+    if len(available_timepoints) < 2:
+        st.info("Need at least 2 timepoints with data to display the indicator timeline.")
+        return
+
+    # Collect all numeric indicator columns available across any timepoint
+    all_numeric_cols = set()
+    for lbl in available_timepoints:
+        row = rows[lbl]
+        if row is not None:
+            for col in row.index:
+                if col in META_FIELDS or col in BOOL_FIELDS:
+                    continue
+                try:
+                    val = row[col]
+                    if pd.notna(val) and isinstance(val, (int, float)):
+                        all_numeric_cols.add(col)
+                except Exception:
+                    pass
+
+    if not all_numeric_cols:
+        st.info("No numeric indicator data found for this symbol.")
+        return
+
+    sorted_cols = sorted(all_numeric_cols)
+
+    # ── Build a summary dataframe: one row per indicator, one col per timepoint
+    summary_data = {}
+    for lbl in available_timepoints:
+        row = rows[lbl]
+        col_vals = {}
+        for col in sorted_cols:
+            if row is not None and col in row.index and pd.notna(row[col]):
+                try:
+                    col_vals[col] = float(row[col])
+                except Exception:
+                    col_vals[col] = None
+            else:
+                col_vals[col] = None
+        summary_data[lbl] = col_vals
+
+    summary_df = pd.DataFrame(summary_data, index=sorted_cols)
+    # Only keep indicators with at least 2 non-null values (so we can chart them)
+    summary_df = summary_df[summary_df.notna().sum(axis=1) >= 2]
+
+    # Compute change metrics
+    first_valid = summary_df.apply(lambda r: r.dropna().iloc[0]  if r.dropna().size else None, axis=1)
+    last_valid  = summary_df.apply(lambda r: r.dropna().iloc[-1] if r.dropna().size else None, axis=1)
+
+    summary_df['Δ Abs']  = (last_valid - first_valid).round(4)
+    summary_df['Δ %']    = ((last_valid - first_valid) / first_valid.abs().replace(0, float('nan')) * 100).round(2)
+    summary_df['Max']    = summary_df[available_timepoints].max(axis=1).round(4)
+    summary_df['Min']    = summary_df[available_timepoints].min(axis=1).round(4)
+    summary_df['Range']  = (summary_df['Max'] - summary_df['Min']).round(4)
+
+    # ── Section header
+    st.markdown("---")
+    st.markdown("### 📉 Indicator Timeline")
+    st.caption("Track how any indicator evolves across T-1 Open → T-1 Close → Day Open → Day Close. Uses only already-loaded data — zero extra database calls.")
+
+    # ── Indicator multi-select
+    # Smart defaults: pick a handful of interesting ones if present
+    default_candidates = ['rsi', 'macd_value', 'adx', 'volume', 'close', 'stoch_k']
+    defaults = [c for c in default_candidates if c in summary_df.index][:4]
+    if not defaults:
+        defaults = list(summary_df.index[:3])
+
+    selected_indicators = st.multiselect(
+        "Select indicators to chart:",
+        options=list(summary_df.index),
+        default=defaults,
+        key=f"indicator_timeline_select_{symbol}",
+        help="You can select any combination of numeric indicators from the database."
+    )
+
+    if not selected_indicators:
+        st.info("Select at least one indicator above to see the chart.")
+    else:
+        # ── Chart: separate y-axes if scales differ wildly
+        # Use a subplot per indicator if scales are very different, else overlay
+        indicator_values = {}
+        for ind in selected_indicators:
+            vals = []
+            lbls = []
+            for lbl in available_timepoints:
+                v = summary_df.loc[ind, lbl] if lbl in summary_df.columns else None
+                if pd.notna(v):
+                    vals.append(v)
+                    lbls.append(lbl)
+            if vals:
+                indicator_values[ind] = (lbls, vals)
+
+        if indicator_values:
+            # Check if we should use dual-axis (scales differ by >10x)
+            ranges = []
+            for ind, (lbls, vals) in indicator_values.items():
+                r = max(vals) - min(vals) if vals else 0
+                ranges.append(abs(max(vals)) if max(abs(v) for v in vals) > 0 else 1)
+
+            use_subplots = len(indicator_values) > 1 and (max(ranges) / max(min(ranges), 0.001) > 20)
+
+            PALETTE = ['#667eea', '#10b981', '#f59e0b', '#ef4444', '#3b82f6',
+                       '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16']
+
+            if use_subplots:
+                n = len(indicator_values)
+                fig = make_subplots(
+                    rows=n, cols=1,
+                    subplot_titles=list(indicator_values.keys()),
+                    vertical_spacing=0.08,
+                    shared_xaxes=True,
+                )
+                for i, (ind, (lbls, vals)) in enumerate(indicator_values.items(), 1):
+                    color = PALETTE[(i - 1) % len(PALETTE)]
+                    fig.add_trace(
+                        go.Scatter(
+                            x=lbls, y=vals,
+                            mode='lines+markers',
+                            name=ind,
+                            line=dict(color=color, width=2.5),
+                            marker=dict(size=9, color=color,
+                                        line=dict(color='white', width=1.5)),
+                            hovertemplate=f'<b>{ind}</b><br>%{{x}}: %{{y:.4f}}<extra></extra>',
+                        ),
+                        row=i, col=1,
+                    )
+                    fig.update_yaxes(gridcolor='rgba(255,255,255,0.08)',
+                                     color='#b8bcc8', row=i, col=1)
+
+                fig.update_layout(
+                    height=max(280 * n, 400),
+                    showlegend=False,
+                    hovermode='x unified',
+                    **{k: v for k, v in CHART_THEME.items()
+                       if k not in ('xaxis', 'yaxis')},
+                )
+                fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', color='#b8bcc8')
+
+            else:
+                fig = go.Figure()
+                for i, (ind, (lbls, vals)) in enumerate(indicator_values.items()):
+                    color = PALETTE[i % len(PALETTE)]
+                    fig.add_trace(go.Scatter(
+                        x=lbls, y=vals,
+                        mode='lines+markers',
+                        name=ind,
+                        line=dict(color=color, width=2.5),
+                        marker=dict(size=9, color=color,
+                                    line=dict(color='white', width=1.5)),
+                        hovertemplate=f'<b>{ind}</b><br>%{{x}}: %{{y:.4f}}<extra></extra>',
+                    ))
+
+                fig.update_layout(
+                    height=420,
+                    hovermode='x unified',
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                                xanchor='right', x=1),
+                    **{k: v for k, v in CHART_THEME.items()
+                       if k not in ('xaxis', 'yaxis')},
+                )
+                fig.update_xaxes(**CHART_THEME['xaxis'])
+                fig.update_yaxes(**CHART_THEME['yaxis'])
+
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Summary / change table ────────────────────────────────────────────────
+    st.markdown("#### 📊 Indicator Change Summary")
+    st.caption("Shows how every numeric indicator shifted across the 4 timepoints. Sorted by absolute % change by default.")
+
+    col_sort, col_filter, col_top = st.columns([2, 2, 1])
+    with col_sort:
+        sort_by = st.selectbox(
+            "Sort by:",
+            ["Δ % (abs)", "Δ Abs (abs)", "Range", "Indicator name"],
+            key=f"summary_sort_{symbol}",
+        )
+    with col_filter:
+        filter_text = st.text_input(
+            "Filter indicators:",
+            placeholder="e.g. rsi, macd, stoch…",
+            key=f"summary_filter_{symbol}",
+        )
+    with col_top:
+        show_top = st.number_input("Show top N:", min_value=5, max_value=len(summary_df),
+                                   value=min(30, len(summary_df)),
+                                   key=f"summary_top_{symbol}")
+
+    display_summary = summary_df.copy()
+
+    if filter_text.strip():
+        terms = [t.strip().lower() for t in filter_text.split(',') if t.strip()]
+        mask  = display_summary.index.to_series().apply(
+            lambda x: any(t in x.lower() for t in terms)
+        )
+        display_summary = display_summary[mask]
+
+    if sort_by == "Δ % (abs)":
+        display_summary = display_summary.reindex(
+            display_summary['Δ %'].abs().sort_values(ascending=False).index
+        )
+    elif sort_by == "Δ Abs (abs)":
+        display_summary = display_summary.reindex(
+            display_summary['Δ Abs'].abs().sort_values(ascending=False).index
+        )
+    elif sort_by == "Range":
+        display_summary = display_summary.sort_values('Range', ascending=False)
+    else:
+        display_summary = display_summary.sort_index()
+
+    display_summary = display_summary.head(int(show_top))
+
+    # Round timepoint columns
+    for col in available_timepoints:
+        if col in display_summary.columns:
+            display_summary[col] = display_summary[col].round(4)
+
+    # Styling: colour Δ% column green/red
+    def _style_delta(val):
+        if pd.isna(val):
+            return ''
+        if val > 0:
+            intensity = min(int(abs(val) / 5 * 180), 180)
+            return f'color: #10b981; font-weight: 600'
+        elif val < 0:
+            return f'color: #ef4444; font-weight: 600'
+        return ''
+
+    def _style_row_bg(row):
+        delta = row.get('Δ %', 0)
+        if pd.isna(delta) or delta == 0:
+            return [''] * len(row)
+        if delta > 10:
+            bg = 'background-color: rgba(16,185,129,0.07)'
+        elif delta < -10:
+            bg = 'background-color: rgba(239,68,68,0.07)'
+        else:
+            bg = ''
+        return [bg] * len(row)
+
+    show_cols = available_timepoints + ['Δ Abs', 'Δ %', 'Range']
+    styled = (
+        display_summary[show_cols]
+        .style
+        .format({
+            **{c: '{:.4f}' for c in available_timepoints},
+            'Δ Abs': '{:+.4f}',
+            'Δ %':   '{:+.2f}%',
+            'Range': '{:.4f}',
+        }, na_rep='—')
+        .applymap(_style_delta, subset=['Δ %'])
+        .apply(_style_row_bg, axis=1)
+    )
+
+    st.dataframe(styled, use_container_width=True, height=500)
+
+    # ── Top movers highlight ──────────────────────────────────────────────────
+    st.markdown("#### 🏆 Biggest Movers")
+    movers_df = summary_df[['Δ %', 'Δ Abs']].copy()
+    movers_df['Δ % abs_sort'] = movers_df['Δ %'].abs()
+    movers_df = movers_df[movers_df['Δ % abs_sort'].notna()].sort_values('Δ % abs_sort', ascending=False)
+
+    top_movers = movers_df.head(10)
+
+    if not top_movers.empty:
+        colors = ['#10b981' if v >= 0 else '#ef4444' for v in top_movers['Δ %']]
+        fig_bar = go.Figure(go.Bar(
+            x=top_movers.index.tolist(),
+            y=top_movers['Δ %'].tolist(),
+            marker_color=colors,
+            text=[f"{v:+.2f}%" for v in top_movers['Δ %']],
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>Δ: %{y:+.2f}%<extra></extra>',
+        ))
+        fig_bar.add_hline(y=0, line_color='rgba(255,255,255,0.2)', line_width=1)
+        fig_bar.update_layout(
+            title=f"Top 10 Indicators by % Change (T-1 Open → Day Close)",
+            xaxis_title="Indicator",
+            yaxis_title="% Change",
+            height=360,
+            showlegend=False,
+            **{k: v for k, v in CHART_THEME.items() if k not in ('xaxis', 'yaxis')},
+        )
+        fig_bar.update_xaxes(**CHART_THEME['xaxis'])
+        fig_bar.update_yaxes(**CHART_THEME['yaxis'])
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+        # Biggest absolute movers
+        movers_abs = movers_df.sort_values('Δ Abs', key=lambda s: s.abs(), ascending=False).head(5)
+        col1, col2, col3, col4, col5 = st.columns(5)
+        for col_widget, (idx, row) in zip([col1, col2, col3, col4, col5], movers_abs.iterrows()):
+            delta_pct = row['Δ %']
+            col_widget.metric(
+                label=idx,
+                value=f"{row['Δ Abs']:+.4f}",
+                delta=f"{delta_pct:+.2f}%" if pd.notna(delta_pct) else None,
+            )
 
 
 # ── UI helpers ─────────────────────────────────────────────────────────────────
@@ -443,10 +775,6 @@ def render_price_journey(symbol, open_df, close_df, prior_open_df, prior_close_d
 
 
 def render_stock_history(symbol: str):
-    """
-    Reads from the ML predictions tab's cache_data functions.
-    Imported here to avoid circular imports — we call the cached functions directly.
-    """
     try:
         from tab_ml_predictions import _get_table_full as _ml_get
     except ImportError:
@@ -597,9 +925,6 @@ def render_daily_winners_tab():
         refresh_cache()
         st.rerun()
 
-    # On first render (or after clear), the cache_data functions will fetch
-    # from Supabase automatically. On subsequent renders (including after
-    # browser close/reopen), they return the cached result instantly.
     available_dates = _get_all_dates()
 
     if not available_dates:
@@ -620,10 +945,9 @@ def render_daily_winners_tab():
     with col4:
         st.metric("Day of Week", datetime.fromisoformat(selected_date).strftime("%A"))
 
-    # All reads go through cache_data — zero egress on repeat views
-    winners_df         = _get_table_for_date("daily_winners",          selected_date)
-    market_open_df     = _get_table_for_date("winners_market_open",    selected_date)
-    market_close_df    = _get_table_for_date("winners_market_close",   selected_date)
+    winners_df         = _get_table_for_date("daily_winners",           selected_date)
+    market_open_df     = _get_table_for_date("winners_market_open",     selected_date)
+    market_close_df    = _get_table_for_date("winners_market_close",    selected_date)
     day_prior_open_df  = _get_table_for_date("winners_day_prior_open",  selected_date)
     day_prior_close_df = _get_table_for_date("winners_day_prior_close", selected_date)
 
@@ -686,6 +1010,22 @@ def render_daily_winners_tab():
     col7.metric("Low",    f"${winner_info['low']:.2f}"   if 'low'  in winner_info.index and pd.notna(winner_info['low'])   else "—")
 
     st.markdown("---")
+    st.markdown("### Price Journey")
+    st.caption("Candlestick chart across T-1 Open → T-1 Close → Market Open → Market Close")
+    render_price_journey(
+        selected_symbol,
+        market_open_df, market_close_df,
+        day_prior_open_df, day_prior_close_df,
+    )
+
+    # ── NEW: Indicator Timeline ───────────────────────────────────────────────
+    render_indicator_timeline(
+        selected_symbol,
+        market_open_df, market_close_df,
+        day_prior_open_df, day_prior_close_df,
+    )
+
+    st.markdown("---")
     st.markdown("### Technical Indicator Snapshots")
 
     snapshot_tabs = st.tabs([
@@ -715,15 +1055,6 @@ def render_daily_winners_tab():
         _show_snapshot(market_open_df,     "Market Open — 9:30 AM",         'market_open')
     with snapshot_tabs[3]:
         _show_snapshot(market_close_df,    "Market Close — 4:00 PM",        'market_close')
-
-    st.markdown("---")
-    st.markdown("### Price Journey")
-    st.caption("Candlestick chart across T-1 Open → T-1 Close → Market Open → Market Close")
-    render_price_journey(
-        selected_symbol,
-        market_open_df, market_close_df,
-        day_prior_open_df, day_prior_close_df,
-    )
 
     st.markdown("---")
     with st.expander(f"📊 Full ML History for {selected_symbol}", expanded=False):
