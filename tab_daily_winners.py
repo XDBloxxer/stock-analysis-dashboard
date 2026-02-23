@@ -468,7 +468,7 @@ def render_indicator_timeline(symbol: str,
                             line=dict(color='white', width=1.5),
                         ),
                         fill='tozeroy',
-                        fillcolor=color.replace('#', 'rgba(').rstrip(')') + ',0.07)' if color.startswith('#') else 'rgba(102,126,234,0.07)',
+                        fillcolor=f'rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.07)',
                         hovertemplate=f'<b>{ind}</b><br>%{{x}}: %{{y:.4f}}<extra></extra>',
                     ))
 
