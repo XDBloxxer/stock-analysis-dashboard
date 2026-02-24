@@ -23,16 +23,6 @@ import os
 import requests
 from supabase import create_client, Client
 
-def status_badge(status: str) -> str:
-    """Return an HTML badge for a run_status string."""
-    mapping = {
-        "completed": ("badge-green",  "✓ Completed"),
-        "pending":   ("badge-amber",  "⏳ Pending"),
-        "running":   ("badge-blue",   "▶ Running"),
-        "failed":    ("badge-red",    "✗ Failed"),
-    }
-    cls, label = mapping.get(status, ("badge-blue", status))
-    return f'<span class="badge {cls}">{label}</span>'
 
 
 TAB_ID = "backtesting"
