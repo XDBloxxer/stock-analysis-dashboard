@@ -25,7 +25,7 @@ from datetime import datetime
 import os
 
 from db import get_supabase_client
-from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS
+from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 
 TAB_ID = "daily_winners"
 
@@ -605,15 +605,15 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
                         margin=dict(t=38, b=28, l=38, r=10),
                         **{k: v for k, v in CHART_THEME.items() if k not in ('xaxis', 'yaxis', 'title_font')},
                     )
-                    fig.update_xaxes(**AXIS_STYLE, tickfont=dict(size=9))
-                    fig.update_yaxes(**AXIS_STYLE, tickfont=dict(size=9))
+                    fig.update_xaxes(**AXIS_STYLE_SM)
+                    fig.update_yaxes(**AXIS_STYLE_SM)
                     with col_widget:
                         st.plotly_chart(fig, use_container_width=True)
 
     # ── Prediction table ───────────────────────────────────────────────────────
     st.markdown("#### 🔮 Indicator Prediction Table")
     st.caption(
-        f"**Δ = {tp_last} minus {tp_first}** (T-1 Open → Day Close). "
+        f"**Δ = {tp_last} minus {tp_first}** (T-1 Open to Day Close). "
         f"**Signal** = whether direction is historically bullish/bearish. "
         f"**Momentum** = shape of move across all snapshots."
     )
@@ -702,7 +702,7 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         st.caption(f"Showing top {int(show_top)} of {len(summary_df)} indicators. Increase 'Show top N' to see {remaining} more.")
 
     # ── Top movers bar chart ────────────────────────────────────────────────────
-    st.markdown("#### 🏆 Biggest Movers (T-1 Open → Day Close)")
+    st.markdown("#### 🏆 Biggest Movers (T-1 Open to Day Close)")
     movers_df = summary_df[['Δ %', 'Δ Abs', 'Signal']].copy()
     movers_df['_abs'] = movers_df['Δ %'].abs()
     movers_df = movers_df[movers_df['_abs'].notna()].sort_values('_abs', ascending=False).head(10)
@@ -724,7 +724,7 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         ))
         fig_bar.add_hline(y=0, line_color='rgba(255,255,255,0.12)', line_width=1)
         fig_bar.update_layout(
-            xaxis_title="Indicator", yaxis_title="Δ % (T-1 Open → Day Close)",
+            xaxis_title="Indicator", yaxis_title="Delta % (T-1 Open to Day Close)",
             height=320, showlegend=False, **LAYOUT,
         )
         fig_bar.update_xaxes(**AXIS_STYLE)
@@ -868,8 +868,10 @@ def render_symbol_search(available_dates: list[str]):
 
     st.markdown('<div class="search-bar">', unsafe_allow_html=True)
     search_sym = st.text_input(
-        "", placeholder="Type a ticker, e.g. AAPL, TSLA, NVDA…",
-        key="global_symbol_search", label_visibility="collapsed"
+        "Symbol search",
+        placeholder="Type a ticker, e.g. AAPL, TSLA, NVDA…",
+        key="global_symbol_search",
+        label_visibility="collapsed",
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1082,7 +1084,7 @@ def render_daily_winners_tab():
     # ── Price Journey ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Price Journey")
-    st.caption("Close price step-chart — T-1 Open → T-1 Close → Market Open → Market Close. High/low shown as range bars.")
+    st.caption("Close price step-chart — T-1 Open to T-1 Close to Market Open to Market Close. High/low shown as range bars.")
     render_price_journey(
         selected_symbol,
         market_open_df, market_close_df,
