@@ -38,6 +38,14 @@ AXIS_STYLE = dict(
     tickfont=dict(size=10),
 )
 
+# Smaller tick font variant for compact mini-charts (no tickfont conflict when passed alone)
+AXIS_STYLE_SM = dict(
+    gridcolor='rgba(0,212,255,0.06)',
+    color='#4a6a8a',
+    linecolor='rgba(0,212,255,0.1)',
+    tickfont=dict(size=9),
+)
+
 # ── Brand color palette ────────────────────────────────────────────────────────
 COLORS = {
     'primary':   '#00d4ff',
