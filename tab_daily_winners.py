@@ -577,11 +577,77 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
                     with col_widget:
                         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Prediction table ───────────────────────────────────────────────────────
+    # Prediction table is rendered separately after technical snapshots
+
+
+def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior_close_df):
+    """Standalone prediction/summary table — rendered AFTER technical snapshots."""
+    symbol = symbol.strip().upper()
+    df_map = {
+        "day_prior_open":  prior_open_df,
+        "day_prior_close": prior_close_df,
+        "market_open":     open_df,
+        "market_close":    close_df,
+    }
+    rows = {}
+    for label, key in TIMEPOINTS:
+        rows[label] = _extract_symbol_row(df_map[key], symbol)
+
+    available_timepoints = [lbl for lbl, _ in TIMEPOINTS if rows[lbl] is not None]
+    if len(available_timepoints) < 2:
+        return
+
+    sorted_cols = sorted({
+        col
+        for lbl in available_timepoints
+        for col in (rows[lbl].index if rows[lbl] is not None else [])
+        if col not in META_FIELDS and col not in BOOL_FIELDS
+        and rows[lbl] is not None and pd.notna(rows[lbl].get(col))
+        and isinstance(rows[lbl].get(col), (int, float))
+    })
+    if not sorted_cols:
+        return
+
+    summary_data = {}
+    for lbl in available_timepoints:
+        row = rows[lbl]
+        summary_data[lbl] = {
+            col: float(row[col]) if row is not None and col in row.index and pd.notna(row[col]) else None
+            for col in sorted_cols
+        }
+
+    summary_df = pd.DataFrame(summary_data, index=sorted_cols)
+    summary_df = summary_df[summary_df.notna().sum(axis=1) >= 2]
+    if summary_df.empty:
+        return
+
+    first_valid = summary_df.apply(lambda r: r.dropna().iloc[0]  if r.dropna().size else None, axis=1)
+    last_valid  = summary_df.apply(lambda r: r.dropna().iloc[-1] if r.dropna().size else None, axis=1)
+    summary_df['Δ Abs']  = (last_valid - first_valid).round(4)
+    summary_df['Δ %']    = ((last_valid - first_valid) / first_valid.abs().replace(0, float('nan')) * 100).round(2)
+    summary_df['Max']    = summary_df[available_timepoints].max(axis=1).round(4)
+    summary_df['Min']    = summary_df[available_timepoints].min(axis=1).round(4)
+    summary_df['Range']  = (summary_df['Max'] - summary_df['Min']).round(4)
+
+    signals, momentums = [], []
+    for ind in summary_df.index:
+        fv, lv = first_valid[ind], last_valid[ind]
+        sig_text, sig_dot = _prediction_signal(ind, fv, lv)
+        signals.append(f"{sig_dot} {sig_text}")
+        av = [summary_df.loc[ind, tp] for tp in available_timepoints
+              if tp in summary_df.columns and pd.notna(summary_df.loc[ind, tp])]
+        momentums.append(_momentum_label(fv, lv, av) if len(av) >= 2 else '—')
+    summary_df['Signal']   = signals
+    summary_df['Momentum'] = momentums
+
+    tp_first = available_timepoints[0]
+    tp_last  = available_timepoints[-1]
+
+    st.markdown("---")
     st.markdown("#### 🔮 Indicator Prediction Table")
     st.caption(
-        f"**Δ = {tp_last} minus {tp_first}** (T-1 Open to Day Close). "
-        f"**Signal** = whether direction is historically bullish/bearish. "
+        f"**Δ = {tp_last} minus {tp_first}** · "
+        f"**Signal** = historically bullish/bearish direction · "
         f"**Momentum** = shape of move across all snapshots."
     )
 
@@ -649,10 +715,7 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         return 'color: #b8bcc8'
 
     show_cols = available_timepoints + ['Δ Abs', 'Δ %', 'Signal', 'Momentum', 'Range']
-    fmt = {
-        **{c: '{:.4f}' for c in available_timepoints},
-        'Δ Abs': '{:+.4f}', 'Δ %': '{:+.2f}%', 'Range': '{:.4f}',
-    }
+    fmt = {**{c: '{:.4f}' for c in available_timepoints}, 'Δ Abs': '{:+.4f}', 'Δ %': '{:+.2f}%', 'Range': '{:.4f}'}
     styled = (
         display_summary[show_cols]
         .style
@@ -666,9 +729,6 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
     if len(summary_df) > int(show_top):
         remaining = len(summary_df) - int(show_top)
         st.caption(f"Showing top {int(show_top)} of {len(summary_df)} indicators. Increase 'Show top N' to see {remaining} more.")
-
-    # ── Biggest Movers section REMOVED ────────────────────────────────────────
-    # (bar chart and metric cards removed per request)
 
 
 # ── Indicator snapshot — uses expanders instead of st.tabs to avoid
@@ -707,29 +767,41 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
     }
     bool_fields = {"ema20_above_ema50","ema50_above_ema200","price_above_ema20","ema10_above_ema20","sma50_above_sma200","doji","hammer","bullish_engulfing","gap_up","gap_down"}
 
-    # Use expanders instead of st.tabs() to avoid the .arrow_right SVG text artifact
-    for group_name, group_info in indicator_groups.items():
-        available = [f for f in group_info['fields'] if f in data_row.index and (f in bool_fields or pd.notna(data_row[f]))]
-        if not available:
-            continue
-        with st.expander(f"**{group_name}**", expanded=(group_name == "Price & OHLC")):
-            cols = st.columns(min(4, len(available)))
-            for j, field in enumerate(available):
-                with cols[j % 4]:
-                    value = data_row[field]
-                    label = group_info['labels'].get(field, field.replace(".", " ").replace("_", " ").upper())
-                    if field in bool_fields:
-                        display_val = "✅ Yes" if value else "❌ No"
-                    elif field == "volume":
-                        display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
-                    elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
-                        if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
-                        elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
-                        else:                        display_val = f"{value:.2f}"
-                    elif abs(value) >= 1000: display_val = f"{value:.2f}"
-                    elif abs(value) >= 1:    display_val = f"{value:.3f}"
-                    else:                    display_val = f"{value:.4f}"
-                    st.metric(label, display_val)
+    # Only show groups that have data
+    available_groups = {
+        name: info for name, info in indicator_groups.items()
+        if any(f in data_row.index and (f in bool_fields or pd.notna(data_row[f])) for f in info['fields'])
+    }
+
+    # Use st.radio (horizontal) instead of st.expander or st.tabs — avoids .arrow_right
+    group_choice = st.radio(
+        "Group:",
+        list(available_groups.keys()),
+        horizontal=True,
+        key=f"snap_group_{snapshot_type}_{title[:8]}",
+        label_visibility="collapsed",
+    )
+
+    group_info = available_groups[group_choice]
+    available  = [f for f in group_info['fields'] if f in data_row.index and (f in bool_fields or pd.notna(data_row[f]))]
+
+    cols = st.columns(min(4, len(available)))
+    for j, field in enumerate(available):
+        with cols[j % 4]:
+            value = data_row[field]
+            label = group_info['labels'].get(field, field.replace(".", " ").replace("_", " ").upper())
+            if field in bool_fields:
+                display_val = "✅ Yes" if value else "❌ No"
+            elif field == "volume":
+                display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
+            elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
+                if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
+                elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
+                else:                        display_val = f"{value:.2f}"
+            elif abs(value) >= 1000: display_val = f"{value:.2f}"
+            elif abs(value) >= 1:    display_val = f"{value:.3f}"
+            else:                    display_val = f"{value:.4f}"
+            st.metric(label, display_val)
 
 
 # ── Stock history (from ML predictions) ───────────────────────────────────────
@@ -888,7 +960,13 @@ def render_daily_winners_tab():
         st.info("Run `python daily_winners_main.py` to collect data.")
         return
 
-    with st.expander("🔍 Cross-Date Symbol Search", expanded=False):
+    # ── Cross-Date Symbol Search (button toggle — no st.expander to avoid .arrow_right) ──
+    _key_search = "search_open"
+    if _key_search not in st.session_state:
+        st.session_state[_key_search] = False
+    if st.button("🔍 Cross-Date Symbol Search", key="toggle_search"):
+        st.session_state[_key_search] = not st.session_state[_key_search]
+    if st.session_state[_key_search]:
         render_symbol_search(available_dates)
 
     st.markdown("---")
@@ -939,6 +1017,7 @@ def render_daily_winners_tab():
     col4.metric(
         "Avg Price", f"${winners_df['price'].mean():.2f}",
         delta=f"${winners_df['price'].mean() - prev_winners_df['price'].mean():+.2f} vs prev" if not prev_winners_df.empty else None,
+        delta_color="off",
     )
     col5.metric(
         "Avg Volume", f"{winners_df['volume'].mean()/1e6:.1f}M",
@@ -995,14 +1074,7 @@ def render_daily_winners_tab():
         day_prior_open_df, day_prior_close_df,
     )
 
-    # ── Indicator Timeline ────────────────────────────────────────────────────
-    render_indicator_timeline(
-        selected_symbol,
-        market_open_df, market_close_df,
-        day_prior_open_df, day_prior_close_df,
-    )
-
-    # ── Technical Indicator Snapshots — now directly after timeline ───────────
+    # ── Technical Indicator Snapshots — BEFORE indicator timeline ────────────
     st.markdown("---")
     st.markdown("### Technical Indicator Snapshots")
 
@@ -1018,22 +1090,43 @@ def render_daily_winners_tab():
         else:
             render_indicator_snapshot(rows.iloc[0], label, snap_type)
 
-    snapshot_tabs = st.tabs([
-        "📈 Day Prior Open",
-        "📊 Day Prior Close",
-        "🌅 Market Open",
-        "🌆 Market Close",
-    ])
-    with snapshot_tabs[0]:
+    # Use session_state-driven radio to pick snapshot — no st.tabs (causes .arrow_right)
+    snap_choice = st.radio(
+        "Timepoint:",
+        ["📈 Day Prior Open", "📊 Day Prior Close", "🌅 Market Open", "🌆 Market Close"],
+        horizontal=True,
+        key=f"snap_radio_{selected_symbol}",
+        label_visibility="collapsed",
+    )
+    if snap_choice == "📈 Day Prior Open":
         _show_snapshot(day_prior_open_df,  "Day Prior Open — T-1 9:30 AM",  'day_prior_open')
-    with snapshot_tabs[1]:
+    elif snap_choice == "📊 Day Prior Close":
         _show_snapshot(day_prior_close_df, "Day Prior Close — T-1 4:00 PM", 'day_prior_close')
-    with snapshot_tabs[2]:
+    elif snap_choice == "🌅 Market Open":
         _show_snapshot(market_open_df,     "Market Open — 9:30 AM",         'market_open')
-    with snapshot_tabs[3]:
+    else:
         _show_snapshot(market_close_df,    "Market Close — 4:00 PM",        'market_close')
 
-    # ── ML History ────────────────────────────────────────────────────────────
+    # ── Prediction Table — directly after snapshots ───────────────────────────
+    render_prediction_table(
+        selected_symbol,
+        market_open_df, market_close_df,
+        day_prior_open_df, day_prior_close_df,
+    )
+
+    # ── Indicator Timeline charts ─────────────────────────────────────────────
+    render_indicator_timeline(
+        selected_symbol,
+        market_open_df, market_close_df,
+        day_prior_open_df, day_prior_close_df,
+    )
+
+    # ── ML History (button toggle — no st.expander) ───────────────────────────
     st.markdown("---")
-    with st.expander(f"📊 Full ML History for {selected_symbol}", expanded=False):
+    _key_ml = f"ml_open_{selected_symbol}"
+    if _key_ml not in st.session_state:
+        st.session_state[_key_ml] = False
+    if st.button(f"📊 Full ML History for {selected_symbol}", key=f"toggle_ml_{selected_symbol}"):
+        st.session_state[_key_ml] = not st.session_state[_key_ml]
+    if st.session_state[_key_ml]:
         render_stock_history(selected_symbol)
