@@ -18,10 +18,10 @@ google-auth-httplib2>=0.1.1
 
 scipy>=1.17.0
 
-#Supabase
+# Supabase
 supabase>=1.26.01
 
-#matplotlib
+# matplotlib
 matplotlib>=3.10
 
 # HTTP requests (for GitHub API)
@@ -29,3 +29,6 @@ requests>=2.31.0
 
 # For making API calls to GitHub
 PyGithub>=2.1.0
+
+# Timezone support for correct EST market hours
+pytz>=2024.1
