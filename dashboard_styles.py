@@ -1,8 +1,15 @@
 """
-Dashboard UI Styles - Enhanced Terminal Aesthetic
-Drop-in replacement for dashboard_styles.py
-Usage: from dashboard_styles import DASHBOARD_CSS
-       st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
+dashboard_styles.py — Enhanced Terminal Aesthetic v2
+Improvements over v1:
+  - Slower, less distracting status dot animation
+  - .metric-sm class for dense 7-column rows
+  - Skeleton loading shimmer class
+  - Better button differentiation (refresh vs danger/clear)
+  - Reduced scanline/grid opacity for readability
+  - Improved tab indicator
+  - Better expander contrast
+  - Cross-symbol search bar styling
+  - Preset chip styling
 """
 
 DASHBOARD_CSS = """
@@ -46,19 +53,19 @@ DASHBOARD_CSS = """
     --shadow-sm:       0 2px 8px rgba(0,0,0,0.4);
     --shadow-md:       0 4px 20px rgba(0,0,0,0.5);
     --shadow-lg:       0 8px 40px rgba(0,0,0,0.6);
-    --glow-blue:       0 0 20px rgba(0, 212, 255, 0.15), 0 0 40px rgba(0, 212, 255, 0.05);
-    --glow-green:      0 0 20px rgba(0, 255, 136, 0.15), 0 0 40px rgba(0, 255, 136, 0.05);
-    --glow-red:        0 0 20px rgba(255, 56, 96, 0.15), 0 0 40px rgba(255, 56, 96, 0.05);
+    --glow-blue:       0 0 20px rgba(0, 212, 255, 0.12), 0 0 40px rgba(0, 212, 255, 0.04);
+    --glow-green:      0 0 20px rgba(0, 255, 136, 0.12), 0 0 40px rgba(0, 255, 136, 0.04);
+    --glow-red:        0 0 20px rgba(255, 56, 96, 0.12), 0 0 40px rgba(255, 56, 96, 0.04);
 }
 
 /* ── Animated Background ──────────────────────────────────────────────────── */
 .stApp {
     background-color: var(--bg-void) !important;
     background-image:
-        radial-gradient(ellipse 120% 80% at 10% -10%, rgba(0, 100, 200, 0.07) 0%, transparent 50%),
-        radial-gradient(ellipse 80% 60% at 90% 110%, rgba(0, 196, 150, 0.05) 0%, transparent 50%),
+        radial-gradient(ellipse 120% 80% at 10% -10%, rgba(0, 100, 200, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse 80% 60% at 90% 110%, rgba(0, 196, 150, 0.04) 0%, transparent 50%),
         radial-gradient(ellipse 60% 80% at 50% 50%, rgba(26, 140, 255, 0.02) 0%, transparent 60%);
-    animation: bgPulse 12s ease-in-out infinite alternate;
+    animation: bgPulse 16s ease-in-out infinite alternate;
     font-family: var(--font-mono);
 }
 
@@ -67,20 +74,20 @@ DASHBOARD_CSS = """
     100% { background-position: 5% 5%, 95% 95%, 52% 48%; }
 }
 
-/* Grid overlay */
+/* Grid overlay — subtler than v1 */
 .stApp::before {
     content: '';
     position: fixed;
     inset: 0;
     background-image:
-        linear-gradient(rgba(0, 212, 255, 0.015) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 212, 255, 0.015) 1px, transparent 1px);
-    background-size: 48px 48px;
+        linear-gradient(rgba(0, 212, 255, 0.008) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.008) 1px, transparent 1px);
+    background-size: 56px 56px;
     pointer-events: none;
     z-index: 0;
 }
 
-/* Scanline overlay */
+/* Scanline overlay — reduced opacity for readability */
 .stApp::after {
     content: '';
     position: fixed;
@@ -88,9 +95,9 @@ DASHBOARD_CSS = """
     background: repeating-linear-gradient(
         0deg,
         transparent,
-        transparent 2px,
-        rgba(0, 0, 0, 0.03) 2px,
-        rgba(0, 0, 0, 0.03) 4px
+        transparent 3px,
+        rgba(0, 0, 0, 0.015) 3px,
+        rgba(0, 0, 0, 0.015) 4px
     );
     pointer-events: none;
     z-index: 0;
@@ -100,12 +107,12 @@ DASHBOARD_CSS = """
 .main .block-container {
     padding-top: 1.5rem !important;
     padding-bottom: 3rem !important;
-    max-width: 1400px !important;
-    animation: containerReveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    max-width: 1440px !important;
+    animation: containerReveal 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes containerReveal {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(10px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -121,7 +128,7 @@ h1 {
     -webkit-text-fill-color: transparent !important;
     background-clip: text !important;
     text-shadow: none !important;
-    filter: drop-shadow(0 0 20px rgba(0, 212, 255, 0.3));
+    filter: drop-shadow(0 0 20px rgba(0, 212, 255, 0.25));
     position: relative;
 }
 
@@ -155,35 +162,32 @@ div[data-testid="metric-container"] {
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
     border: 1px solid var(--border-glass) !important;
-    border-top: 1px solid rgba(0, 212, 255, 0.12) !important;
+    border-top: 1px solid rgba(0, 212, 255, 0.1) !important;
     border-radius: 6px !important;
-    padding: 18px 20px 16px !important;  /* more vertical room */
+    padding: 16px 18px 14px !important;
     position: relative !important;
     overflow: hidden !important;
     transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
-    min-height: 100px !important;        /* ensures consistent card height */
+    min-height: 90px !important;
 }
 
-/* Top accent line */
 div[data-testid="metric-container"]::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--neon-primary), transparent);
-    opacity: 0.5;
+    opacity: 0.4;
     transition: opacity 0.2s;
 }
 
-/* Corner bracket decoration */
 div[data-testid="metric-container"]::after {
     content: '';
     position: absolute;
-    bottom: 6px; right: 8px;
-    width: 16px; height: 16px;
-    border-right: 1px solid rgba(0, 212, 255, 0.2);
-    border-bottom: 1px solid rgba(0, 212, 255, 0.2);
-    transition: opacity 0.2s;
+    bottom: 5px; right: 7px;
+    width: 14px; height: 14px;
+    border-right: 1px solid rgba(0, 212, 255, 0.18);
+    border-bottom: 1px solid rgba(0, 212, 255, 0.18);
 }
 
 div[data-testid="metric-container"]:hover {
@@ -192,9 +196,7 @@ div[data-testid="metric-container"]:hover {
     box-shadow: var(--glow-blue), var(--shadow-md) !important;
 }
 
-div[data-testid="metric-container"]:hover::before {
-    opacity: 1;
-}
+div[data-testid="metric-container"]:hover::before { opacity: 1; }
 
 div[data-testid="stMetricLabel"] > div {
     font-family: var(--font-mono) !important;
@@ -208,17 +210,16 @@ div[data-testid="stMetricLabel"] > div {
 
 div[data-testid="stMetricValue"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 2.1rem !important;       /* ↑ was 1.55rem — big, scannable */
+    font-size: 1.9rem !important;
     font-weight: 700 !important;
     color: var(--text-primary) !important;
     letter-spacing: -0.03em !important;
     line-height: 1.1 !important;
-    text-shadow: 0 0 30px rgba(226, 236, 248, 0.08) !important;
 }
 
 div[data-testid="stMetricDelta"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 0.78rem !important;      /* ↑ slightly bigger delta too */
+    font-size: 0.75rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.03em !important;
     margin-top: 2px !important;
@@ -226,8 +227,8 @@ div[data-testid="stMetricDelta"] > div {
 
 /* Green metrics */
 div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-testid="stMetricDeltaIcon-Up"]) {
-    border-top-color: rgba(0, 255, 136, 0.3) !important;
-    border-color: rgba(0, 255, 136, 0.1) !important;
+    border-top-color: rgba(0, 255, 136, 0.25) !important;
+    border-color: rgba(0, 255, 136, 0.08) !important;
 }
 div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-testid="stMetricDeltaIcon-Up"])::before {
     background: linear-gradient(90deg, transparent, var(--neon-secondary), transparent);
@@ -238,8 +239,8 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
 
 /* Red metrics */
 div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-testid="stMetricDeltaIcon-Down"]) {
-    border-top-color: rgba(255, 56, 96, 0.3) !important;
-    border-color: rgba(255, 56, 96, 0.1) !important;
+    border-top-color: rgba(255, 56, 96, 0.25) !important;
+    border-color: rgba(255, 56, 96, 0.08) !important;
 }
 div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-testid="stMetricDeltaIcon-Down"])::before {
     background: linear-gradient(90deg, transparent, var(--neon-red), transparent);
@@ -248,15 +249,27 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     box-shadow: var(--glow-red), var(--shadow-md) !important;
 }
 
+/* ── SMALL metric variant — for dense 7-col rows ──────────────────────────── */
+/* Usage: wrap columns in <div class="metrics-sm">…</div> */
+.metrics-sm div[data-testid="metric-container"] {
+    min-height: 68px !important;
+    padding: 10px 12px 8px !important;
+}
+.metrics-sm div[data-testid="stMetricValue"] > div {
+    font-size: 1.15rem !important;
+}
+.metrics-sm div[data-testid="stMetricLabel"] > div {
+    font-size: 0.52rem !important;
+}
+
 /* ── Tab Bar ──────────────────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: rgba(7, 12, 18, 0.8) !important;
+    background: rgba(7, 12, 18, 0.85) !important;
     backdrop-filter: blur(20px) !important;
     border-radius: 6px !important;
-    padding: 5px !important;
+    padding: 4px !important;
     gap: 2px !important;
     border: 1px solid var(--border-glass) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.02) !important;
 }
 
 .stTabs [data-baseweb="tab"] {
@@ -264,11 +277,11 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     border-radius: 4px !important;
     color: var(--text-muted) !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.72rem !important;
+    font-size: 0.7rem !important;
     font-weight: 500 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
-    padding: 8px 18px !important;
+    padding: 7px 16px !important;
     border: none !important;
     transition: color 0.15s ease, background 0.15s ease !important;
     position: relative !important;
@@ -280,11 +293,9 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
 }
 
 .stTabs [aria-selected="true"] {
-    background: rgba(0, 212, 255, 0.06) !important;
+    background: rgba(0, 212, 255, 0.07) !important;
     color: var(--neon-primary) !important;
-    box-shadow:
-        inset 0 0 0 1px rgba(0, 212, 255, 0.2),
-        0 0 12px rgba(0, 212, 255, 0.08) !important;
+    box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.2), 0 0 10px rgba(0, 212, 255, 0.06) !important;
 }
 
 .stTabs [aria-selected="true"]::after {
@@ -293,7 +304,7 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     bottom: 0; left: 15%; right: 15%;
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--neon-primary), transparent);
-    animation: tabGlow 0.3s ease forwards;
+    animation: tabGlow 0.25s ease forwards;
 }
 
 @keyframes tabGlow {
@@ -302,21 +313,21 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
 }
 
 .stTabs [data-baseweb="tab-panel"] {
-    padding-top: 24px !important;
+    padding-top: 20px !important;
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────────────── */
+/* ── Buttons — base ───────────────────────────────────────────────────────── */
 .stButton > button {
     background: rgba(10, 18, 28, 0.8) !important;
     color: var(--text-secondary) !important;
     border: 1px solid var(--border-glass) !important;
     border-radius: 4px !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.72rem !important;
+    font-size: 0.7rem !important;
     font-weight: 500 !important;
     letter-spacing: 0.1em !important;
     text-transform: uppercase !important;
-    padding: 8px 20px !important;
+    padding: 7px 18px !important;
     transition: all 0.2s ease !important;
     position: relative !important;
     overflow: hidden !important;
@@ -328,23 +339,47 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     position: absolute;
     top: 0; left: -100%;
     width: 100%; height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.06), transparent);
-    transition: left 0.4s ease;
+    background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.05), transparent);
+    transition: left 0.35s ease;
 }
 
-.stButton > button:hover::before {
-    left: 100%;
-}
+.stButton > button:hover::before { left: 100%; }
 
 .stButton > button:hover {
     color: var(--neon-primary) !important;
     border-color: var(--border-glow) !important;
-    box-shadow: 0 0 16px rgba(0, 212, 255, 0.12), var(--shadow-sm) !important;
+    box-shadow: 0 0 14px rgba(0, 212, 255, 0.1), var(--shadow-sm) !important;
     transform: translateY(-1px) !important;
 }
 
-.stButton > button:active {
-    transform: translateY(0) scale(0.99) !important;
+/* ── Refresh button — cyan accent ─────────────────────────────────────────── */
+/* Usage: wrap button in <div class="btn-refresh"> */
+.btn-refresh .stButton > button {
+    border-color: rgba(0, 212, 255, 0.3) !important;
+    color: var(--neon-primary) !important;
+}
+
+/* ── Clear Cache button — red danger styling ──────────────────────────────── */
+/* Usage: wrap button in <div class="btn-danger"> */
+.btn-danger .stButton > button {
+    border-color: rgba(255, 56, 96, 0.25) !important;
+    color: #ff6080 !important;
+    background: rgba(255, 56, 96, 0.04) !important;
+}
+.btn-danger .stButton > button:hover {
+    color: var(--neon-red) !important;
+    border-color: rgba(255, 56, 96, 0.5) !important;
+    box-shadow: 0 0 14px rgba(255, 56, 96, 0.15) !important;
+}
+
+/* ── Run / Action button — green accent ───────────────────────────────────── */
+.btn-action .stButton > button {
+    border-color: rgba(0, 255, 136, 0.25) !important;
+    color: var(--neon-secondary) !important;
+    background: rgba(0, 255, 136, 0.04) !important;
+}
+.btn-action .stButton > button:hover {
+    box-shadow: 0 0 14px rgba(0, 255, 136, 0.15) !important;
 }
 
 /* ── Selectbox ────────────────────────────────────────────────────────────── */
@@ -361,8 +396,8 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
 
 .stSelectbox > div > div:focus-within,
 .stSelectbox [data-baseweb="select"] > div:focus-within {
-    border-color: rgba(0, 212, 255, 0.4) !important;
-    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.08), 0 0 12px rgba(0, 212, 255, 0.08) !important;
+    border-color: rgba(0, 212, 255, 0.35) !important;
+    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.06), 0 0 10px rgba(0, 212, 255, 0.06) !important;
 }
 
 /* ── Dataframes / Tables ──────────────────────────────────────────────────── */
@@ -373,9 +408,7 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     box-shadow: var(--shadow-md) !important;
 }
 
-.stDataFrame iframe {
-    background: var(--bg-surface) !important;
-}
+.stDataFrame iframe { background: var(--bg-surface) !important; }
 
 /* ── Dividers ─────────────────────────────────────────────────────────────── */
 hr {
@@ -384,31 +417,26 @@ hr {
     background: linear-gradient(
         90deg,
         transparent 0%,
-        rgba(0, 212, 255, 0.2) 20%,
-        rgba(0, 212, 255, 0.4) 50%,
-        rgba(0, 212, 255, 0.2) 80%,
+        rgba(0, 212, 255, 0.15) 20%,
+        rgba(0, 212, 255, 0.35) 50%,
+        rgba(0, 212, 255, 0.15) 80%,
         transparent 100%
     ) !important;
-    margin: 28px 0 !important;
+    margin: 24px 0 !important;
     position: relative !important;
 }
-
 hr::after {
     content: '◆';
     position: absolute;
-    left: 50%;
-    top: 50%;
+    left: 50%; top: 50%;
     transform: translate(-50%, -50%);
-    color: rgba(0, 212, 255, 0.3);
+    color: rgba(0, 212, 255, 0.25);
     font-size: 6px;
     background: var(--bg-void);
     padding: 0 4px;
 }
 
 /* ── Expanders ────────────────────────────────────────────────────────────── */
-/* Streamlit renders expanders as divs, NOT native <details>/<summary>      */
-/* Correct selectors use data-testid attributes                              */
-
 div[data-testid="stExpander"] {
     background: var(--bg-glass) !important;
     backdrop-filter: blur(8px) !important;
@@ -418,35 +446,23 @@ div[data-testid="stExpander"] {
     transition: border-color 0.2s ease !important;
     margin-bottom: 8px !important;
 }
-
 div[data-testid="stExpander"]:hover {
-    border-color: rgba(0, 212, 255, 0.18) !important;
+    border-color: rgba(0, 212, 255, 0.16) !important;
 }
-
-/* The clickable header row */
 div[data-testid="stExpander"] > details > summary,
 div[data-testid="stExpander"] details summary {
     display: flex !important;
     flex-direction: row !important;
     align-items: center !important;
     gap: 10px !important;
-    padding: 12px 16px !important;
+    padding: 11px 15px !important;
     cursor: pointer !important;
     list-style: none !important;
     -webkit-appearance: none !important;
     background: transparent !important;
 }
-
-/* Hide the native disclosure triangle in all browsers */
-div[data-testid="stExpander"] details summary::-webkit-details-marker {
-    display: none !important;
-}
-div[data-testid="stExpander"] details summary::marker {
-    display: none !important;
-    content: '' !important;
-}
-
-/* The label text inside the header */
+div[data-testid="stExpander"] details summary::-webkit-details-marker { display: none !important; }
+div[data-testid="stExpander"] details summary::marker { display: none !important; content: '' !important; }
 div[data-testid="stExpanderDetails"],
 div[data-testid="stExpander"] details summary > div:not([data-testid="stExpanderToggleIcon"]),
 div[data-testid="stExpander"] details summary p,
@@ -460,8 +476,6 @@ div[data-testid="stExpander"] details summary span {
     margin: 0 !important;
     padding: 0 !important;
 }
-
-/* The arrow icon container — keep it sized, don't let font bleed in */
 div[data-testid="stExpanderToggleIcon"] {
     display: flex !important;
     align-items: center !important;
@@ -469,52 +483,42 @@ div[data-testid="stExpanderToggleIcon"] {
     flex-shrink: 0 !important;
     width: 18px !important;
     height: 18px !important;
-    font-size: 0 !important;      /* ← hides any leaked text/aria content */
+    font-size: 0 !important;
     line-height: 0 !important;
     overflow: hidden !important;
 }
-
 div[data-testid="stExpanderToggleIcon"] svg {
     width: 14px !important;
     height: 14px !important;
     color: var(--text-muted) !important;
-    transition: transform 0.25s ease, color 0.2s ease !important;
+    transition: transform 0.22s ease, color 0.18s ease !important;
     flex-shrink: 0 !important;
 }
-
 div[data-testid="stExpander"] details[open] div[data-testid="stExpanderToggleIcon"] svg {
     transform: rotate(90deg) !important;
     color: var(--neon-primary) !important;
 }
-
 div[data-testid="stExpander"] details summary:hover div[data-testid="stExpanderToggleIcon"] svg {
     color: var(--neon-primary) !important;
 }
+div[data-testid="stExpander"] details > div { padding: 4px 15px 14px !important; }
 
-/* Content padding */
-div[data-testid="stExpander"] details > div {
-    padding: 4px 16px 16px !important;
-}
-
-/* ── Alerts / Info boxes ──────────────────────────────────────────────────── */
+/* ── Alerts ───────────────────────────────────────────────────────────────── */
 .stAlert {
     border-radius: 6px !important;
     font-family: var(--font-mono) !important;
     font-size: 0.78rem !important;
     backdrop-filter: blur(8px) !important;
 }
-
 div[data-testid="stNotification"] {
     border-radius: 6px !important;
     font-family: var(--font-mono) !important;
     font-size: 0.78rem !important;
 }
-
-/* Info alert → cyan tint */
 div[data-baseweb="notification"][kind="info"],
 div[data-testid="stAlert"] {
-    background: rgba(0, 90, 140, 0.15) !important;
-    border: 1px solid rgba(0, 212, 255, 0.2) !important;
+    background: rgba(0, 90, 140, 0.12) !important;
+    border: 1px solid rgba(0, 212, 255, 0.18) !important;
 }
 
 /* ── Text inputs ──────────────────────────────────────────────────────────── */
@@ -529,43 +533,47 @@ div[data-testid="stAlert"] {
     font-size: 0.8rem !important;
     transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
-
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus,
 .stNumberInput > div > div > input:focus {
-    border-color: rgba(0, 212, 255, 0.4) !important;
-    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.08), 0 0 16px rgba(0, 212, 255, 0.06) !important;
+    border-color: rgba(0, 212, 255, 0.35) !important;
+    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.06), 0 0 14px rgba(0, 212, 255, 0.05) !important;
     outline: none !important;
 }
 
-/* ── Sliders ──────────────────────────────────────────────────────────────── */
-.stSlider > div > div > div {
-    background: rgba(0, 212, 255, 0.1) !important;
+/* ── Search bar — prominent variant ──────────────────────────────────────── */
+/* Usage: wrap in <div class="search-bar"> */
+.search-bar .stTextInput > div > div > input {
+    background: rgba(0, 212, 255, 0.04) !important;
+    border-color: rgba(0, 212, 255, 0.2) !important;
+    font-size: 0.9rem !important;
+    padding: 10px 14px !important;
+    letter-spacing: 0.05em !important;
+}
+.search-bar .stTextInput > div > div > input:focus {
+    border-color: rgba(0, 212, 255, 0.5) !important;
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.06), 0 0 20px rgba(0, 212, 255, 0.08) !important;
 }
 
+/* ── Sliders ──────────────────────────────────────────────────────────────── */
+.stSlider > div > div > div { background: rgba(0, 212, 255, 0.08) !important; }
 .stSlider > div > div > div > div {
     background: linear-gradient(90deg, var(--neon-primary), var(--neon-secondary)) !important;
 }
-
 .stSlider [role="slider"] {
     background: var(--neon-primary) !important;
     border: 2px solid var(--bg-base) !important;
-    box-shadow: 0 0 12px rgba(0, 212, 255, 0.5) !important;
-    transition: box-shadow 0.2s ease !important;
-}
-
-.stSlider [role="slider"]:hover {
-    box-shadow: 0 0 20px rgba(0, 212, 255, 0.8) !important;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.4) !important;
 }
 
 /* ── Multiselect tags ─────────────────────────────────────────────────────── */
 .stMultiSelect span[data-baseweb="tag"] {
-    background: rgba(0, 212, 255, 0.08) !important;
-    border: 1px solid rgba(0, 212, 255, 0.25) !important;
+    background: rgba(0, 212, 255, 0.07) !important;
+    border: 1px solid rgba(0, 212, 255, 0.22) !important;
     border-radius: 3px !important;
     color: var(--neon-primary) !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.68rem !important;
+    font-size: 0.66rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
@@ -577,30 +585,29 @@ div[data-testid="stAlert"] {
     border: 1px solid var(--border-glow) !important;
     color: var(--neon-primary) !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.7rem !important;
+    font-size: 0.68rem !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
     border-radius: 4px !important;
     transition: all 0.2s ease !important;
 }
-
 .stDownloadButton > button:hover {
-    background: rgba(0, 212, 255, 0.06) !important;
-    box-shadow: 0 0 16px rgba(0, 212, 255, 0.2) !important;
+    background: rgba(0, 212, 255, 0.05) !important;
+    box-shadow: 0 0 14px rgba(0, 212, 255, 0.18) !important;
     transform: translateY(-1px) !important;
 }
 
 /* ── Spinner ──────────────────────────────────────────────────────────────── */
 .stSpinner > div {
     border-top-color: var(--neon-primary) !important;
-    border-right-color: rgba(0, 212, 255, 0.3) !important;
+    border-right-color: rgba(0, 212, 255, 0.25) !important;
     border-bottom-color: transparent !important;
     border-left-color: transparent !important;
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: rgba(5, 10, 18, 0.95) !important;
+    background: rgba(5, 10, 18, 0.97) !important;
     border-right: 1px solid var(--border-glass) !important;
     backdrop-filter: blur(20px) !important;
 }
@@ -608,105 +615,119 @@ div[data-testid="stAlert"] {
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg-void); }
-::-webkit-scrollbar-thumb {
-    background: rgba(0, 212, 255, 0.2);
-    border-radius: 2px;
+::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.18); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 212, 255, 0.35); }
+
+/* ── Skeleton loader ──────────────────────────────────────────────────────── */
+/* Usage: st.markdown('<div class="skeleton" style="height:80px;"></div>', unsafe_allow_html=True) */
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        rgba(0, 212, 255, 0.03) 0%,
+        rgba(0, 212, 255, 0.07) 40%,
+        rgba(0, 212, 255, 0.03) 80%
+    );
+    background-size: 200% 100%;
+    animation: skeletonShimmer 1.6s ease-in-out infinite;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 212, 255, 0.06);
+    width: 100%;
 }
-::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 212, 255, 0.4);
-    box-shadow: 0 0 6px rgba(0, 212, 255, 0.4);
+@keyframes skeletonShimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.skeleton-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
 }
 
 /* ── Badge helper ─────────────────────────────────────────────────────────── */
 .badge {
     display: inline-block;
-    padding: 2px 10px;
+    padding: 2px 9px;
     border-radius: 2px;
     font-family: var(--font-mono);
-    font-size: 0.62rem;
+    font-size: 0.6rem;
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
 }
-.badge-green  {
-    background: rgba(0,255,136,0.06);
-    color: var(--neon-secondary);
-    border: 1px solid rgba(0,255,136,0.25);
-    box-shadow: 0 0 8px rgba(0,255,136,0.1);
-}
-.badge-amber  {
-    background: rgba(255,184,0,0.06);
-    color: var(--neon-amber);
-    border: 1px solid rgba(255,184,0,0.25);
-    box-shadow: 0 0 8px rgba(255,184,0,0.1);
-}
-.badge-red    {
-    background: rgba(255,56,96,0.06);
-    color: var(--neon-red);
-    border: 1px solid rgba(255,56,96,0.25);
-    box-shadow: 0 0 8px rgba(255,56,96,0.1);
-}
-.badge-blue   {
-    background: rgba(0,212,255,0.06);
-    color: var(--neon-primary);
-    border: 1px solid rgba(0,212,255,0.25);
-    box-shadow: 0 0 8px rgba(0,212,255,0.1);
-}
+.badge-green  { background: rgba(0,255,136,0.06); color: var(--neon-secondary); border: 1px solid rgba(0,255,136,0.22); }
+.badge-amber  { background: rgba(255,184,0,0.06);  color: var(--neon-amber);     border: 1px solid rgba(255,184,0,0.22); }
+.badge-red    { background: rgba(255,56,96,0.06);  color: var(--neon-red);       border: 1px solid rgba(255,56,96,0.22); }
+.badge-blue   { background: rgba(0,212,255,0.06);  color: var(--neon-primary);   border: 1px solid rgba(0,212,255,0.22); }
 
 /* ── Ticker pill ──────────────────────────────────────────────────────────── */
 .ticker {
     display: inline-block;
     padding: 2px 8px;
-    background: rgba(0, 212, 255, 0.06);
-    border: 1px solid rgba(0, 212, 255, 0.2);
+    background: rgba(0, 212, 255, 0.05);
+    border: 1px solid rgba(0, 212, 255, 0.18);
     border-radius: 3px;
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: var(--neon-primary);
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 
-/* ── Status / Caption text ────────────────────────────────────────────────── */
-.stCaption, small {
-    font-family: var(--font-mono) !important;
-    font-size: 0.68rem !important;
-    color: var(--text-muted) !important;
-    letter-spacing: 0.05em !important;
+/* ── Status indicator dot ─────────────────────────────────────────────────── */
+.status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    vertical-align: middle;
+}
+/* v2: slower pulse, higher min-opacity — less distracting */
+.status-dot.live    { background: var(--neon-secondary); box-shadow: 0 0 5px var(--neon-secondary); animation: statusPulse 4s ease-in-out infinite; }
+.status-dot.warning { background: var(--neon-amber);     box-shadow: 0 0 5px var(--neon-amber); }
+.status-dot.error   { background: var(--neon-red);       box-shadow: 0 0 5px var(--neon-red);   animation: statusPulse 2s ease-in-out infinite; }
+.status-dot.idle    { background: var(--text-muted); }
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1;   transform: scale(1); }
+    50%       { opacity: 0.7; transform: scale(0.85); }
 }
 
+/* ── Number highlight ─────────────────────────────────────────────────────── */
+.num          { font-family: var(--font-mono); font-weight: 600; font-size: 0.9rem; }
+.num.positive { color: var(--neon-secondary); text-shadow: 0 0 7px rgba(0,255,136,0.25); }
+.num.negative { color: var(--neon-red);       text-shadow: 0 0 7px rgba(255,56,96,0.25); }
+.num.neutral  { color: var(--neon-primary); }
+
 /* ── Section header with glow line ───────────────────────────────────────── */
-/* Usage: st.markdown('<div class="section-header">Title</div>', unsafe_allow_html=True) */
 .section-header {
     font-family: var(--font-display);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--text-muted);
-    padding: 4px 0 12px;
+    padding: 3px 0 11px;
     border-bottom: 1px solid var(--border-glass);
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     position: relative;
 }
 .section-header::after {
     content: '';
     position: absolute;
     bottom: 0; left: 0;
-    width: 40px; height: 1px;
+    width: 36px; height: 1px;
     background: var(--neon-primary);
-    box-shadow: 0 0 8px var(--neon-primary);
+    box-shadow: 0 0 7px var(--neon-primary);
 }
 
 /* ── Data card ────────────────────────────────────────────────────────────── */
-/* Usage: st.markdown('<div class="data-card">...</div>', unsafe_allow_html=True) */
 .data-card {
     background: var(--bg-glass);
     backdrop-filter: blur(12px);
     border: 1px solid var(--border-glass);
     border-radius: 6px;
-    padding: 16px 20px;
+    padding: 15px 18px;
     position: relative;
     overflow: hidden;
     transition: border-color 0.2s ease, transform 0.2s ease;
@@ -717,69 +738,73 @@ div[data-testid="stAlert"] {
     top: 0; left: 0; right: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--neon-primary), transparent);
-    opacity: 0.4;
+    opacity: 0.35;
 }
-.data-card:hover {
-    border-color: var(--border-glow);
-    transform: translateY(-2px);
-    box-shadow: var(--glow-blue);
+.data-card:hover { border-color: var(--border-glow); transform: translateY(-2px); box-shadow: var(--glow-blue); }
+
+/* ── Symbol search result card ────────────────────────────────────────────── */
+.search-result-card {
+    background: rgba(0, 212, 255, 0.03);
+    border: 1px solid rgba(0, 212, 255, 0.12);
+    border-left: 3px solid var(--neon-primary);
+    border-radius: 0 6px 6px 0;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-family: var(--font-mono);
 }
 
-/* ── Status indicator dot ─────────────────────────────────────────────────── */
-/* Usage: <span class="status-dot live"></span> */
-.status-dot {
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    margin-right: 6px;
-    vertical-align: middle;
+/* ── Preset chips ─────────────────────────────────────────────────────────── */
+.preset-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
 }
-.status-dot.live    { background: var(--neon-secondary); box-shadow: 0 0 6px var(--neon-secondary); animation: statusPulse 2s ease-in-out infinite; }
-.status-dot.warning { background: var(--neon-amber);     box-shadow: 0 0 6px var(--neon-amber); }
-.status-dot.error   { background: var(--neon-red);       box-shadow: 0 0 6px var(--neon-red); animation: statusPulse 1s ease-in-out infinite; }
-.status-dot.idle    { background: var(--text-muted); }
-
-@keyframes statusPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50%       { opacity: 0.5; transform: scale(0.8); }
+.chip {
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: rgba(0, 212, 255, 0.05);
+    border: 1px solid rgba(0, 212, 255, 0.18);
+    color: var(--text-secondary);
 }
-
-/* ── Number highlight ─────────────────────────────────────────────────────── */
-/* Usage: <span class="num positive">+12.4%</span> */
-.num          { font-family: var(--font-mono); font-weight: 600; font-size: 0.9rem; }
-.num.positive { color: var(--neon-secondary); text-shadow: 0 0 8px rgba(0,255,136,0.3); }
-.num.negative { color: var(--neon-red);       text-shadow: 0 0 8px rgba(255,56,96,0.3); }
-.num.neutral  { color: var(--neon-primary); }
+.chip:hover { background: rgba(0, 212, 255, 0.1); border-color: rgba(0, 212, 255, 0.35); color: var(--neon-primary); }
+.chip.active { background: rgba(0, 212, 255, 0.1); border-color: rgba(0, 212, 255, 0.4); color: var(--neon-primary); }
 
 /* ── Form submit ──────────────────────────────────────────────────────────── */
 .stFormSubmitButton > button {
-    background: rgba(0, 212, 255, 0.06) !important;
+    background: rgba(0, 212, 255, 0.05) !important;
     border: 1px solid var(--border-glow) !important;
     color: var(--neon-primary) !important;
     font-family: var(--font-mono) !important;
     font-weight: 600 !important;
-    font-size: 0.72rem !important;
+    font-size: 0.7rem !important;
     letter-spacing: 0.1em !important;
     text-transform: uppercase !important;
     border-radius: 4px !important;
     transition: all 0.2s ease !important;
 }
-
 .stFormSubmitButton > button:hover {
-    background: rgba(0, 212, 255, 0.12) !important;
-    box-shadow: 0 0 24px rgba(0, 212, 255, 0.2) !important;
+    background: rgba(0, 212, 255, 0.1) !important;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.18) !important;
     transform: translateY(-1px) !important;
 }
 
 /* ── Staggered entry animations ───────────────────────────────────────────── */
-.main .block-container > div > div:nth-child(1) { animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) 0.05s both; }
-.main .block-container > div > div:nth-child(2) { animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) 0.10s both; }
-.main .block-container > div > div:nth-child(3) { animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) 0.15s both; }
-.main .block-container > div > div:nth-child(4) { animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) 0.20s both; }
-.main .block-container > div > div:nth-child(5) { animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) 0.25s both; }
+.main .block-container > div > div:nth-child(1) { animation: slideIn 0.45s cubic-bezier(0.16,1,0.3,1) 0.04s both; }
+.main .block-container > div > div:nth-child(2) { animation: slideIn 0.45s cubic-bezier(0.16,1,0.3,1) 0.08s both; }
+.main .block-container > div > div:nth-child(3) { animation: slideIn 0.45s cubic-bezier(0.16,1,0.3,1) 0.12s both; }
+.main .block-container > div > div:nth-child(4) { animation: slideIn 0.45s cubic-bezier(0.16,1,0.3,1) 0.16s both; }
+.main .block-container > div > div:nth-child(5) { animation: slideIn 0.45s cubic-bezier(0.16,1,0.3,1) 0.20s both; }
 
 @keyframes slideIn {
-    from { opacity: 0; transform: translateY(16px); }
+    from { opacity: 0; transform: translateY(14px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -790,9 +815,7 @@ div[data-testid="stPlotlyChart"] {
     border: 1px solid var(--border-glass) !important;
     transition: border-color 0.2s ease !important;
 }
-div[data-testid="stPlotlyChart"]:hover {
-    border-color: rgba(0, 212, 255, 0.15) !important;
-}
+div[data-testid="stPlotlyChart"]:hover { border-color: rgba(0, 212, 255, 0.14) !important; }
 
 /* ── Number input ─────────────────────────────────────────────────────────── */
 .stNumberInput button {
@@ -801,15 +824,8 @@ div[data-testid="stPlotlyChart"]:hover {
     color: var(--text-secondary) !important;
 }
 .stNumberInput button:hover {
-    background: rgba(0, 212, 255, 0.08) !important;
+    background: rgba(0, 212, 255, 0.07) !important;
     color: var(--neon-primary) !important;
-}
-
-/* ── Warning / Error / Success ────────────────────────────────────────────── */
-div[data-testid="stAlert"][data-baseweb="notification"] {
-    font-family: var(--font-mono) !important;
-    font-size: 0.78rem !important;
-    border-radius: 6px !important;
 }
 
 /* ── Checkbox & Radio ─────────────────────────────────────────────────────── */
@@ -819,25 +835,46 @@ div[data-testid="stAlert"][data-baseweb="notification"] {
     color: var(--text-secondary) !important;
 }
 
-/* ── Toast notifications ──────────────────────────────────────────────────── */
-div[data-testid="toastContainer"] {
-    font-family: var(--font-mono) !important;
-    font-size: 0.78rem !important;
-}
-
 /* ── Progress bar ─────────────────────────────────────────────────────────── */
 div[data-testid="stProgressBar"] > div > div {
     background: linear-gradient(90deg, var(--neon-primary), var(--neon-secondary)) !important;
-    box-shadow: 0 0 8px rgba(0, 212, 255, 0.4) !important;
+    box-shadow: 0 0 7px rgba(0, 212, 255, 0.35) !important;
 }
 div[data-testid="stProgressBar"] > div {
-    background: rgba(0, 212, 255, 0.08) !important;
+    background: rgba(0, 212, 255, 0.07) !important;
     border-radius: 2px !important;
 }
 
-/* ── Column containers — subtle separator on hover ────────────────────────── */
+/* ── Warning banner for cache clear ──────────────────────────────────────── */
+.cache-warning {
+    background: rgba(255, 56, 96, 0.07);
+    border: 1px solid rgba(255, 56, 96, 0.25);
+    border-left: 3px solid var(--neon-red);
+    border-radius: 0 6px 6px 0;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: #ff8090;
+    margin-bottom: 10px;
+}
+
+/* ── Caption / small ──────────────────────────────────────────────────────── */
+.stCaption, small {
+    font-family: var(--font-mono) !important;
+    font-size: 0.67rem !important;
+    color: var(--text-muted) !important;
+    letter-spacing: 0.05em !important;
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────────── */
+div[data-testid="toastContainer"] {
+    font-family: var(--font-mono) !important;
+    font-size: 0.76rem !important;
+}
+
+/* ── Column containers ────────────────────────────────────────────────────── */
 [data-testid="column"]:has(div[data-testid="metric-container"]) {
-    transition: filter 0.2s ease;
+    transition: filter 0.18s ease;
 }
 
 </style>
