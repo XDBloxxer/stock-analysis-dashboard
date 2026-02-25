@@ -157,10 +157,11 @@ div[data-testid="metric-container"] {
     border: 1px solid var(--border-glass) !important;
     border-top: 1px solid rgba(0, 212, 255, 0.12) !important;
     border-radius: 6px !important;
-    padding: 16px 18px 14px !important;
+    padding: 18px 20px 16px !important;  /* more vertical room */
     position: relative !important;
     overflow: hidden !important;
     transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+    min-height: 100px !important;        /* ensures consistent card height */
 }
 
 /* Top accent line */
@@ -197,27 +198,30 @@ div[data-testid="metric-container"]:hover::before {
 
 div[data-testid="stMetricLabel"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 0.62rem !important;
+    font-size: 0.58rem !important;
     font-weight: 500 !important;
-    letter-spacing: 0.14em !important;
+    letter-spacing: 0.18em !important;
     text-transform: uppercase !important;
-    color: var(--text-secondary) !important;
+    color: var(--text-muted) !important;
+    margin-bottom: 4px !important;
 }
 
 div[data-testid="stMetricValue"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 1.55rem !important;
-    font-weight: 600 !important;
+    font-size: 2.1rem !important;       /* ↑ was 1.55rem — big, scannable */
+    font-weight: 700 !important;
     color: var(--text-primary) !important;
-    letter-spacing: -0.02em !important;
-    line-height: 1.2 !important;
+    letter-spacing: -0.03em !important;
+    line-height: 1.1 !important;
+    text-shadow: 0 0 30px rgba(226, 236, 248, 0.08) !important;
 }
 
 div[data-testid="stMetricDelta"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 0.72rem !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.04em !important;
+    font-size: 0.78rem !important;      /* ↑ slightly bigger delta too */
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    margin-top: 2px !important;
 }
 
 /* Green metrics */
@@ -415,17 +419,56 @@ hr::after {
     border-color: rgba(0, 212, 255, 0.15) !important;
 }
 
+/* Fix arrow + label overlap — force flex layout with a proper gap */
 .stExpander summary {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
     font-family: var(--font-mono) !important;
     font-size: 0.78rem !important;
     font-weight: 500 !important;
     color: var(--text-secondary) !important;
-    letter-spacing: 0.06em !important;
-    padding: 12px 16px !important;
+    letter-spacing: 0.04em !important;
+    padding: 13px 16px !important;
+    cursor: pointer !important;
+    list-style: none !important; /* removes default marker in some browsers */
+    user-select: none !important;
+}
+
+/* The chevron/arrow SVG that Streamlit injects */
+.stExpander summary svg {
+    flex-shrink: 0 !important;
+    width: 14px !important;
+    height: 14px !important;
+    color: var(--text-muted) !important;
+    transition: transform 0.2s ease, color 0.2s ease !important;
+}
+
+/* Rotate arrow when open */
+details[open] .stExpander summary svg,
+.stExpander details[open] > summary svg {
+    transform: rotate(90deg) !important;
+}
+
+/* The bold label text Streamlit wraps in a <p> or <span> inside summary */
+.stExpander summary p,
+.stExpander summary span,
+.stExpander summary > div {
+    margin: 0 !important;
+    padding: 0 !important;
+    font-family: var(--font-mono) !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    color: inherit !important;
+    line-height: 1.4 !important;
 }
 
 .stExpander summary:hover {
     color: var(--text-primary) !important;
+}
+
+.stExpander summary:hover svg {
+    color: var(--neon-primary) !important;
 }
 
 /* ── Alerts / Info boxes ──────────────────────────────────────────────────── */
