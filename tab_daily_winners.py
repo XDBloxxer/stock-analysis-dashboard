@@ -773,35 +773,31 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
         if any(f in data_row.index and (f in bool_fields or pd.notna(data_row[f])) for f in info['fields'])
     }
 
-    # Use st.radio (horizontal) instead of st.expander or st.tabs — avoids .arrow_right
-    group_choice = st.radio(
-        "Group:",
-        list(available_groups.keys()),
-        horizontal=True,
-        key=f"snap_group_{snapshot_type}_{title[:8]}",
-        label_visibility="collapsed",
-    )
-
-    group_info = available_groups[group_choice]
-    available  = [f for f in group_info['fields'] if f in data_row.index and (f in bool_fields or pd.notna(data_row[f]))]
-
-    cols = st.columns(min(4, len(available)))
-    for j, field in enumerate(available):
-        with cols[j % 4]:
-            value = data_row[field]
-            label = group_info['labels'].get(field, field.replace(".", " ").replace("_", " ").upper())
-            if field in bool_fields:
-                display_val = "✅ Yes" if value else "❌ No"
-            elif field == "volume":
-                display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
-            elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
-                if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
-                elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
-                else:                        display_val = f"{value:.2f}"
-            elif abs(value) >= 1000: display_val = f"{value:.2f}"
-            elif abs(value) >= 1:    display_val = f"{value:.3f}"
-            else:                    display_val = f"{value:.4f}"
-            st.metric(label, display_val)
+    # st.tabs for group — fast, no rerun on click
+    group_tabs = st.tabs(list(available_groups.keys()))
+    for tab_widget, (group_name, group_info) in zip(group_tabs, available_groups.items()):
+        with tab_widget:
+            available = [f for f in group_info['fields'] if f in data_row.index and (f in bool_fields or pd.notna(data_row[f]))]
+            if not available:
+                st.info(f"No {group_name} data available.")
+                continue
+            cols = st.columns(min(4, len(available)))
+            for j, field in enumerate(available):
+                with cols[j % 4]:
+                    value = data_row[field]
+                    label = group_info['labels'].get(field, field.replace(".", " ").replace("_", " ").upper())
+                    if field in bool_fields:
+                        display_val = "✅ Yes" if value else "❌ No"
+                    elif field == "volume":
+                        display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
+                    elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
+                        if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
+                        elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
+                        else:                        display_val = f"{value:.2f}"
+                    elif abs(value) >= 1000: display_val = f"{value:.2f}"
+                    elif abs(value) >= 1:    display_val = f"{value:.3f}"
+                    else:                    display_val = f"{value:.4f}"
+                    st.metric(label, display_val)
 
 
 # ── Stock history (from ML predictions) ───────────────────────────────────────
@@ -1014,11 +1010,12 @@ def render_daily_winners_tab():
         delta=f"{winners_df['change_pct'].mean() - prev_winners_df['change_pct'].mean():+.2f}% vs prev" if not prev_winners_df.empty else None,
     )
     col3.metric("Best Performer", f"{winners_df['change_pct'].max():.2f}%")
-    col4.metric(
-        "Avg Price", f"${winners_df['price'].mean():.2f}",
-        delta=f"${winners_df['price'].mean() - prev_winners_df['price'].mean():+.2f} vs prev" if not prev_winners_df.empty else None,
-        delta_color="off",
-    )
+    if not prev_winners_df.empty:
+        price_diff = winners_df['price'].mean() - prev_winners_df['price'].mean()
+        price_label = f"Avg Price  ({price_diff:+.2f} vs prev)"
+    else:
+        price_label = "Avg Price"
+    col4.metric(price_label, f"${winners_df['price'].mean():.2f}")
     col5.metric(
         "Avg Volume", f"{winners_df['volume'].mean()/1e6:.1f}M",
         delta=f"{(winners_df['volume'].mean() - prev_winners_df['volume'].mean())/1e6:+.1f}M vs prev" if not prev_winners_df.empty else None,
@@ -1090,21 +1087,20 @@ def render_daily_winners_tab():
         else:
             render_indicator_snapshot(rows.iloc[0], label, snap_type)
 
-    # Use session_state-driven radio to pick snapshot — no st.tabs (causes .arrow_right)
-    snap_choice = st.radio(
-        "Timepoint:",
-        ["📈 Day Prior Open", "📊 Day Prior Close", "🌅 Market Open", "🌆 Market Close"],
-        horizontal=True,
-        key=f"snap_radio_{selected_symbol}",
-        label_visibility="collapsed",
-    )
-    if snap_choice == "📈 Day Prior Open":
+    # st.tabs for timepoint — fast, no rerun, looks correct
+    snapshot_tabs = st.tabs([
+        "📈 Day Prior Open",
+        "📊 Day Prior Close",
+        "🌅 Market Open",
+        "🌆 Market Close",
+    ])
+    with snapshot_tabs[0]:
         _show_snapshot(day_prior_open_df,  "Day Prior Open — T-1 9:30 AM",  'day_prior_open')
-    elif snap_choice == "📊 Day Prior Close":
+    with snapshot_tabs[1]:
         _show_snapshot(day_prior_close_df, "Day Prior Close — T-1 4:00 PM", 'day_prior_close')
-    elif snap_choice == "🌅 Market Open":
+    with snapshot_tabs[2]:
         _show_snapshot(market_open_df,     "Market Open — 9:30 AM",         'market_open')
-    else:
+    with snapshot_tabs[3]:
         _show_snapshot(market_close_df,    "Market Close — 4:00 PM",        'market_close')
 
     # ── Prediction Table — directly after snapshots ───────────────────────────
