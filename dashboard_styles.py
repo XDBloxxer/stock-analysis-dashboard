@@ -147,7 +147,7 @@ h3 {
 
 p, li, span {
     font-family: var(--font-mono) !important;
-    font-size: 0.82rem !important;
+    font-size: 0.9rem !important;
 }
 
 /* ── Metric Cards ─────────────────────────────────────────────────────────── */
@@ -194,9 +194,9 @@ div[data-testid="metric-container"]:hover::before { opacity: 1; }
 
 div[data-testid="stMetricLabel"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 0.58rem !important;
+    font-size: 0.68rem !important;
     font-weight: 500 !important;
-    letter-spacing: 0.18em !important;
+    letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
     color: var(--text-muted) !important;
     margin-bottom: 4px !important;
@@ -204,7 +204,7 @@ div[data-testid="stMetricLabel"] > div {
 
 div[data-testid="stMetricValue"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 1.9rem !important;
+    font-size: 2.1rem !important;
     font-weight: 700 !important;
     color: var(--text-primary) !important;
     letter-spacing: -0.03em !important;
@@ -213,7 +213,7 @@ div[data-testid="stMetricValue"] > div {
 
 div[data-testid="stMetricDelta"] > div {
     font-family: var(--font-mono) !important;
-    font-size: 0.75rem !important;
+    font-size: 0.82rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.03em !important;
     margin-top: 2px !important;
@@ -249,10 +249,10 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     padding: 10px 12px 8px !important;
 }
 .metrics-sm div[data-testid="stMetricValue"] > div {
-    font-size: 1.15rem !important;
+    font-size: 1.35rem !important;
 }
 .metrics-sm div[data-testid="stMetricLabel"] > div {
-    font-size: 0.52rem !important;
+    font-size: 0.6rem !important;
 }
 
 /* ── Tab Bar ──────────────────────────────────────────────────────────────── */
@@ -381,7 +381,7 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     border-radius: 4px !important;
     color: var(--text-primary) !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.8rem !important;
+    font-size: 0.88rem !important;
     transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 
@@ -468,44 +468,32 @@ div[data-testid="stExpander"] details summary span {
     padding: 0 !important;
 }
 
-/* ── FIX: Suppress .arrow_right / raw SVG text from expander toggle icon ──── */
-/* Some Streamlit builds render the SVG icon name as visible text.             */
-/* We hide all text content inside the toggle wrapper, then restore the SVG.   */
+/* ── Expander toggle: nuke any leaked .arrow_right text, keep SVG ─────────── */
+/* Streamlit injects the SVG icon name as a text node in some builds.          */
+/* Strategy: hide everything inside the toggle div, un-hide only the SVG.      */
 div[data-testid="stExpanderToggleIcon"] {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    flex-shrink: 0 !important;
-    width: 18px !important;
-    height: 18px !important;
-    /* Zero out any leaked text */
     font-size: 0 !important;
     line-height: 0 !important;
     color: transparent !important;
+    display: flex !important;
+    align-items: center !important;
+    width: 18px !important;
+    height: 18px !important;
     overflow: hidden !important;
 }
-/* Hide any non-SVG child text nodes / spans */
-div[data-testid="stExpanderToggleIcon"] > *:not(svg),
-div[data-testid="stExpanderToggleIcon"] span,
-div[data-testid="stExpanderToggleIcon"] p,
-div[data-testid="stExpanderToggleIcon"] div:not(:has(svg)) {
-    display: none !important;
-    visibility: hidden !important;
-    width: 0 !important;
-    height: 0 !important;
-    overflow: hidden !important;
+div[data-testid="stExpanderToggleIcon"] * {
     font-size: 0 !important;
+    color: transparent !important;
 }
-/* Restore the actual SVG icon */
 div[data-testid="stExpanderToggleIcon"] svg {
-    display: block !important;
+    font-size: initial !important;
+    color: var(--text-muted) !important;
     width: 14px !important;
     height: 14px !important;
-    color: var(--text-muted) !important;
-    transition: transform 0.22s ease, color 0.18s ease !important;
-    flex-shrink: 0 !important;
-    font-size: initial !important;
+    display: block !important;
     visibility: visible !important;
+    flex-shrink: 0 !important;
+    transition: transform 0.22s ease, color 0.18s ease !important;
 }
 div[data-testid="stExpander"] details[open] div[data-testid="stExpanderToggleIcon"] svg {
     transform: rotate(90deg) !important;
@@ -543,7 +531,7 @@ div[data-testid="stAlert"] {
     border-radius: 4px !important;
     color: var(--text-primary) !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.8rem !important;
+    font-size: 0.88rem !important;
     transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 .stTextInput > div > div > input:focus,
@@ -871,7 +859,7 @@ div[data-testid="stProgressBar"] > div {
 /* ── Caption / small ──────────────────────────────────────────────────────── */
 .stCaption, small {
     font-family: var(--font-mono) !important;
-    font-size: 0.67rem !important;
+    font-size: 0.78rem !important;
     color: var(--text-muted) !important;
     letter-spacing: 0.05em !important;
 }
