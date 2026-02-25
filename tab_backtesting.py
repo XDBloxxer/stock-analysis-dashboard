@@ -442,7 +442,7 @@ def render_backtesting_tab():
                 strategy = strategies_df[strategies_df['id'] == selected_id].iloc[0]
 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("Period",      f"{strategy['start_date']} → {strategy['end_date']}")
+                col1.metric("Period",      f"{strategy['start_date']} to {strategy['end_date']}")
                 col2.metric("Target Gain", f"{strategy['target_min_gain_pct']}%")
                 col3.metric("Status",      strategy['run_status'])
 
@@ -681,7 +681,7 @@ def render_backtesting_tab():
                 with st.expander(f"{status_icon} **{row['name']}** — {row['run_status']}", expanded=False):
                     col1, col2, col3 = st.columns([2, 2, 1])
                     with col1:
-                        st.write(f"**Period:** {row['start_date']} → {row['end_date']}")
+                        st.write(f"**Period:** {row['start_date']} to {row['end_date']}")
                         st.write(f"**Target:** {row['target_min_gain_pct']}%")
                     with col2:
                         st.write(f"**Status:** {row['run_status']}")
