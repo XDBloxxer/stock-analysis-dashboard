@@ -113,7 +113,7 @@ DASHBOARD_CSS = """
 /* ── Typography ───────────────────────────────────────────────────────────── */
 h1 {
     font-family: var(--font-display) !important;
-    font-size: 1.6rem !important;
+    font-size: 2.4rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
@@ -128,26 +128,33 @@ h1 {
 
 h2 {
     font-family: var(--font-display) !important;
-    font-size: 1rem !important;
+    font-size: 1.5rem !important;
     font-weight: 600 !important;
-    letter-spacing: 0.12em !important;
+    letter-spacing: 0.10em !important;
     text-transform: uppercase !important;
     color: var(--neon-primary) !important;
 }
 
 h3 {
     font-family: var(--font-body) !important;
-    font-size: 0.95rem !important;
+    font-size: 1.25rem !important;
     font-weight: 600 !important;
-    letter-spacing: 0.05em !important;
+    letter-spacing: 0.04em !important;
     color: var(--text-primary) !important;
     padding-left: 10px !important;
     border-left: 2px solid var(--neon-primary) !important;
 }
 
-p, li, span {
+h4 {
+    font-family: var(--font-body) !important;
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    color: var(--text-secondary) !important;
+}
+
+p, li {
     font-family: var(--font-mono) !important;
-    font-size: 0.9rem !important;
+    font-size: 0.95rem !important;
 }
 
 /* ── Metric Cards ─────────────────────────────────────────────────────────── */
@@ -192,9 +199,11 @@ div[data-testid="metric-container"]:hover {
 
 div[data-testid="metric-container"]:hover::before { opacity: 1; }
 
-div[data-testid="stMetricLabel"] > div {
+div[data-testid="stMetricLabel"],
+div[data-testid="stMetricLabel"] > div,
+div[data-testid="stMetricLabel"] div {
     font-family: var(--font-mono) !important;
-    font-size: 0.68rem !important;
+    font-size: 0.72rem !important;
     font-weight: 500 !important;
     letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
@@ -202,7 +211,9 @@ div[data-testid="stMetricLabel"] > div {
     margin-bottom: 4px !important;
 }
 
-div[data-testid="stMetricValue"] > div {
+div[data-testid="stMetricValue"],
+div[data-testid="stMetricValue"] > div,
+div[data-testid="stMetricValue"] div {
     font-family: var(--font-mono) !important;
     font-size: 2.1rem !important;
     font-weight: 700 !important;
@@ -211,7 +222,9 @@ div[data-testid="stMetricValue"] > div {
     line-height: 1.1 !important;
 }
 
-div[data-testid="stMetricDelta"] > div {
+div[data-testid="stMetricDelta"],
+div[data-testid="stMetricDelta"] > div,
+div[data-testid="stMetricDelta"] div {
     font-family: var(--font-mono) !important;
     font-size: 0.82rem !important;
     font-weight: 600 !important;
@@ -270,9 +283,9 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     border-radius: 4px !important;
     color: var(--text-muted) !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.7rem !important;
+    font-size: 0.82rem !important;
     font-weight: 500 !important;
-    letter-spacing: 0.08em !important;
+    letter-spacing: 0.06em !important;
     text-transform: uppercase !important;
     padding: 7px 16px !important;
     border: none !important;
@@ -316,9 +329,9 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     border: 1px solid var(--border-glass) !important;
     border-radius: 4px !important;
     font-family: var(--font-mono) !important;
-    font-size: 0.7rem !important;
+    font-size: 0.82rem !important;
     font-weight: 500 !important;
-    letter-spacing: 0.1em !important;
+    letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
     padding: 7px 18px !important;
     transition: all 0.2s ease !important;
@@ -466,6 +479,19 @@ div[data-testid="stExpander"] details summary span {
     line-height: 1.4 !important;
     margin: 0 !important;
     padding: 0 !important;
+}
+
+/* ── Tab icon text leak fix (.arrow_right appearing in tabs) ─────────────── */
+/* Some Streamlit builds render the SVG icon name as a raw text node           */
+/* inside tab buttons. Zero out font on icon containers, restore SVG itself.   */
+.stTabs [data-baseweb="tab"] [data-testid="stIconMaterial"],
+.stTabs [data-baseweb="tab"] svg ~ span,
+.stTabs [data-baseweb="tab"] > span:last-child:not(:first-child) {
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
+    width: 0 !important;
+    overflow: hidden !important;
 }
 
 /* ── Expander toggle: nuke any leaked .arrow_right text, keep SVG ─────────── */
@@ -857,11 +883,13 @@ div[data-testid="stProgressBar"] > div {
 }
 
 /* ── Caption / small ──────────────────────────────────────────────────────── */
-.stCaption, small {
+.stCaption, small,
+div[data-testid="stCaptionContainer"],
+div[data-testid="stCaptionContainer"] p {
     font-family: var(--font-mono) !important;
-    font-size: 0.78rem !important;
+    font-size: 0.82rem !important;
     color: var(--text-muted) !important;
-    letter-spacing: 0.05em !important;
+    letter-spacing: 0.04em !important;
 }
 
 /* ── Toast ────────────────────────────────────────────────────────────────── */
