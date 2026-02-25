@@ -1103,13 +1103,6 @@ def render_daily_winners_tab():
     with snapshot_tabs[3]:
         _show_snapshot(market_close_df,    "Market Close — 4:00 PM",        'market_close')
 
-    # ── Prediction Table — directly after snapshots ───────────────────────────
-    render_prediction_table(
-        selected_symbol,
-        market_open_df, market_close_df,
-        day_prior_open_df, day_prior_close_df,
-    )
-
     # ── Indicator Timeline charts ─────────────────────────────────────────────
     render_indicator_timeline(
         selected_symbol,
@@ -1126,3 +1119,10 @@ def render_daily_winners_tab():
         st.session_state[_key_ml] = not st.session_state[_key_ml]
     if st.session_state[_key_ml]:
         render_stock_history(selected_symbol)
+
+    # ── Prediction Table — bottom of page ────────────────────────────────────
+    render_prediction_table(
+        selected_symbol,
+        market_open_df, market_close_df,
+        day_prior_open_df, day_prior_close_df,
+    )
