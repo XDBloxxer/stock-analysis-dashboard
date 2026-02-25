@@ -406,69 +406,94 @@ hr::after {
 }
 
 /* ── Expanders ────────────────────────────────────────────────────────────── */
-.stExpander {
+/* Streamlit renders expanders as divs, NOT native <details>/<summary>      */
+/* Correct selectors use data-testid attributes                              */
+
+div[data-testid="stExpander"] {
     background: var(--bg-glass) !important;
     backdrop-filter: blur(8px) !important;
     border: 1px solid var(--border-glass) !important;
     border-radius: 6px !important;
     overflow: hidden !important;
     transition: border-color 0.2s ease !important;
+    margin-bottom: 8px !important;
 }
 
-.stExpander:hover {
-    border-color: rgba(0, 212, 255, 0.15) !important;
+div[data-testid="stExpander"]:hover {
+    border-color: rgba(0, 212, 255, 0.18) !important;
 }
 
-/* Fix arrow + label overlap — force flex layout with a proper gap */
-.stExpander summary {
+/* The clickable header row */
+div[data-testid="stExpander"] > details > summary,
+div[data-testid="stExpander"] details summary {
     display: flex !important;
+    flex-direction: row !important;
     align-items: center !important;
     gap: 10px !important;
+    padding: 12px 16px !important;
+    cursor: pointer !important;
+    list-style: none !important;
+    -webkit-appearance: none !important;
+    background: transparent !important;
+}
+
+/* Hide the native disclosure triangle in all browsers */
+div[data-testid="stExpander"] details summary::-webkit-details-marker {
+    display: none !important;
+}
+div[data-testid="stExpander"] details summary::marker {
+    display: none !important;
+    content: '' !important;
+}
+
+/* The label text inside the header */
+div[data-testid="stExpanderDetails"],
+div[data-testid="stExpander"] details summary > div:not([data-testid="stExpanderToggleIcon"]),
+div[data-testid="stExpander"] details summary p,
+div[data-testid="stExpander"] details summary span {
     font-family: var(--font-mono) !important;
     font-size: 0.78rem !important;
     font-weight: 500 !important;
     color: var(--text-secondary) !important;
     letter-spacing: 0.04em !important;
-    padding: 13px 16px !important;
-    cursor: pointer !important;
-    list-style: none !important; /* removes default marker in some browsers */
-    user-select: none !important;
+    line-height: 1.4 !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
-/* The chevron/arrow SVG that Streamlit injects */
-.stExpander summary svg {
+/* The arrow icon container — keep it sized, don't let font bleed in */
+div[data-testid="stExpanderToggleIcon"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     flex-shrink: 0 !important;
+    width: 18px !important;
+    height: 18px !important;
+    font-size: 0 !important;      /* ← hides any leaked text/aria content */
+    line-height: 0 !important;
+    overflow: hidden !important;
+}
+
+div[data-testid="stExpanderToggleIcon"] svg {
     width: 14px !important;
     height: 14px !important;
     color: var(--text-muted) !important;
-    transition: transform 0.2s ease, color 0.2s ease !important;
+    transition: transform 0.25s ease, color 0.2s ease !important;
+    flex-shrink: 0 !important;
 }
 
-/* Rotate arrow when open */
-details[open] .stExpander summary svg,
-.stExpander details[open] > summary svg {
+div[data-testid="stExpander"] details[open] div[data-testid="stExpanderToggleIcon"] svg {
     transform: rotate(90deg) !important;
-}
-
-/* The bold label text Streamlit wraps in a <p> or <span> inside summary */
-.stExpander summary p,
-.stExpander summary span,
-.stExpander summary > div {
-    margin: 0 !important;
-    padding: 0 !important;
-    font-family: var(--font-mono) !important;
-    font-size: 0.78rem !important;
-    font-weight: 500 !important;
-    color: inherit !important;
-    line-height: 1.4 !important;
-}
-
-.stExpander summary:hover {
-    color: var(--text-primary) !important;
-}
-
-.stExpander summary:hover svg {
     color: var(--neon-primary) !important;
+}
+
+div[data-testid="stExpander"] details summary:hover div[data-testid="stExpanderToggleIcon"] svg {
+    color: var(--neon-primary) !important;
+}
+
+/* Content padding */
+div[data-testid="stExpander"] details > div {
+    padding: 4px 16px 16px !important;
 }
 
 /* ── Alerts / Info boxes ──────────────────────────────────────────────────── */
