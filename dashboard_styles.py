@@ -1,15 +1,9 @@
 """
-dashboard_styles.py — Enhanced Terminal Aesthetic v2
-Improvements over v1:
-  - Slower, less distracting status dot animation
-  - .metric-sm class for dense 7-column rows
-  - Skeleton loading shimmer class
-  - Better button differentiation (refresh vs danger/clear)
-  - Reduced scanline/grid opacity for readability
-  - Improved tab indicator
-  - Better expander contrast
-  - Cross-symbol search bar styling
-  - Preset chip styling
+dashboard_styles.py — Enhanced Terminal Aesthetic v3
+Changes v3:
+  - Added bulletproof CSS to suppress .arrow_right / raw SVG text that leaks
+    from stExpanderToggleIcon in certain Streamlit builds
+  - All other styles unchanged from v2
 """
 
 DASHBOARD_CSS = """
@@ -74,7 +68,7 @@ DASHBOARD_CSS = """
     100% { background-position: 5% 5%, 95% 95%, 52% 48%; }
 }
 
-/* Grid overlay — subtler than v1 */
+/* Grid overlay */
 .stApp::before {
     content: '';
     position: fixed;
@@ -87,7 +81,7 @@ DASHBOARD_CSS = """
     z-index: 0;
 }
 
-/* Scanline overlay — reduced opacity for readability */
+/* Scanline overlay */
 .stApp::after {
     content: '';
     position: fixed;
@@ -249,8 +243,7 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
     box-shadow: var(--glow-red), var(--shadow-md) !important;
 }
 
-/* ── SMALL metric variant — for dense 7-col rows ──────────────────────────── */
-/* Usage: wrap columns in <div class="metrics-sm">…</div> */
+/* ── SMALL metric variant ─────────────────────────────────────────────────── */
 .metrics-sm div[data-testid="metric-container"] {
     min-height: 68px !important;
     padding: 10px 12px 8px !important;
@@ -353,14 +346,12 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDelta"] svg[data-t
 }
 
 /* ── Refresh button — cyan accent ─────────────────────────────────────────── */
-/* Usage: wrap button in <div class="btn-refresh"> */
 .btn-refresh .stButton > button {
     border-color: rgba(0, 212, 255, 0.3) !important;
     color: var(--neon-primary) !important;
 }
 
-/* ── Clear Cache button — red danger styling ──────────────────────────────── */
-/* Usage: wrap button in <div class="btn-danger"> */
+/* ── Clear Cache button — red danger ──────────────────────────────────────── */
 .btn-danger .stButton > button {
     border-color: rgba(255, 56, 96, 0.25) !important;
     color: #ff6080 !important;
@@ -476,6 +467,10 @@ div[data-testid="stExpander"] details summary span {
     margin: 0 !important;
     padding: 0 !important;
 }
+
+/* ── FIX: Suppress .arrow_right / raw SVG text from expander toggle icon ──── */
+/* Some Streamlit builds render the SVG icon name as visible text.             */
+/* We hide all text content inside the toggle wrapper, then restore the SVG.   */
 div[data-testid="stExpanderToggleIcon"] {
     display: flex !important;
     align-items: center !important;
@@ -483,16 +478,34 @@ div[data-testid="stExpanderToggleIcon"] {
     flex-shrink: 0 !important;
     width: 18px !important;
     height: 18px !important;
+    /* Zero out any leaked text */
     font-size: 0 !important;
     line-height: 0 !important;
+    color: transparent !important;
     overflow: hidden !important;
 }
+/* Hide any non-SVG child text nodes / spans */
+div[data-testid="stExpanderToggleIcon"] > *:not(svg),
+div[data-testid="stExpanderToggleIcon"] span,
+div[data-testid="stExpanderToggleIcon"] p,
+div[data-testid="stExpanderToggleIcon"] div:not(:has(svg)) {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    font-size: 0 !important;
+}
+/* Restore the actual SVG icon */
 div[data-testid="stExpanderToggleIcon"] svg {
+    display: block !important;
     width: 14px !important;
     height: 14px !important;
     color: var(--text-muted) !important;
     transition: transform 0.22s ease, color 0.18s ease !important;
     flex-shrink: 0 !important;
+    font-size: initial !important;
+    visibility: visible !important;
 }
 div[data-testid="stExpander"] details[open] div[data-testid="stExpanderToggleIcon"] svg {
     transform: rotate(90deg) !important;
@@ -542,7 +555,6 @@ div[data-testid="stAlert"] {
 }
 
 /* ── Search bar — prominent variant ──────────────────────────────────────── */
-/* Usage: wrap in <div class="search-bar"> */
 .search-bar .stTextInput > div > div > input {
     background: rgba(0, 212, 255, 0.04) !important;
     border-color: rgba(0, 212, 255, 0.2) !important;
@@ -619,7 +631,6 @@ div[data-testid="stAlert"] {
 ::-webkit-scrollbar-thumb:hover { background: rgba(0, 212, 255, 0.35); }
 
 /* ── Skeleton loader ──────────────────────────────────────────────────────── */
-/* Usage: st.markdown('<div class="skeleton" style="height:80px;"></div>', unsafe_allow_html=True) */
 .skeleton {
     background: linear-gradient(
         90deg,
@@ -682,7 +693,6 @@ div[data-testid="stAlert"] {
     border-radius: 50%;
     vertical-align: middle;
 }
-/* v2: slower pulse, higher min-opacity — less distracting */
 .status-dot.live    { background: var(--neon-secondary); box-shadow: 0 0 5px var(--neon-secondary); animation: statusPulse 4s ease-in-out infinite; }
 .status-dot.warning { background: var(--neon-amber);     box-shadow: 0 0 5px var(--neon-amber); }
 .status-dot.error   { background: var(--neon-red);       box-shadow: 0 0 5px var(--neon-red);   animation: statusPulse 2s ease-in-out infinite; }
