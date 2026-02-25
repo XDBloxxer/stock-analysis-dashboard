@@ -1,20 +1,13 @@
 """
-Daily Winners Tab Module - st.cache_data PERSISTENT CACHE  (v2)
+Daily Winners Tab Module - st.cache_data PERSISTENT CACHE  (v3)
 
-NEW in v2:
-  - Cross-date symbol search bar (top of tab, skips date picker entirely)
-  - Delta comparisons on all summary metric cards (vs previous date)
-  - Indicator Timeline promoted ABOVE snapshot tabs (most useful feature first)
-  - Skeleton loading placeholders while data loads
-  - Refresh (cyan) / Clear Cache (red danger) button differentiation
-  - Cache-clear confirmation guard (shows warning, requires second click)
-  - Step-chart replaces misleading 4-bar candlestick for price journey
-  - Indicator preset chips (Momentum / Trend / Volume / Custom)
-  - Default show_top = 15 instead of 40
-  - Consolidated get_supabase_client from db.py
-
-CACHE STRATEGY: Unchanged — @st.cache_data on SERVER PROCESS, not session_state.
-All fetching methods are identical to v1.
+Changes v3:
+  - Removed "Biggest Movers" bar chart + metric cards from render_indicator_timeline
+  - Moved Technical Indicator Snapshots section to render immediately after
+    render_indicator_timeline (swapped order with the ML History expander)
+  - Fixed .arrow_right text artifact: replaced all uses of st.tabs() inside
+    render_indicator_snapshot with st.expander() to avoid the broken tab
+    icon rendering that showed raw SVG/text in certain Streamlit builds
 """
 
 import streamlit as st
@@ -211,11 +204,6 @@ def _skeleton_metrics(n: int = 5):
 
 
 def _render_cache_buttons(tab_id: str):
-    """
-    Renders Refresh (cyan) + Clear Cache (red danger) buttons.
-    Clear cache requires a second click (session_state confirmation guard).
-    Returns (refresh_clicked, clear_confirmed).
-    """
     confirm_key = f"{tab_id}_confirm_clear"
 
     col_r, col_c, col_spacer = st.columns([1, 1, 4])
@@ -287,7 +275,7 @@ def _momentum_label(val_first, val_last, available_vals) -> str:
     return '➡️ Steady'
 
 
-# ── Price Journey — step chart replaces misleading 4-bar candlestick ──────────
+# ── Price Journey ─────────────────────────────────────────────────────────────
 def render_price_journey(symbol: str, open_df, close_df, prior_open_df, prior_close_df):
     symbol = symbol.strip().upper()
 
@@ -321,34 +309,17 @@ def render_price_journey(symbol: str, open_df, close_df, prior_open_df, prior_cl
         highs.append(h)
         lows.append(l)
 
-    # Color segments by direction
-    seg_colors = []
-    for i in range(1, len(closes)):
-        prev = closes[i - 1]
-        curr = closes[i]
-        if prev is None or curr is None:
-            seg_colors.append(COLORS['primary'])
-        elif curr >= prev:
-            seg_colors.append(COLORS['secondary'])
-        else:
-            seg_colors.append(COLORS['red'])
-
     fig = go.Figure()
 
-    # High-low range bars
-    h_vals = [h for h in highs if h is not None]
-    l_vals = [l for l in lows if l is not None]
-    if h_vals and l_vals:
-        for i, (lbl, h, l) in enumerate(zip(labels, highs, lows)):
-            if h is not None and l is not None:
-                fig.add_shape(
-                    type="line",
-                    x0=lbl, x1=lbl, y0=l, y1=h,
-                    line=dict(color='rgba(0,212,255,0.25)', width=8),
-                    layer='below',
-                )
+    for i, (lbl, h, l) in enumerate(zip(labels, highs, lows)):
+        if h is not None and l is not None:
+            fig.add_shape(
+                type="line",
+                x0=lbl, x1=lbl, y0=l, y1=h,
+                line=dict(color='rgba(0,212,255,0.25)', width=8),
+                layer='below',
+            )
 
-    # Step-connected close line
     fig.add_trace(go.Scatter(
         x=labels, y=closes,
         mode='lines+markers',
@@ -364,7 +335,6 @@ def render_price_journey(symbol: str, open_df, close_df, prior_open_df, prior_cl
         hovertemplate='<b>%{x}</b><br>Close: $%{y:.2f}<extra></extra>',
     ))
 
-    # Direction annotations
     for i in range(1, len(closes)):
         if closes[i] is not None and closes[i - 1] is not None:
             delta = closes[i] - closes[i - 1]
@@ -423,7 +393,6 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         st.info("Need at least 2 timepoints with data to display the indicator timeline.")
         return
 
-    # Collect all numeric indicator columns
     all_numeric_cols = set()
     for lbl in available_timepoints:
         row = rows[lbl]
@@ -444,7 +413,6 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
 
     sorted_cols = sorted(all_numeric_cols)
 
-    # Build summary dataframe
     summary_data = {}
     for lbl in available_timepoints:
         row = rows[lbl]
@@ -514,7 +482,6 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
             st.session_state[preset_key] = "Custom"
             st.rerun()
 
-    # Determine defaults from preset
     active_preset = st.session_state[preset_key]
     if active_preset in INDICATOR_PRESETS:
         preset_defaults = [c for c in INDICATOR_PRESETS[active_preset] if c in summary_df.index]
@@ -632,7 +599,6 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
             key=f"summary_filter_{symbol}",
         )
     with col_top:
-        # Default 15 instead of 40
         show_top = st.number_input(
             "Show top N:", min_value=5, max_value=len(summary_df),
             value=min(15, len(summary_df)),
@@ -701,51 +667,12 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         remaining = len(summary_df) - int(show_top)
         st.caption(f"Showing top {int(show_top)} of {len(summary_df)} indicators. Increase 'Show top N' to see {remaining} more.")
 
-    # ── Top movers bar chart ────────────────────────────────────────────────────
-    st.markdown("#### 🏆 Biggest Movers (T-1 Open to Day Close)")
-    movers_df = summary_df[['Δ %', 'Δ Abs', 'Signal']].copy()
-    movers_df['_abs'] = movers_df['Δ %'].abs()
-    movers_df = movers_df[movers_df['_abs'].notna()].sort_values('_abs', ascending=False).head(10)
-
-    if not movers_df.empty:
-        bar_colors = []
-        for _, r in movers_df.iterrows():
-            if 'Bullish' in str(r['Signal']): bar_colors.append(COLORS['secondary'])
-            elif 'Bearish' in str(r['Signal']): bar_colors.append(COLORS['red'])
-            else: bar_colors.append(COLORS['primary'])
-
-        fig_bar = go.Figure(go.Bar(
-            x=movers_df.index.tolist(),
-            y=movers_df['Δ %'].tolist(),
-            marker_color=bar_colors,
-            text=[f"{v:+.2f}%" for v in movers_df['Δ %']],
-            textposition='outside',
-            hovertemplate='<b>%{x}</b><br>Δ: %{y:+.2f}%<extra></extra>',
-        ))
-        fig_bar.add_hline(y=0, line_color='rgba(255,255,255,0.12)', line_width=1)
-        fig_bar.update_layout(
-            xaxis_title="Indicator", yaxis_title="Delta % (T-1 Open to Day Close)",
-            height=320, showlegend=False, **LAYOUT,
-        )
-        fig_bar.update_xaxes(**AXIS_STYLE)
-        fig_bar.update_yaxes(**AXIS_STYLE)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-        movers_abs = summary_df[['Δ Abs', 'Δ %', 'Signal']].copy()
-        movers_abs['_abs'] = movers_abs['Δ Abs'].abs()
-        movers_abs = movers_abs[movers_abs['_abs'].notna()].sort_values('_abs', ascending=False).head(5)
-
-        metric_cols = st.columns(5)
-        for col_widget, (idx, row) in zip(metric_cols, movers_abs.iterrows()):
-            delta_pct = row['Δ %']
-            col_widget.metric(
-                label=idx,
-                value=f"{row['Δ Abs']:+.4f}",
-                delta=f"{delta_pct:+.2f}%" if pd.notna(delta_pct) else None,
-            )
+    # ── Biggest Movers section REMOVED ────────────────────────────────────────
+    # (bar chart and metric cards removed per request)
 
 
-# ── Indicator snapshot tabs (UNCHANGED) ───────────────────────────────────────
+# ── Indicator snapshot — uses expanders instead of st.tabs to avoid
+#    the .arrow_right text artifact from Streamlit's SVG tab icon ─────────────
 def render_indicator_snapshot(data_row, title, snapshot_type):
     st.markdown(f"**{title}**")
     price_field = 'open' if snapshot_type in ['market_open', 'day_prior_open'] else 'close'
@@ -780,13 +707,12 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
     }
     bool_fields = {"ema20_above_ema50","ema50_above_ema200","price_above_ema20","ema10_above_ema20","sma50_above_sma200","doji","hammer","bullish_engulfing","gap_up","gap_down"}
 
-    tabs = st.tabs(list(indicator_groups.keys()))
-    for i, (group_name, group_info) in enumerate(indicator_groups.items()):
-        with tabs[i]:
-            available = [f for f in group_info['fields'] if f in data_row.index and (f in bool_fields or pd.notna(data_row[f]))]
-            if not available:
-                st.info(f"No {group_name} indicators available")
-                continue
+    # Use expanders instead of st.tabs() to avoid the .arrow_right SVG text artifact
+    for group_name, group_info in indicator_groups.items():
+        available = [f for f in group_info['fields'] if f in data_row.index and (f in bool_fields or pd.notna(data_row[f]))]
+        if not available:
+            continue
+        with st.expander(f"**{group_name}**", expanded=(group_name == "Price & OHLC")):
             cols = st.columns(min(4, len(available)))
             for j, field in enumerate(available):
                 with cols[j % 4]:
@@ -806,7 +732,7 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     st.metric(label, display_val)
 
 
-# ── Stock history (from ML predictions) — UNCHANGED ───────────────────────────
+# ── Stock history (from ML predictions) ───────────────────────────────────────
 def render_stock_history(symbol: str):
     try:
         from tab_ml_predictions import _get_table_full as _ml_get
@@ -859,11 +785,6 @@ def render_stock_history(symbol: str):
 
 # ── Cross-date symbol search ───────────────────────────────────────────────────
 def render_symbol_search(available_dates: list[str]):
-    """
-    Global symbol search across all cached dates.
-    Shows every date a symbol appeared, with its change %, price, volume.
-    Zero extra DB calls — uses already-cached _get_table_for_date().
-    """
     st.markdown("### 🔍 Symbol Search  <span style='font-size:0.7rem;color:#3a5070;font-family:JetBrains Mono'>cross-date · no extra DB calls</span>", unsafe_allow_html=True)
 
     st.markdown('<div class="search-bar">', unsafe_allow_html=True)
@@ -917,7 +838,6 @@ def render_symbol_search(available_dates: list[str]):
     </div>
     """, unsafe_allow_html=True)
 
-    # Appearance frequency mini-chart
     if n > 1:
         fig = go.Figure(go.Bar(
             x=res_df['Date'].tolist(),
@@ -935,7 +855,6 @@ def render_symbol_search(available_dates: list[str]):
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
 
-    # Full results table
     st.dataframe(
         res_df.style.format({
             'Price ($)':  '${:.2f}',
@@ -952,7 +871,6 @@ def render_symbol_search(available_dates: list[str]):
 # ── Main entry point ───────────────────────────────────────────────────────────
 def render_daily_winners_tab():
 
-    # ── Cache control buttons ─────────────────────────────────────────────────
     refresh_clicked, clear_confirmed = _render_cache_buttons(TAB_ID)
 
     if clear_confirmed:
@@ -962,7 +880,6 @@ def render_daily_winners_tab():
         refresh_cache()
         st.rerun()
 
-    # ── Load dates ────────────────────────────────────────────────────────────
     available_dates = _get_all_dates()
 
     if not available_dates:
@@ -971,13 +888,11 @@ def render_daily_winners_tab():
         st.info("Run `python daily_winners_main.py` to collect data.")
         return
 
-    # ── Symbol search (cross-date, zero egress) ────────────────────────────────
     with st.expander("🔍 Cross-Date Symbol Search", expanded=False):
         render_symbol_search(available_dates)
 
     st.markdown("---")
 
-    # ── Date selector + day-of-week metric ────────────────────────────────────
     col1, col2 = st.columns([4, 1])
     with col1:
         selected_date = st.selectbox(
@@ -988,7 +903,6 @@ def render_daily_winners_tab():
     with col2:
         st.metric("Day of Week", datetime.fromisoformat(selected_date).strftime("%A"))
 
-    # ── Load all 5 tables for selected date ───────────────────────────────────
     winners_df         = _get_table_for_date("daily_winners",           selected_date)
     market_open_df     = _get_table_for_date("winners_market_open",     selected_date)
     market_close_df    = _get_table_for_date("winners_market_close",    selected_date)
@@ -1004,27 +918,18 @@ def render_daily_winners_tab():
         winners_df = winners_df.copy()
         winners_df['symbol'] = winners_df['symbol'].str.strip().str.upper()
 
-    # ── Summary metrics with delta vs previous date ────────────────────────────
     st.subheader(f"Top {len(winners_df)} Winners — {selected_date}")
 
-    # Compute deltas from previous date if available
     prev_winners_df = pd.DataFrame()
     date_idx = available_dates.index(selected_date)
     if date_idx + 1 < len(available_dates):
         prev_date = available_dates[date_idx + 1]
         prev_winners_df = _get_table_for_date("daily_winners", prev_date)
 
-    def _delta(current_val, prev_df, col, fmt=".2f"):
-        if prev_df.empty or col not in prev_df.columns:
-            return None
-        prev_val = prev_df[col].mean() if col in ['change_pct', 'price', 'volume'] else len(prev_df)
-        diff = current_val - prev_val
-        return f"{diff:+{fmt}}"
-
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric(
         "Total Winners", len(winners_df),
-        delta=_delta(len(winners_df), prev_winners_df, '__count__', '.0f') if not prev_winners_df.empty else None,
+        delta=f"{len(winners_df)-len(prev_winners_df):+.0f} vs prev" if not prev_winners_df.empty else None,
     )
     col2.metric(
         "Avg Change", f"{winners_df['change_pct'].mean():.2f}%",
@@ -1040,7 +945,6 @@ def render_daily_winners_tab():
         delta=f"{(winners_df['volume'].mean() - prev_winners_df['volume'].mean())/1e6:+.1f}M vs prev" if not prev_winners_df.empty else None,
     )
 
-    # ── Winners list ──────────────────────────────────────────────────────────
     st.markdown("### Winners List")
     display_df = (
         winners_df[['symbol', 'exchange', 'price', 'change_pct', 'volume']]
@@ -1069,7 +973,7 @@ def render_daily_winners_tab():
     selected_symbol = selected_symbol.strip().upper()
     winner_info     = winners_df[winners_df['symbol'] == selected_symbol].iloc[0]
 
-    # ── Stock detail metrics — small variant ──────────────────────────────────
+    # ── Stock detail metrics ──────────────────────────────────────────────────
     st.markdown('<div class="metrics-sm">', unsafe_allow_html=True)
     col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     col1.metric("Symbol", selected_symbol)
@@ -1091,23 +995,16 @@ def render_daily_winners_tab():
         day_prior_open_df, day_prior_close_df,
     )
 
-    # ── Indicator Timeline PROMOTED above snapshot tabs ────────────────────────
+    # ── Indicator Timeline ────────────────────────────────────────────────────
     render_indicator_timeline(
         selected_symbol,
         market_open_df, market_close_df,
         day_prior_open_df, day_prior_close_df,
     )
 
-    # ── Technical Indicator Snapshots ─────────────────────────────────────────
+    # ── Technical Indicator Snapshots — now directly after timeline ───────────
     st.markdown("---")
     st.markdown("### Technical Indicator Snapshots")
-
-    snapshot_tabs = st.tabs([
-        "📈 Day Prior Open (T-1 9:30 AM)",
-        "📊 Day Prior Close (T-1 4:00 PM)",
-        "🌅 Market Open (9:30 AM)",
-        "🌆 Market Close (4:00 PM)",
-    ])
 
     def _show_snapshot(df: pd.DataFrame, label: str, snap_type: str):
         if df.empty or 'symbol' not in df.columns:
@@ -1121,6 +1018,12 @@ def render_daily_winners_tab():
         else:
             render_indicator_snapshot(rows.iloc[0], label, snap_type)
 
+    snapshot_tabs = st.tabs([
+        "📈 Day Prior Open",
+        "📊 Day Prior Close",
+        "🌅 Market Open",
+        "🌆 Market Close",
+    ])
     with snapshot_tabs[0]:
         _show_snapshot(day_prior_open_df,  "Day Prior Open — T-1 9:30 AM",  'day_prior_open')
     with snapshot_tabs[1]:
