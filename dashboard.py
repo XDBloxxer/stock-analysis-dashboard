@@ -45,41 +45,38 @@ def main():
     else:
         dot_cls, label, color = "idle",    "Closed",      "var(--text-2)"
 
-    st.markdown(f"""
-    <div style="
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        padding-bottom: 20px;
-        border-bottom: 1px solid var(--border-mid);
-        margin-bottom: 22px;
-    ">
-        <div>
-            <div style="
-                font-family: 'DM Mono', monospace;
-                font-size: 0.52rem;
-                letter-spacing: 0.35em;
-                color: var(--cyan);
-                text-transform: uppercase;
-                margin-bottom: 7px;
-                opacity: 0.65;
-            ">Market Intelligence Terminal</div>
-            <h1 style="margin:0; line-height:0.9; letter-spacing:0.06em;">Stock Analysis</h1>
-        </div>
+    date_str = now.strftime("%a %d %b %Y")
+    time_str = now.strftime("%H:%M")
 
-        <div style="display:flex; align-items:center; gap:20px; padding-bottom:3px;">
-            <div style="text-align:right; line-height:1.7;">
-                <div style="font-family:'DM Mono',monospace; font-size:0.58rem; letter-spacing:0.12em; color:var(--text-2); text-transform:uppercase;">{now.strftime("%a %d %b %Y")}</div>
-                <div style="font-family:'DM Mono',monospace; font-size:1.1rem; font-weight:300; letter-spacing:0.06em; color:var(--text-1);">{now.strftime("%H:%M")}<span style="color:var(--text-2);font-size:0.65rem;"> ET</span></div>
-            </div>
-            <div style="width:1px; height:36px; background:var(--border-mid);"></div>
-            <div style="display:flex; align-items:center; gap:8px; padding:8px 16px; background:var(--bg-2); border:1px solid var(--border-mid); border-radius:var(--radius-sm);">
-                <span class="status-dot {dot_cls}"></span>
-                <span style="font-family:'DM Mono',monospace; font-size:0.62rem; letter-spacing:0.18em; text-transform:uppercase; color:{color};">{label}</span>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # ── Header — use columns to avoid Streamlit's nested-div rendering bug ────
+    col_left, col_right = st.columns([3, 2])
+
+    with col_left:
+        st.markdown(
+            '<div style="font-family:\'DM Mono\',monospace;font-size:0.52rem;letter-spacing:0.35em;'
+            'color:var(--cyan);text-transform:uppercase;opacity:0.65;margin-bottom:6px;">'
+            'Market Intelligence Terminal</div>'
+            '<h1 style="margin:0;line-height:0.9;letter-spacing:0.06em;">Stock Analysis</h1>',
+            unsafe_allow_html=True,
+        )
+
+    with col_right:
+        st.markdown(
+            '<div style="display:flex;align-items:center;justify-content:flex-end;gap:16px;padding-top:6px;">'
+            '<div style="text-align:right;">'
+            f'<div style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.12em;color:var(--text-2);text-transform:uppercase;">{date_str}</div>'
+            f'<div style="font-family:\'DM Mono\',monospace;font-size:1.05rem;font-weight:300;color:var(--text-1);">{time_str} <span style="font-size:0.6rem;color:var(--text-2);">ET</span></div>'
+            '</div>'
+            '<div style="width:1px;height:32px;background:var(--border-mid);flex-shrink:0;"></div>'
+            f'<div style="display:flex;align-items:center;gap:8px;padding:7px 14px;background:var(--bg-2);border:1px solid var(--border-mid);border-radius:var(--radius-sm);white-space:nowrap;">'
+            f'<span class="status-dot {dot_cls}"></span>'
+            f'<span style="font-family:\'DM Mono\',monospace;font-size:0.62rem;letter-spacing:0.18em;text-transform:uppercase;color:{color};">{label}</span>'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<hr style="margin:16px 0 22px;">', unsafe_allow_html=True)
 
     # ── Credential check ──────────────────────────────────────────────────────
     if not st.secrets.get("supabase", {}).get("url") or not st.secrets.get("supabase", {}).get("key"):
