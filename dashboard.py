@@ -68,36 +68,14 @@ def main():
         </div>
 
         <div style="display:flex; align-items:center; gap:20px; padding-bottom:3px;">
-
-            <!-- Live clock / date -->
             <div style="text-align:right; line-height:1.7;">
-                <div style="
-                    font-family:'DM Mono',monospace; font-size:0.58rem;
-                    letter-spacing:0.12em; color:var(--text-2); text-transform:uppercase;
-                ">{now.strftime("%a %d %b %Y")}</div>
-                <div style="
-                    font-family:'DM Mono',monospace; font-size:1.1rem;
-                    font-weight:300; letter-spacing:0.06em; color:var(--text-1);
-                ">{now.strftime("%H:%M")}<span style="color:var(--text-2);font-size:0.65rem;"> ET</span></div>
+                <div style="font-family:'DM Mono',monospace; font-size:0.58rem; letter-spacing:0.12em; color:var(--text-2); text-transform:uppercase;">{now.strftime("%a %d %b %Y")}</div>
+                <div style="font-family:'DM Mono',monospace; font-size:1.1rem; font-weight:300; letter-spacing:0.06em; color:var(--text-1);">{now.strftime("%H:%M")}<span style="color:var(--text-2);font-size:0.65rem;"> ET</span></div>
             </div>
-
-            <!-- Divider -->
             <div style="width:1px; height:36px; background:var(--border-mid);"></div>
-
-            <!-- Market status pill -->
-            <div style="
-                display:flex; align-items:center; gap:8px;
-                padding: 8px 16px;
-                background: var(--bg-2);
-                border: 1px solid var(--border-mid);
-                border-radius: var(--radius-sm);
-            ">
+            <div style="display:flex; align-items:center; gap:8px; padding:8px 16px; background:var(--bg-2); border:1px solid var(--border-mid); border-radius:var(--radius-sm);">
                 <span class="status-dot {dot_cls}"></span>
-                <span style="
-                    font-family:'DM Mono',monospace;
-                    font-size:0.62rem; letter-spacing:0.18em;
-                    text-transform:uppercase; color:{color};
-                ">{label}</span>
+                <span style="font-family:'DM Mono',monospace; font-size:0.62rem; letter-spacing:0.18em; text-transform:uppercase; color:{color};">{label}</span>
             </div>
         </div>
     </div>
