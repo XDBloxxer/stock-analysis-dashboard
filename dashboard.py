@@ -1,10 +1,8 @@
 """
 Main Dashboard - 3 TABS
-Communicates with tradingview-analysis repo via GitHub Actions + Supabase
 """
 
 import streamlit as st
-import os
 from datetime import datetime
 
 try:
@@ -28,81 +26,77 @@ st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
-    # ── Header ────────────────────────────────────────────────────────────────
     now    = _now_et()
-    now_et = _now_et()
-    hour, minute = now_et.hour, now_et.minute
-    is_weekday   = now_et.weekday() < 5
+    hour   = now.hour
+    minute = now.minute
+    is_weekday   = now.weekday() < 5
     after_open   = (hour > 9) or (hour == 9 and minute >= 30)
     before_close = hour < 16
     market_open  = is_weekday and after_open and before_close
-    pre_market   = is_weekday and ((hour >= 4 and hour < 9) or (hour == 9 and minute < 30))
+    pre_market   = is_weekday and ((4 <= hour < 9) or (hour == 9 and minute < 30))
     after_hours  = is_weekday and (16 <= hour < 20)
 
     if market_open:
-        dot_cls, label, color = "live",    "Open",         "var(--green)"
+        dot_cls, label, color = "live",    "Open",        "var(--green-bright)"
     elif pre_market:
-        dot_cls, label, color = "warning", "Pre-Market",   "var(--amber)"
+        dot_cls, label, color = "warning", "Pre-Market",  "var(--amber-bright)"
     elif after_hours:
-        dot_cls, label, color = "warning", "After Hours",  "var(--amber)"
+        dot_cls, label, color = "warning", "After Hours", "var(--amber-bright)"
     else:
-        dot_cls, label, color = "idle",    "Closed",       "var(--text-2)"
+        dot_cls, label, color = "idle",    "Closed",      "var(--text-2)"
 
     st.markdown(f"""
     <div style="
         display: flex;
         align-items: flex-end;
         justify-content: space-between;
-        padding-bottom: 18px;
-        border-bottom: 1px solid var(--border);
-        margin-bottom: 20px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--border-mid);
+        margin-bottom: 22px;
     ">
         <div>
             <div style="
                 font-family: 'DM Mono', monospace;
-                font-size: 0.55rem;
-                letter-spacing: 0.3em;
+                font-size: 0.52rem;
+                letter-spacing: 0.35em;
                 color: var(--cyan);
                 text-transform: uppercase;
-                margin-bottom: 6px;
-                opacity: 0.7;
-            ">Market Intelligence</div>
-            <h1 style="margin:0; line-height:0.9;">Stock Analysis</h1>
+                margin-bottom: 7px;
+                opacity: 0.65;
+            ">Market Intelligence Terminal</div>
+            <h1 style="margin:0; line-height:0.9; letter-spacing:0.06em;">Stock Analysis</h1>
         </div>
-        <div style="
-            display: flex;
-            align-items: center;
-            gap: 24px;
-            padding-bottom: 4px;
-        ">
-            <div style="
-                font-family: 'DM Mono', monospace;
-                font-size: 0.62rem;
-                letter-spacing: 0.1em;
-                color: var(--text-2);
-                text-align: right;
-                line-height: 1.6;
-            ">
-                <div>{now.strftime("%a %d %b %Y")}</div>
-                <div style="font-size:0.75rem; color:var(--text-1);">{now.strftime("%H:%M")} ET</div>
+
+        <div style="display:flex; align-items:center; gap:20px; padding-bottom:3px;">
+
+            <!-- Live clock / date -->
+            <div style="text-align:right; line-height:1.7;">
+                <div style="
+                    font-family:'DM Mono',monospace; font-size:0.58rem;
+                    letter-spacing:0.12em; color:var(--text-2); text-transform:uppercase;
+                ">{now.strftime("%a %d %b %Y")}</div>
+                <div style="
+                    font-family:'DM Mono',monospace; font-size:1.1rem;
+                    font-weight:300; letter-spacing:0.06em; color:var(--text-1);
+                ">{now.strftime("%H:%M")}<span style="color:var(--text-2);font-size:0.65rem;"> ET</span></div>
             </div>
+
+            <!-- Divider -->
+            <div style="width:1px; height:36px; background:var(--border-mid);"></div>
+
+            <!-- Market status pill -->
             <div style="
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                padding: 8px 14px;
+                display:flex; align-items:center; gap:8px;
+                padding: 8px 16px;
                 background: var(--bg-2);
                 border: 1px solid var(--border-mid);
                 border-radius: var(--radius-sm);
-                min-width: 110px;
             ">
                 <span class="status-dot {dot_cls}"></span>
                 <span style="
-                    font-family: 'DM Mono', monospace;
-                    font-size: 0.62rem;
-                    letter-spacing: 0.14em;
-                    text-transform: uppercase;
-                    color: {color};
+                    font-family:'DM Mono',monospace;
+                    font-size:0.62rem; letter-spacing:0.18em;
+                    text-transform:uppercase; color:{color};
                 ">{label}</span>
             </div>
         </div>
@@ -125,7 +119,6 @@ def main():
         from tab_backtesting     import render_backtesting_tab
     except ImportError as e:
         st.error(f"Error importing tab modules: {e}")
-        st.info("Make sure all dashboard files are in the same directory")
         st.stop()
 
     tab1, tab2, tab3 = st.tabs([
@@ -134,12 +127,9 @@ def main():
         "Strategy Backtesting",
     ])
 
-    with tab1:
-        render_daily_winners_tab()
-    with tab2:
-        render_ml_predictions_tab()
-    with tab3:
-        render_backtesting_tab()
+    with tab1: render_daily_winners_tab()
+    with tab2: render_ml_predictions_tab()
+    with tab3: render_backtesting_tab()
 
 
 if __name__ == "__main__":
