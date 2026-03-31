@@ -634,36 +634,11 @@ def _render_latest_predictions():
         st.warning("No stocks match the filters.")
         return
 
-    # ── Toggle: static table vs live market view ───────────────────────────────
-    view_key = f"{TAB_ID}_live_view"
-    if view_key not in st.session_state:
-        st.session_state[view_key] = True   # default to live view
+    # ── View switcher — tab-style, instant, no rerun ──────────────────────────
+    view_tab_static, view_tab_live = st.tabs(["🗃 Predictions Table", "📡 Live Market View"])
 
-    col_tog1, col_tog2, _ = st.columns([1, 1, 5])
-    with col_tog1:
-        if st.button(
-            "📊 Live Market View" if not st.session_state[view_key] else "✓ Live Market View",
-            key=f"{TAB_ID}_tog_live",
-            use_container_width=True,
-        ):
-            st.session_state[view_key] = True
-            st.rerun()
-    with col_tog2:
-        if st.button(
-            "🗃 Static Table" if st.session_state[view_key] else "✓ Static Table",
-            key=f"{TAB_ID}_tog_static",
-            use_container_width=True,
-        ):
-            st.session_state[view_key] = False
-            st.rerun()
-
-    st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
-
-    if st.session_state[view_key]:
-        # ── Live Market Table — all stocks, inline ─────────────────────────────
-        _render_live_market_table(fdf)
-    else:
-        # ── Original static dataframe table ───────────────────────────────────
+    with view_tab_static:
+        # ── Original static dataframe table (default) ──────────────────────────
         fdf_display = fdf.copy()
         fdf_display["explosion_probability"] = fdf_display["explosion_probability"] * 100
 
@@ -699,6 +674,10 @@ def _render_latest_predictions():
             "text/csv",
             key=f"{TAB_ID}_dl",
         )
+
+    with view_tab_live:
+        # ── Live Market Table — all stocks, inline ─────────────────────────────
+        _render_live_market_table(fdf)
 
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
