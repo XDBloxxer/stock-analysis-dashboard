@@ -1,18 +1,19 @@
 """
-ML Predictions Tab - st.cache_data PERSISTENT CACHE  (v3)
+ML Predictions Tab - st.cache_data PERSISTENT CACHE  (v4)
 
-Changes v3:
-  - Cleaned up layout and visual hierarchy throughout all sub-tabs
-  - Removed dead confusion matrix code (fig was created but never rendered)
-  - Win-rate bars replaced with a cleaner metric row
-  - Filter controls grouped into a tighter expander
-  - Performance Trends: removed redundant daily summary table
-  - System Info: tighter spacing, cleaner funnel section
+Changes v4:
+  - Added TradingView quick-view panel to Latest Predictions sub-tab:
+      • Selectbox below the predictions table lets user pick any predicted symbol
+      • Live price panel fetches real-time data via yfinance (TTL=60s cache,
+        completely separate from the persistent Supabase cache)
+      • Shows: live price, day high %, intraday change, prediction price,
+        target gain, and a one-click TradingView button that opens in new tab
+      • Exchange → TradingView prefix mapping handles NASDAQ / NYSE / AMEX /
+        NYSE ARCA / BATS / OTC variants automatically
+      • yfinance import is guarded — if not installed the panel shows a warning
+        instead of crashing the whole tab
 
-CACHE STRATEGY: UNCHANGED — all fetching methods identical to v1/v2.
-
-EXPORTED for use by tab_daily_winners.render_stock_history:
-  _get_table_full(table_name) → pd.DataFrame
+CACHE STRATEGY: UNCHANGED from v3 — all Supabase fetching methods identical.
 """
 
 import streamlit as st
@@ -54,6 +55,166 @@ _SELECT = {
 
 _ALL_TABLES = list(_DATE_COL.keys())
 
+# ── TradingView exchange prefix mapping ───────────────────────────────────────
+# Maps the exchange values stored in your DB to the TradingView symbol prefix.
+# TradingView URLs look like: https://www.tradingview.com/chart/?symbol=NASDAQ:AAPL
+_TV_EXCHANGE_MAP = {
+    "NASDAQ":    "NASDAQ",
+    "NYSE":      "NYSE",
+    "AMEX":      "AMEX",
+    "NYSE ARCA": "AMEX",   # TradingView uses AMEX for NYSE Arca ETFs
+    "NYSEARCA":  "AMEX",
+    "BATS":      "BATS",
+    "OTC":       "OTC",
+    "OTCMKTS":   "OTC",
+    "OTCBB":     "OTC",
+}
+
+def _tv_url(symbol: str, exchange: str) -> str:
+    """Build a TradingView chart URL for the given symbol + exchange."""
+    prefix = _TV_EXCHANGE_MAP.get(str(exchange).strip().upper(), "NASDAQ")
+    return f"https://www.tradingview.com/chart/?symbol={prefix}:{symbol.upper()}"
+
+
+# ── Live price fetch (short TTL — totally separate from Supabase cache) ───────
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_live_quote(symbol: str) -> dict | None:
+    """
+    Fetch a lightweight live quote via yfinance.fast_info.
+    TTL=60s so data refreshes every minute without hammering Yahoo.
+    Returns None (gracefully) if yfinance is not installed or the call fails.
+    """
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol).fast_info
+        return {
+            "last_price":   getattr(info, "last_price",   None),
+            "day_high":     getattr(info, "day_high",     None),
+            "day_low":      getattr(info, "day_low",      None),
+            "open":         getattr(info, "open",         None),
+            "prev_close":   getattr(info, "previous_close", None),
+            "volume":       getattr(info, "last_volume",  None),
+        }
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _render_tradingview_panel(symbol: str, exchange: str, pred_row: pd.Series):
+    """
+    Render the live price panel + TradingView button for a selected symbol.
+    Sits entirely inside _render_latest_predictions — no cache side-effects.
+    """
+    tv_url = _tv_url(symbol, exchange)
+
+    # ── Live quote ────────────────────────────────────────────────────────────
+    with st.spinner(f"Fetching live quote for {symbol}…"):
+        quote = _get_live_quote(symbol)
+
+    st.markdown(
+        f'<div style="background:var(--bg-2);border:1px solid var(--cyan-border);'
+        f'border-left:3px solid var(--cyan);border-radius:var(--radius);'
+        f'padding:16px 20px 14px;margin-bottom:4px;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+        f'<div>'
+        f'<span class="ticker">{symbol}</span>'
+        f'&nbsp;&nbsp;'
+        f'<span style="font-family:var(--font-body);font-size:0.62rem;color:var(--text-2);'
+        f'letter-spacing:.1em;text-transform:uppercase;">{exchange}</span>'
+        f'</div>'
+        f'<a href="{tv_url}" target="_blank" style="'
+        f'display:inline-flex;align-items:center;gap:6px;'
+        f'padding:6px 14px;background:transparent;'
+        f'border:1px solid var(--cyan-border);border-radius:var(--radius-sm);'
+        f'color:var(--cyan);font-family:var(--font-body);font-size:0.65rem;'
+        f'font-weight:500;letter-spacing:.1em;text-transform:uppercase;'
+        f'text-decoration:none;transition:background .15s;"'
+        f'onmouseover="this.style.background=\'var(--cyan-dim)\'"'
+        f'onmouseout="this.style.background=\'transparent\'">'
+        f'📈 Open in TradingView</a>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Prediction baseline values
+    pred_price      = pred_row.get("current_price")
+    target_gain_pct = pred_row.get("target_gain_pct")
+    target_price    = pred_row.get("target_price")
+    signal          = pred_row.get("signal", "—")
+    signal_color    = SIGNAL_COLORS.get(str(signal), COLORS["primary"])
+
+    if quote and quote.get("last_price") is not None:
+        live  = quote["last_price"]
+        high  = quote["day_high"]
+        low   = quote["day_low"]
+        prev  = quote["prev_close"]
+        vol   = quote["volume"]
+
+        # Day change vs previous close
+        day_chg_pct = (live - prev) / prev * 100 if prev else None
+        # Change vs prediction price (how much it moved since yesterday's screening)
+        vs_pred_pct = (live - pred_price) / pred_price * 100 if pred_price else None
+        # How far today's high has gone toward the target
+        high_vs_pred = (high - pred_price) / pred_price * 100 if (high and pred_price) else None
+
+        def _color(v):
+            if v is None: return "var(--text-2)"
+            return "var(--green-bright)" if v >= 0 else "var(--red-bright)"
+
+        def _fmt(v, suffix="%", plus=True):
+            if v is None: return "—"
+            return f"{'+' if plus and v>=0 else ''}{v:.2f}{suffix}"
+
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Live Price",     f"${live:.2f}",
+                    delta=_fmt(day_chg_pct) if day_chg_pct is not None else None)
+        col2.metric("Day High",       f"${high:.2f}" if high else "—",
+                    delta=_fmt(high_vs_pred) + " vs pred" if high_vs_pred is not None else None)
+        col3.metric("Day Low",        f"${low:.2f}" if low else "—")
+        col4.metric("vs Pred Price",  _fmt(vs_pred_pct) if vs_pred_pct is not None else "—",
+                    delta=f"pred ${pred_price:.2f}" if pred_price else None)
+        col5.metric("Target Gain",    _fmt(target_gain_pct) if target_gain_pct is not None else "—",
+                    delta=f"@ ${target_price:.2f}" if target_price else None)
+
+        # Progress bar: how far today's high has travelled toward the target gain
+        if high_vs_pred is not None and target_gain_pct and target_gain_pct > 0:
+            progress = min(max(high_vs_pred / target_gain_pct, 0.0), 1.0)
+            bar_color = "var(--green-bright)" if progress >= 1.0 else "var(--cyan)"
+            st.markdown(
+                f'<div style="margin-top:10px;">'
+                f'<div style="font-family:var(--font-body);font-size:0.58rem;'
+                f'color:var(--text-2);letter-spacing:.12em;text-transform:uppercase;'
+                f'margin-bottom:5px;">Intraday progress toward target '
+                f'<span style="color:{bar_color}">{progress*100:.0f}%</span></div>'
+                f'<div style="height:4px;background:var(--bg-4);border-radius:2px;overflow:hidden;">'
+                f'<div style="height:100%;width:{progress*100:.1f}%;'
+                f'background:{bar_color};border-radius:2px;'
+                f'transition:width .3s ease;"></div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        if vol:
+            vol_str = f"{vol/1e6:.2f}M" if vol >= 1_000_000 else f"{vol/1e3:.0f}K"
+            st.caption(f"Volume: {vol_str}  ·  Prev close: ${prev:.2f}" if prev else f"Volume: {vol_str}")
+
+    else:
+        # yfinance unavailable or call failed — still show prediction data + TV link
+        st.markdown(
+            '<div style="color:var(--text-2);font-family:var(--font-body);font-size:0.78rem;">'
+            '⚠️ Live quote unavailable — install <code>yfinance</code> or check network. '
+            'Showing prediction data only.</div>',
+            unsafe_allow_html=True,
+        )
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Signal",       signal)
+        col2.metric("Pred Price",   f"${pred_price:.2f}" if pred_price else "—")
+        col3.metric("Target Gain",  f"+{target_gain_pct:.2f}%" if target_gain_pct else "—")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.caption("Live quote cached for 60 s · data via Yahoo Finance · not financial advice")
+
 
 # ── Cached DB fetchers (UNCHANGED) ────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
@@ -75,6 +236,7 @@ def _get_table_full(table_name: str) -> pd.DataFrame:
 # ── Cache control (UNCHANGED) ─────────────────────────────────────────────────
 def clear_all_cache():
     _get_table_full.clear()
+    _get_live_quote.clear()
 
 
 def refresh_cache():
@@ -355,7 +517,7 @@ def _render_latest_predictions():
             na_rep="—",
         ).apply(_highlight_sig, axis=1),
         use_container_width=True,
-        height=520,
+        height=420,
     )
     st.download_button(
         "Download CSV",
@@ -364,6 +526,46 @@ def _render_latest_predictions():
         "text/csv",
         key=f"{TAB_ID}_dl",
     )
+
+    # ── TradingView / Live Quote Panel ─────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📊 Quick View — Live Price & TradingView")
+    st.caption(
+        "Select any predicted stock to see its live price and open its chart "
+        "in TradingView. Live quotes refresh every 60 s."
+    )
+
+    # Build symbol list sorted by signal strength then probability
+    signal_order = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "AVOID": 3}
+    sorted_fdf = fdf.copy()
+    sorted_fdf["_sig_rank"] = sorted_fdf["signal"].map(signal_order).fillna(9)
+    sorted_fdf = sorted_fdf.sort_values(["_sig_rank", "explosion_probability"], ascending=[True, False])
+    symbol_options = sorted_fdf["symbol"].tolist()
+
+    if not symbol_options:
+        st.info("No symbols to display — adjust filters above.")
+        return
+
+    # Format options to show signal + probability inline
+    def _sym_label(sym):
+        row = sorted_fdf[sorted_fdf["symbol"] == sym].iloc[0]
+        sig  = row.get("signal", "")
+        prob = row.get("explosion_probability", 0)
+        return f"{sym}  ·  {sig}  ·  {prob:.1f}%"
+
+    selected_sym = st.selectbox(
+        "Pick a stock:",
+        options=symbol_options,
+        format_func=_sym_label,
+        key=f"{TAB_ID}_tv_symbol",
+    )
+
+    if selected_sym:
+        pred_row_matches = sorted_fdf[sorted_fdf["symbol"] == selected_sym]
+        if not pred_row_matches.empty:
+            pred_row = pred_row_matches.iloc[0]
+            exchange = pred_row.get("exchange", "NASDAQ")
+            _render_tradingview_panel(selected_sym, exchange, pred_row)
 
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
@@ -409,7 +611,6 @@ def _render_predictions_vs_actuals():
     precision    = tp                / predicted_winners * 100 if predicted_winners else 0
     recall       = tp                / actual_winners    * 100 if actual_winners    else 0
 
-    # ── Key metrics ────────────────────────────────────────────────────────────
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Total",          total)
     col2.metric("Accuracy",       f"{accuracy_pct:.1f}%")
@@ -432,7 +633,6 @@ def _render_predictions_vs_actuals():
 
     st.markdown("---")
 
-    # ── Confusion matrix ───────────────────────────────────────────────────────
     col_cm, col_dist = st.columns(2)
 
     with col_cm:
@@ -481,7 +681,6 @@ def _render_predictions_vs_actuals():
         else:
             st.info("Gain distribution will appear once actual_gain_pct is populated.")
 
-    # ── Detailed results table ──────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### Detailed Results")
 
@@ -664,7 +863,6 @@ def _render_performance_trends():
         .sort_values("prediction_date")
     )
 
-    # ── Accuracy / Precision / Recall ──────────────────────────────────────────
     fig = go.Figure()
     for metric, color, name in [
         ("accuracy_pct",  COLORS["primary"],   "Accuracy"),
@@ -689,7 +887,6 @@ def _render_performance_trends():
     fig.update_yaxes(**AXIS_STYLE)
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── TP/FP breakdown + avg winner gain ─────────────────────────────────────
     col1, col2 = st.columns(2)
 
     with col1:
@@ -731,7 +928,6 @@ def _render_performance_trends():
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── By signal type ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### Performance by Signal Type")
 
@@ -818,7 +1014,6 @@ def _render_system_info():
         else:
             col4.metric("Successfully Fetched", str(fetched))
 
-        # ── Screening funnel ───────────────────────────────────────────────────
         funnel_steps = [
             ("total_symbols_attempted",      "Total Attempted"),
             ("symbols_fetched_successfully", "Fetched Successfully"),
@@ -856,7 +1051,6 @@ def _render_system_info():
     else:
         st.info("No screening logs found yet.")
 
-    # ── Database summary ───────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### Database Summary")
 
@@ -865,9 +1059,9 @@ def _render_system_info():
     missed_df = _get_table_full("ml_missed_opportunities")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Prediction Records",      len(preds_df))
-    col2.metric("Accuracy Records",        len(acc_df))
-    col3.metric("Missed Opp. Records",     len(missed_df))
+    col1.metric("Prediction Records",  len(preds_df))
+    col2.metric("Accuracy Records",    len(acc_df))
+    col3.metric("Missed Opp. Records", len(missed_df))
 
     if not acc_df.empty:
         acc_df = acc_df.copy()
@@ -877,7 +1071,6 @@ def _render_system_info():
         col1.metric("Overall Accuracy (all dates)", f"{acc_df['prediction_correct'].mean()*100:.1f}%")
         col2.metric("Overall Winner Rate",          f"{acc_df['became_winner'].mean()*100:.1f}%")
 
-    # ── Schedule & model details ───────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### Automated Schedule (Estonia Time)")
 
