@@ -32,3 +32,6 @@ PyGithub>=2.1.0
 
 # Timezone support for correct EST market hours
 pytz>=2024.1
+
+# Stock data fetching
+yfinance>=0.2.40
