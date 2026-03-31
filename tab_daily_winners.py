@@ -8,6 +8,13 @@ Changes v3:
   - Fixed .arrow_right text artifact: replaced all uses of st.tabs() inside
     render_indicator_snapshot with st.expander() to avoid the broken tab
     icon rendering that showed raw SVG/text in certain Streamlit builds
+
+FIX v3.1:
+  - _get_all_dates: added .order("detection_date", desc=True) so that when
+    the table has >500 rows, we always get the 500 MOST RECENT dates rather
+    than an undefined/insertion-order slice that could omit the latest dates.
+    Previously the lack of ordering meant Supabase could return the oldest
+    500 rows, making the UI appear stuck on the last date in that window.
 """
 
 import streamlit as st
@@ -86,12 +93,26 @@ _INDICATOR_THRESHOLDS = {
 PALETTE = COLORS['series']
 
 
-# ── Cached DB fetchers (UNCHANGED from v1) ─────────────────────────────────────
+# ── Cached DB fetchers ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def _get_all_dates() -> list[str]:
+    """
+    Fetch all distinct detection_dates, ordered newest-first.
+
+    The .order("detection_date", desc=True) is critical: without it Supabase
+    returns rows in undefined/insertion order.  With a large table the default
+    .limit(500) window could be the oldest 500 rows, making the UI appear stuck
+    on whatever the newest date in that stale window happened to be.
+    """
     try:
         client   = get_supabase_client()
-        response = client.table("daily_winners").select("detection_date").limit(500).execute()
+        response = (
+            client.table("daily_winners")
+            .select("detection_date")
+            .order("detection_date", desc=True)   # ← THE FIX
+            .limit(500)
+            .execute()
+        )
         if response.data:
             return sorted(set(row["detection_date"] for row in response.data), reverse=True)
         return []
@@ -731,8 +752,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
         st.caption(f"Showing top {int(show_top)} of {len(summary_df)} indicators. Increase 'Show top N' to see {remaining} more.")
 
 
-# ── Indicator snapshot — uses expanders instead of st.tabs to avoid
-#    the .arrow_right text artifact from Streamlit's SVG tab icon ─────────────
+# ── Indicator snapshot ────────────────────────────────────────────────────────
 def render_indicator_snapshot(data_row, title, snapshot_type):
     st.markdown(f"**{title}**")
     price_field = 'open' if snapshot_type in ['market_open', 'day_prior_open'] else 'close'
@@ -767,13 +787,11 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
     }
     bool_fields = {"ema20_above_ema50","ema50_above_ema200","price_above_ema20","ema10_above_ema20","sma50_above_sma200","doji","hammer","bullish_engulfing","gap_up","gap_down"}
 
-    # Only show groups that have data
     available_groups = {
         name: info for name, info in indicator_groups.items()
         if any(f in data_row.index and (f in bool_fields or pd.notna(data_row[f])) for f in info['fields'])
     }
 
-    # st.tabs for group — fast, no rerun on click
     group_tabs = st.tabs(list(available_groups.keys()))
     for tab_widget, (group_name, group_info) in zip(group_tabs, available_groups.items()):
         with tab_widget:
@@ -956,7 +974,7 @@ def render_daily_winners_tab():
         st.info("Run `python daily_winners_main.py` to collect data.")
         return
 
-    # ── Cross-Date Symbol Search (button toggle — no st.expander to avoid .arrow_right) ──
+    # ── Cross-Date Symbol Search ──────────────────────────────────────────────
     _key_search = "search_open"
     if _key_search not in st.session_state:
         st.session_state[_key_search] = False
@@ -1071,7 +1089,7 @@ def render_daily_winners_tab():
         day_prior_open_df, day_prior_close_df,
     )
 
-    # ── Technical Indicator Snapshots — BEFORE indicator timeline ────────────
+    # ── Technical Indicator Snapshots ────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Technical Indicator Snapshots")
 
@@ -1087,7 +1105,6 @@ def render_daily_winners_tab():
         else:
             render_indicator_snapshot(rows.iloc[0], label, snap_type)
 
-    # st.tabs for timepoint — fast, no rerun, looks correct
     snapshot_tabs = st.tabs([
         "📈 Day Prior Open",
         "📊 Day Prior Close",
@@ -1103,14 +1120,14 @@ def render_daily_winners_tab():
     with snapshot_tabs[3]:
         _show_snapshot(market_close_df,    "Market Close — 4:00 PM",        'market_close')
 
-    # ── Indicator Timeline charts ─────────────────────────────────────────────
+    # ── Indicator Timeline ────────────────────────────────────────────────────
     render_indicator_timeline(
         selected_symbol,
         market_open_df, market_close_df,
         day_prior_open_df, day_prior_close_df,
     )
 
-    # ── ML History (button toggle — no st.expander) ───────────────────────────
+    # ── ML History ───────────────────────────────────────────────────────────
     st.markdown("---")
     _key_ml = f"ml_open_{selected_symbol}"
     if _key_ml not in st.session_state:
@@ -1120,7 +1137,7 @@ def render_daily_winners_tab():
     if st.session_state[_key_ml]:
         render_stock_history(selected_symbol)
 
-    # ── Prediction Table — bottom of page ────────────────────────────────────
+    # ── Prediction Table ──────────────────────────────────────────────────────
     render_prediction_table(
         selected_symbol,
         market_open_df, market_close_df,
