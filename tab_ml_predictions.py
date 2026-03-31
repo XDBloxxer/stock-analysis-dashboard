@@ -313,9 +313,9 @@ def _render_live_market_table(fdf: pd.DataFrame):
     def _badge(signal: str) -> str:
         fg, bg, border = _sig_colors.get(signal, ("var(--text-2)", "var(--bg-3)", "var(--border)"))
         return (
-            f'<span style="padding:1px 7px;border-radius:3px;background:{bg};'
+            f'<span style="padding:3px 9px;border-radius:3px;background:{bg};'
             f'border:1px solid {border};color:{fg};font-family:var(--font-body);'
-            f'font-size:0.56rem;font-weight:600;letter-spacing:0.1em;'
+            f'font-size:0.65rem;font-weight:700;letter-spacing:0.08em;'
             f'text-transform:uppercase;white-space:nowrap;">{signal}</span>'
         )
 
@@ -327,7 +327,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
         return f"{v:{fmt}}"
 
     def _chg_color(v):
-        if v is None: return "var(--text-2)"
+        if v is None: return "var(--text-1)"
         return "var(--green-bright)" if v >= 0 else "var(--red-bright)"
 
     def _progress_bar(high_pct: float | None, target_pct: float | None,
@@ -340,14 +340,14 @@ def _render_live_market_table(fdf: pd.DataFrame):
         if target_pct is None or target_pct <= 0:
             tgt_str = _val(target_price, "$.2f")
             return (
-                f'<div style="font-family:var(--font-body);font-size:0.6rem;color:var(--text-3);">'
+                f'<div style="font-family:var(--font-body);font-size:0.72rem;color:var(--text-1);">'
                 f'Target {tgt_str} · no target % set</div>'
             )
 
         progress  = min(max((high_pct or 0) / target_pct, 0.0), 1.0)
         hit       = progress >= 1.0
         bar_color = "var(--green-bright)" if hit else "var(--cyan)"
-        lbl_color = "var(--green-bright)" if hit else "var(--text-2)"
+        lbl_color = "var(--green-bright)" if hit else "var(--text-0)"
         bar_w     = progress * 100
 
         high_str  = _val(
@@ -360,34 +360,34 @@ def _render_live_market_table(fdf: pd.DataFrame):
         return (
             # Top row: high $ ←bar→ target $
             f'<div style="display:flex;align-items:center;gap:8px;">'
-            f'<span style="font-family:var(--font-body);font-size:0.6rem;'
-            f'color:var(--text-2);white-space:nowrap;min-width:52px;">H {high_str}</span>'
+            f'<span style="font-family:var(--font-body);font-size:0.7rem;'
+            f'color:var(--text-1);white-space:nowrap;min-width:56px;">H {high_str}</span>'
             f'<div style="flex:1;position:relative;">'
-            f'<div style="height:5px;background:var(--bg-4);border-radius:3px;overflow:hidden;">'
+            f'<div style="height:6px;background:var(--bg-4);border-radius:3px;overflow:hidden;">'
             f'<div style="height:100%;width:{bar_w:.1f}%;background:{bar_color};'
             f'border-radius:3px;transition:width .4s ease;"></div>'
             f'</div></div>'
-            f'<span style="font-family:var(--font-body);font-size:0.6rem;'
-            f'color:var(--text-2);white-space:nowrap;min-width:52px;text-align:right;">{tgt_str} ↑</span>'
+            f'<span style="font-family:var(--font-body);font-size:0.7rem;'
+            f'color:var(--text-1);white-space:nowrap;min-width:56px;text-align:right;">{tgt_str} ↑</span>'
             f'</div>'
             # Bottom row: high gain % · progress label · target gain %
-            f'<div style="display:flex;justify-content:space-between;margin-top:3px;">'
-            f'<span style="font-family:var(--font-body);font-size:0.56rem;color:var(--text-3);">'
+            f'<div style="display:flex;justify-content:space-between;margin-top:4px;">'
+            f'<span style="font-family:var(--font-body);font-size:0.68rem;color:var(--text-1);">'
             f'High {("+" if (high_pct or 0) >= 0 else "")}{(high_pct or 0):.2f}%</span>'
-            f'<span style="font-family:var(--font-body);font-size:0.56rem;'
-            f'font-weight:600;color:{lbl_color};">{hit_label}</span>'
-            f'<span style="font-family:var(--font-body);font-size:0.56rem;color:var(--text-3);">'
+            f'<span style="font-family:var(--font-body);font-size:0.7rem;'
+            f'font-weight:700;color:{lbl_color};">{hit_label}</span>'
+            f'<span style="font-family:var(--font-body);font-size:0.68rem;color:var(--text-1);">'
             f'Target +{target_pct:.1f}%</span>'
             f'</div>'
         )
 
     # ── Column header row ──────────────────────────────────────────────────────
     hdr_style = (
-        "font-family:var(--font-body);font-size:0.52rem;letter-spacing:0.16em;"
-        "text-transform:uppercase;color:var(--text-3);padding-bottom:5px;"
-        "border-bottom:1px solid var(--border);"
+        "font-family:var(--font-body);font-size:0.6rem;letter-spacing:0.14em;"
+        "text-transform:uppercase;color:var(--text-1);padding-bottom:6px;"
+        "border-bottom:1px solid var(--border-mid);"
     )
-    h = st.columns([2.6, 1.2, 1.2, 1.2, 1.2, 1.2, 4.2, 0.7])
+    h = st.columns([2.6, 1.4, 1.1, 1.1, 1.3, 1.3, 4.2, 0.7])
     for col, lbl in zip(h, ["Stock", "Signal", "Prob", "Entry", "Live", "Day High", "→ Target", "TV"]):
         col.markdown(f'<div style="{hdr_style}">{lbl}</div>', unsafe_allow_html=True)
 
@@ -416,7 +416,6 @@ def _render_live_market_table(fdf: pd.DataFrame):
         day_chg    = (live - prev)     / prev     * 100 if live and prev     else None
         high_gain  = (day_high - pred_price) / pred_price * 100 if day_high and pred_price else None
 
-        sig_fg = _sig_colors.get(signal, ("var(--text-2)",))[0]
         left_color = _left_bar.get(signal, "var(--border-mid)")
 
         # Volume formatting
@@ -436,7 +435,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
             )
             prob_bar = (
                 f'<div style="height:3px;background:var(--bg-4);border-radius:2px;'
-                f'margin-top:3px;overflow:hidden;">'
+                f'margin-top:4px;overflow:hidden;">'
                 f'<div style="height:100%;width:{prob_pct:.0f}%;background:{p_color};'
                 f'border-radius:2px;"></div></div>'
             )
@@ -444,23 +443,29 @@ def _render_live_market_table(fdf: pd.DataFrame):
         # Target price range sub-label
         tgt_range_str = ""
         if tgt_low and tgt_high:
-            tgt_range_str = f'<div style="font-size:0.54rem;color:var(--text-3);margin-top:1px;">${tgt_low:.2f} – ${tgt_high:.2f}</div>'
+            tgt_range_str = (
+                f'<div style="font-family:var(--font-body);font-size:0.66rem;'
+                f'color:var(--text-1);margin-top:3px;">${tgt_low:.2f} – ${tgt_high:.2f}</div>'
+            )
 
         # Low of day sub-label
-        low_str = f'<div style="font-size:0.54rem;color:var(--text-3);margin-top:1px;">L ${day_low:.2f}</div>' if day_low else ""
+        low_str = (
+            f'<div style="font-family:var(--font-body);font-size:0.68rem;'
+            f'color:var(--text-1);margin-top:2px;">L ${day_low:.2f}</div>'
+        ) if day_low else ""
 
-        cols = st.columns([2.6, 1.2, 1.2, 1.2, 1.2, 1.2, 4.2, 0.7])
+        cols = st.columns([2.6, 1.4, 1.1, 1.1, 1.3, 1.3, 4.2, 0.7])
 
         # Col 0 — Ticker + exchange + volume
         with cols[0]:
             st.markdown(
-                f'<div style="padding:5px 0 4px;border-left:2px solid {left_color};padding-left:8px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.85rem;'
-                f'font-weight:600;color:var(--text-0);letter-spacing:0.04em;">{sym}</span>'
-                f'<span style="font-family:var(--font-body);font-size:0.56rem;'
-                f'color:var(--text-3);margin-left:6px;">{exchange}</span>'
-                f'<div style="font-family:var(--font-body);font-size:0.56rem;'
-                f'color:var(--text-3);margin-top:2px;">Vol {vol_str}</div>'
+                f'<div style="padding:7px 0 5px;border-left:2px solid {left_color};padding-left:10px;">'
+                f'<span style="font-family:var(--font-body);font-size:0.95rem;'
+                f'font-weight:700;color:var(--text-0);letter-spacing:0.04em;">{sym}</span>'
+                f'<span style="font-family:var(--font-body);font-size:0.66rem;'
+                f'color:var(--text-1);margin-left:7px;">{exchange}</span>'
+                f'<div style="font-family:var(--font-body);font-size:0.68rem;'
+                f'color:var(--text-1);margin-top:2px;">Vol {vol_str}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -468,7 +473,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
         # Col 1 — Signal badge
         with cols[1]:
             st.markdown(
-                f'<div style="padding:6px 0 4px;">{_badge(signal)}</div>',
+                f'<div style="padding:8px 0 5px;">{_badge(signal)}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -481,9 +486,9 @@ def _render_live_market_table(fdf: pd.DataFrame):
                 else "var(--amber-bright)"
             )
             st.markdown(
-                f'<div style="padding:5px 0 4px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.8rem;'
-                f'font-weight:600;color:{prob_color};">{prob_str}</span>'
+                f'<div style="padding:7px 0 5px;">'
+                f'<span style="font-family:var(--font-body);font-size:0.9rem;'
+                f'font-weight:700;color:{prob_color};">{prob_str}</span>'
                 f'{prob_bar}'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -492,10 +497,11 @@ def _render_live_market_table(fdf: pd.DataFrame):
         # Col 3 — Entry / signal price
         with cols[3]:
             st.markdown(
-                f'<div style="padding:5px 0 4px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.78rem;'
-                f'color:var(--text-1);">{_val(pred_price, "$.2f")}</span>'
-                f'<div style="font-size:0.54rem;color:var(--text-3);margin-top:1px;">entry</div>'
+                f'<div style="padding:7px 0 5px;">'
+                f'<span style="font-family:var(--font-body);font-size:0.88rem;'
+                f'color:var(--text-0);">{_val(pred_price, "$.2f")}</span>'
+                f'<div style="font-family:var(--font-body);font-size:0.66rem;'
+                f'color:var(--text-1);margin-top:2px;">entry</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -506,11 +512,11 @@ def _render_live_market_table(fdf: pd.DataFrame):
             chg_str   = f'{day_chg:+.2f}%' if day_chg is not None else "—"
             live_str  = _val(live, "$.2f")
             st.markdown(
-                f'<div style="padding:5px 0 4px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.8rem;'
-                f'font-weight:600;color:var(--text-0);">{live_str}</span>'
-                f'<div style="font-family:var(--font-body);font-size:0.6rem;'
-                f'font-weight:500;color:{chg_color};margin-top:1px;">{chg_str}</div>'
+                f'<div style="padding:7px 0 5px;">'
+                f'<span style="font-family:var(--font-body);font-size:0.9rem;'
+                f'font-weight:700;color:var(--text-0);">{live_str}</span>'
+                f'<div style="font-family:var(--font-body);font-size:0.72rem;'
+                f'font-weight:600;color:{chg_color};margin-top:2px;">{chg_str}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -520,11 +526,11 @@ def _render_live_market_table(fdf: pd.DataFrame):
             high_chg_str = f'{high_gain:+.2f}%' if high_gain is not None else ""
             high_color   = _chg_color(high_gain)
             st.markdown(
-                f'<div style="padding:5px 0 4px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.8rem;'
-                f'font-weight:600;color:{high_color};">{_val(day_high, "$.2f")}</span>'
-                f'<div style="font-family:var(--font-body);font-size:0.6rem;'
-                f'color:var(--text-3);margin-top:1px;">{high_chg_str}</div>'
+                f'<div style="padding:7px 0 5px;">'
+                f'<span style="font-family:var(--font-body);font-size:0.9rem;'
+                f'font-weight:700;color:{high_color};">{_val(day_high, "$.2f")}</span>'
+                f'<div style="font-family:var(--font-body);font-size:0.72rem;'
+                f'color:var(--text-1);margin-top:2px;">{high_chg_str}</div>'
                 f'{low_str}'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -533,7 +539,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
         # Col 6 — Progress bar + target info
         with cols[6]:
             st.markdown(
-                f'<div style="padding:5px 0 4px;">'
+                f'<div style="padding:7px 0 5px;">'
                 f'{_progress_bar(high_gain, tgt_gain, tgt_price, pred_price)}'
                 f'{tgt_range_str}'
                 f'</div>',
@@ -543,24 +549,24 @@ def _render_live_market_table(fdf: pd.DataFrame):
         # Col 7 — TradingView link
         with cols[7]:
             st.markdown(
-                f'<div style="padding:4px 0 4px;text-align:center;">'
+                f'<div style="padding:6px 0 5px;text-align:center;">'
                 f'<a href="{tv_url}" target="_blank" style="'
                 f'display:inline-flex;align-items:center;justify-content:center;'
-                f'width:28px;height:28px;background:transparent;'
+                f'width:30px;height:30px;background:transparent;'
                 f'border:1px solid var(--border-mid);border-radius:var(--radius-sm);'
-                f'color:var(--text-2);font-size:0.75rem;text-decoration:none;"'
+                f'color:var(--text-1);font-size:0.85rem;text-decoration:none;"'
                 f'title="Open {sym} in TradingView"'
                 f'onmouseover="this.style.borderColor=\'var(--cyan-border)\';'
                 f'this.style.color=\'var(--cyan)\';this.style.background=\'var(--cyan-dim)\'"'
                 f'onmouseout="this.style.borderColor=\'var(--border-mid)\';'
-                f'this.style.color=\'var(--text-2)\';this.style.background=\'transparent\'">'
+                f'this.style.color=\'var(--text-1)\';this.style.background=\'transparent\'">'
                 f'↗</a></div>',
                 unsafe_allow_html=True,
             )
 
         # Row divider
         st.markdown(
-            '<div style="height:1px;background:var(--border);margin:1px 0 3px;"></div>',
+            '<div style="height:1px;background:var(--border-mid);margin:2px 0 4px;"></div>',
             unsafe_allow_html=True,
         )
 
