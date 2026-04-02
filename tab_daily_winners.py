@@ -15,6 +15,12 @@ FIX v3.1:
     than an undefined/insertion-order slice that could omit the latest dates.
     Previously the lack of ordering meant Supabase could return the oldest
     500 rows, making the UI appear stuck on the last date in that window.
+
+FIX v3.2:
+  - render_prediction_table: replaced deprecated .applymap() with .map()
+    (applymap was removed in pandas 2.1+)
+  - Replaced all use_container_width=True with width='stretch' and
+    use_container_width=False with width='content' (Streamlit deprecation)
 """
 
 import streamlit as st
@@ -230,11 +236,11 @@ def _render_cache_buttons(tab_id: str):
     col_r, col_c, col_spacer = st.columns([1, 1, 4])
     with col_r:
         st.markdown('<div class="btn-refresh">', unsafe_allow_html=True)
-        refresh = st.button("🔄 Refresh", key=f"{tab_id}_refresh", use_container_width=True)
+        refresh = st.button("🔄 Refresh", key=f"{tab_id}_refresh", width='stretch')
         st.markdown('</div>', unsafe_allow_html=True)
     with col_c:
         st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-        clear = st.button("🗑️ Clear Cache", key=f"{tab_id}_clear", use_container_width=True)
+        clear = st.button("🗑️ Clear Cache", key=f"{tab_id}_clear", width='stretch')
         st.markdown('</div>', unsafe_allow_html=True)
 
     if clear:
@@ -250,12 +256,12 @@ def _render_cache_buttons(tab_id: str):
         cc1, cc2, _ = st.columns([1, 1, 5])
         with cc1:
             st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-            if st.button("✓ Confirm Clear", key=f"{tab_id}_confirm_yes", use_container_width=True):
+            if st.button("✓ Confirm Clear", key=f"{tab_id}_confirm_yes", width='stretch'):
                 confirmed = True
                 st.session_state[confirm_key] = False
             st.markdown('</div>', unsafe_allow_html=True)
         with cc2:
-            if st.button("✕ Cancel", key=f"{tab_id}_confirm_no", use_container_width=True):
+            if st.button("✕ Cancel", key=f"{tab_id}_confirm_no", width='stretch'):
                 st.session_state[confirm_key] = False
                 st.rerun()
 
@@ -393,7 +399,7 @@ def render_price_journey(symbol: str, open_df, close_df, prior_open_df, prior_cl
     )
     fig.update_xaxes(**CHART_THEME['xaxis'])
     fig.update_yaxes(**CHART_THEME['yaxis'])
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 # ── Indicator Timeline ─────────────────────────────────────────────────────────
@@ -494,12 +500,12 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         with preset_cols[i]:
             is_active = st.session_state[preset_key] == preset_name
             label = f"{'✓ ' if is_active else ''}{preset_name}"
-            if st.button(label, key=f"preset_btn_{symbol}_{preset_name}", use_container_width=True):
+            if st.button(label, key=f"preset_btn_{symbol}_{preset_name}", width='stretch'):
                 st.session_state[preset_key] = preset_name
                 st.rerun()
     with preset_cols[-1]:
         is_custom = st.session_state[preset_key] == "Custom"
-        if st.button(f"{'✓ ' if is_custom else ''}Custom", key=f"preset_btn_{symbol}_custom", use_container_width=True):
+        if st.button(f"{'✓ ' if is_custom else ''}Custom", key=f"preset_btn_{symbol}_custom", width='stretch'):
             st.session_state[preset_key] = "Custom"
             st.rerun()
 
@@ -596,7 +602,7 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
                     fig.update_xaxes(**AXIS_STYLE_SM)
                     fig.update_yaxes(**AXIS_STYLE_SM)
                     with col_widget:
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
 
     # Prediction table is rendered separately after technical snapshots
 
@@ -745,7 +751,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
         .map(_style_delta_pct, subset=['Δ %'])
         .map(_style_momentum,  subset=['Momentum'])
     )
-    st.dataframe(styled, use_container_width=True, height=460)
+    st.dataframe(styled, width='stretch', height=460)
 
     if len(summary_df) > int(show_top):
         remaining = len(summary_df) - int(show_top)
@@ -865,7 +871,7 @@ def render_stock_history(symbol: str):
         st.dataframe(
             sym_acc[show_cols].sort_values('prediction_date', ascending=False)
             .style.format({k: v for k, v in fmt.items() if k in show_cols}, na_rep='—'),
-            use_container_width=True, height=280,
+            width='stretch', height=280,
         )
 
 
@@ -939,7 +945,7 @@ def render_symbol_search(available_dates: list[str]):
         )
         fig.update_xaxes(**AXIS_STYLE)
         fig.update_yaxes(**AXIS_STYLE)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     st.dataframe(
         res_df.style.format({
@@ -949,7 +955,7 @@ def render_symbol_search(available_dates: list[str]):
             'Volume':     '{:,.0f}',
         }, na_rep='—')
         .background_gradient(subset=['Change (%)'], cmap='RdYlGn'),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -1053,7 +1059,7 @@ def render_daily_winners_tab():
         display_df.style
         .format({'Price ($)': '${:.2f}', 'Change (%)': '{:+.2f}%', 'Volume': '{:,.0f}'})
         .background_gradient(subset=['Change (%)'], cmap='PiYG'),
-        use_container_width=True, height=400,
+        width='stretch', height=400,
     )
 
     st.markdown("---")
