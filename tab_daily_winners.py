@@ -741,9 +741,9 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
         display_summary[show_cols]
         .style
         .format({k: v for k, v in fmt.items() if k in show_cols}, na_rep='—')
-        .applymap(_style_signal,    subset=['Signal'])
-        .applymap(_style_delta_pct, subset=['Δ %'])
-        .applymap(_style_momentum,  subset=['Momentum'])
+        .map(_style_signal,    subset=['Signal'])
+        .map(_style_delta_pct, subset=['Δ %'])
+        .map(_style_momentum,  subset=['Momentum'])
     )
     st.dataframe(styled, use_container_width=True, height=460)
 
