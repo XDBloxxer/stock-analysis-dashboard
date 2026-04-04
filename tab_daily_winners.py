@@ -19,8 +19,8 @@ FIX v3.1:
 FIX v3.2:
   - render_prediction_table: replaced deprecated .applymap() with .map()
     (applymap was removed in pandas 2.1+)
-  - Replaced all use_container_width=True with width='stretch' and
-    use_container_width=False with width='content' (Streamlit deprecation)
+  - Replaced all width='stretch' with width='stretch' and
+    width='content' with width='content' (Streamlit deprecation)
 
 FIX v3.3:
   - render_price_journey: marker color list contained None values when a
@@ -243,11 +243,11 @@ def _render_cache_buttons(tab_id: str):
     col_r, col_c, col_spacer = st.columns([1, 1, 4])
     with col_r:
         st.markdown('<div class="btn-refresh">', unsafe_allow_html=True)
-        refresh = st.button("🔄 Refresh", key=f"{tab_id}_refresh", use_container_width=True)
+        refresh = st.button("🔄 Refresh", key=f"{tab_id}_refresh",  use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
     with col_c:
         st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-        clear = st.button("🗑️ Clear Cache", key=f"{tab_id}_clear", use_container_width=True)
+        clear = st.button("🗑️ Clear Cache", key=f"{tab_id}_clear",  use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     if clear:
@@ -263,12 +263,12 @@ def _render_cache_buttons(tab_id: str):
         cc1, cc2, _ = st.columns([1, 1, 5])
         with cc1:
             st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-            if st.button("✓ Confirm Clear", key=f"{tab_id}_confirm_yes", use_container_width=True):
+            if st.button("✓ Confirm Clear", key=f"{tab_id}_confirm_yes",  use_container_width=True):
                 confirmed = True
                 st.session_state[confirm_key] = False
             st.markdown('</div>', unsafe_allow_html=True)
         with cc2:
-            if st.button("✕ Cancel", key=f"{tab_id}_confirm_no", use_container_width=True):
+            if st.button("✕ Cancel", key=f"{tab_id}_confirm_no",  use_container_width=True):
                 st.session_state[confirm_key] = False
                 st.rerun()
 
@@ -527,12 +527,12 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
         with preset_cols[i]:
             is_active = st.session_state[preset_key] == preset_name
             label = f"{'✓ ' if is_active else ''}{preset_name}"
-            if st.button(label, key=f"preset_btn_{symbol}_{preset_name}", use_container_width=True):
+            if st.button(label, key=f"preset_btn_{symbol}_{preset_name}",  use_container_width=True):
                 st.session_state[preset_key] = preset_name
                 st.rerun()
     with preset_cols[-1]:
         is_custom = st.session_state[preset_key] == "Custom"
-        if st.button(f"{'✓ ' if is_custom else ''}Custom", key=f"preset_btn_{symbol}_custom", use_container_width=True):
+        if st.button(f"{'✓ ' if is_custom else ''}Custom", key=f"preset_btn_{symbol}_custom",  use_container_width=True):
             st.session_state[preset_key] = "Custom"
             st.rerun()
 
@@ -749,7 +749,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
     display_summary = display_summary.head(int(show_top))
     for col in available_timepoints:
         if col in display_summary.columns:
-            display_summary[col] = display_summary[col].round(4)
+            display_summary[col] = pd.to_numeric(display_summary[col], errors='coerce').round(4)
 
     def _style_signal(val):
         if 'Bullish' in str(val):  return 'color: #10b981; font-weight: 600'
@@ -778,7 +778,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
         .map(_style_delta_pct, subset=['Δ %'])
         .map(_style_momentum,  subset=['Momentum'])
     )
-    st.dataframe(styled, use_container_width=True, height=460)
+    st.dataframe(styled, width='stretch', height=460)
 
     if len(summary_df) > int(show_top):
         remaining = len(summary_df) - int(show_top)
@@ -898,7 +898,7 @@ def render_stock_history(symbol: str):
         st.dataframe(
             sym_acc[show_cols].sort_values('prediction_date', ascending=False)
             .style.format({k: v for k, v in fmt.items() if k in show_cols}, na_rep='—'),
-            use_container_width=True, height=280,
+            width='stretch', height=280,
         )
 
 
@@ -982,7 +982,7 @@ def render_symbol_search(available_dates: list[str]):
             'Volume':     '{:,.0f}',
         }, na_rep='—')
         .background_gradient(subset=['Change (%)'], cmap='RdYlGn'),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -1086,7 +1086,7 @@ def render_daily_winners_tab():
         display_df.style
         .format({'Price ($)': '${:.2f}', 'Change (%)': '{:+.2f}%', 'Volume': '{:,.0f}'})
         .background_gradient(subset=['Change (%)'], cmap='PiYG'),
-        use_container_width=True, height=400,
+        width='stretch', height=400,
     )
 
     st.markdown("---")
@@ -1175,4 +1175,4 @@ def render_daily_winners_tab():
         selected_symbol,
         market_open_df, market_close_df,
         day_prior_open_df, day_prior_close_df,
-          )
+    )
