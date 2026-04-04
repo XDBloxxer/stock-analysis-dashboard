@@ -1175,4 +1175,4 @@ def render_daily_winners_tab():
         selected_symbol,
         market_open_df, market_close_df,
         day_prior_open_df, day_prior_close_df,
-  )
+          )
