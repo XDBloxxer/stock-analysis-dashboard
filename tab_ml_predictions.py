@@ -1200,6 +1200,107 @@ def _render_performance_trends():
     fig.update_yaxes(**AXIS_STYLE)
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Cumulative Gain Simulator ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### Cumulative Gain Simulator")
+    st.caption(
+        "Simulates compounding your capital by acting on the selected signal(s) "
+        "each day they fire, using that day's average actual gain, minus a "
+        "commission fee per trade. This is a simplified illustration, not a "
+        "backtest of a real execution strategy — it assumes one trade per "
+        "signal-day using the day's average gain across all matching predictions."
+    )
+
+    min_date = pos_signals["prediction_date"].min().date()
+    max_date = pos_signals["prediction_date"].max().date()
+
+    sim_c1, sim_c2, sim_c3, sim_c4 = st.columns(4)
+    with sim_c1:
+        start_capital = st.number_input(
+            "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
+            key="sim_start_capital",
+        )
+    with sim_c2:
+        commission_fee = st.number_input(
+            "Commission per trade ($)", min_value=0.0, value=0.0, step=0.5,
+            key="sim_commission_fee",
+        )
+    with sim_c3:
+        date_range = st.date_input(
+            "Date range", value=(min_date, max_date),
+            min_value=min_date, max_value=max_date,
+            key="sim_date_range",
+        )
+    with sim_c4:
+        sim_signals = st.multiselect(
+            "Signal(s) to act on", ["STRONG BUY", "BUY", "HOLD", "AVOID"],
+            default=["STRONG BUY", "BUY"], key="sim_signals",
+        )
+
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        sim_start, sim_end = date_range
+    else:
+        sim_start, sim_end = min_date, max_date
+
+    if not sim_signals:
+        st.info("Select at least one signal to run the simulation.")
+    else:
+        sim_df = pos_signals[
+            (pos_signals["predicted_signal"].isin(sim_signals))
+            & (pos_signals["prediction_date"].dt.date >= sim_start)
+            & (pos_signals["prediction_date"].dt.date <= sim_end)
+            & (pos_signals["actual_gain_pct"].notna())
+        ]
+
+        daily_trade_gain = (
+            sim_df.groupby("prediction_date")["actual_gain_pct"]
+            .mean()
+            .reset_index()
+            .sort_values("prediction_date")
+        )
+
+        if daily_trade_gain.empty:
+            st.warning("No trades match the selected signals and date range.")
+        else:
+            portfolio_values = []
+            capital = start_capital
+            for _, row in daily_trade_gain.iterrows():
+                capital = capital * (1 + row["actual_gain_pct"] / 100) - commission_fee
+                capital = max(capital, 0.0)
+                portfolio_values.append(capital)
+            daily_trade_gain["portfolio_value"] = portfolio_values
+
+            final_value  = daily_trade_gain["portfolio_value"].iloc[-1]
+            total_return = (final_value - start_capital) / start_capital * 100
+            n_trades     = len(daily_trade_gain)
+            total_fees   = n_trades * commission_fee
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Final Portfolio Value", f"${final_value:,.2f}")
+            m2.metric("Total Return", f"{total_return:+.2f}%")
+            m3.metric("Trades Simulated", f"{n_trades}")
+            m4.metric("Total Fees Paid", f"${total_fees:,.2f}")
+
+            fig = go.Figure(go.Scatter(
+                x=daily_trade_gain["prediction_date"], y=daily_trade_gain["portfolio_value"],
+                mode="lines+markers", name="Portfolio Value",
+                line=dict(color=COLORS["secondary"], width=2),
+                marker=dict(size=5),
+                fill="tozeroy", fillcolor="rgba(0,255,136,0.06)",
+            ))
+            fig.add_hline(
+                y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
+                annotation_text="Starting capital", annotation_font_size=10,
+            )
+            fig.update_layout(
+                title=f"Cumulative Portfolio Value ({', '.join(sim_signals)})",
+                xaxis_title="Date", yaxis_title="Portfolio Value ($)",
+                height=380, hovermode="x unified", **LAYOUT,
+            )
+            fig.update_xaxes(**AXIS_STYLE)
+            fig.update_yaxes(**AXIS_STYLE)
+            st.plotly_chart(fig, use_container_width=True)
+
 
 # ── Sub-tab 5 — System Info ────────────────────────────────────────────────────
 def _render_system_info():
