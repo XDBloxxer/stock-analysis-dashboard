@@ -1204,11 +1204,15 @@ def _render_performance_trends():
     st.markdown("---")
     st.markdown("#### Cumulative Gain Simulator")
     st.caption(
-        "Simulates compounding your capital by acting on the selected signal(s) "
-        "each day they fire, using that day's average actual gain, minus a "
-        "commission fee per trade. This is a simplified illustration, not a "
-        "backtest of a real execution strategy — it assumes one trade per "
-        "signal-day using the day's average gain across all matching predictions."
+        "Simulates trading each individual signal as its own position — capital "
+        "is split equally across every signal that fires on a given day, each "
+        "position resolves on its own actual gain, and commission is charged "
+        "per trade. Positions are closed out and capital is pooled back together "
+        "at the end of each day before being redistributed the next day. This "
+        "avoids inflating results by averaging gains before compounding, but "
+        "still simplifies real trading (no slippage, no partial fills, "
+        "equal-weight sizing only, and outcomes are based on this system's own "
+        "historical gain data, not independently verified fills)."
     )
 
     min_date = pos_signals["prediction_date"].min().date()
@@ -1237,6 +1241,16 @@ def _render_performance_trends():
             default=["STRONG BUY", "BUY"], key="sim_signals",
         )
 
+    max_positions = st.slider(
+        "Max concurrent positions per day (caps how thin capital gets split)",
+        min_value=1, max_value=25, value=10, key="sim_max_positions",
+        help=(
+            "If more signals fire on a given day than this, only this many "
+            "(chosen by highest predicted probability, if available) are taken "
+            "— capital isn't split across an unlimited number of positions."
+        ),
+    )
+
     if isinstance(date_range, tuple) and len(date_range) == 2:
         sim_start, sim_end = date_range
     else:
@@ -1250,39 +1264,49 @@ def _render_performance_trends():
             & (pos_signals["prediction_date"].dt.date >= sim_start)
             & (pos_signals["prediction_date"].dt.date <= sim_end)
             & (pos_signals["actual_gain_pct"].notna())
-        ]
+        ].copy()
 
-        daily_trade_gain = (
-            sim_df.groupby("prediction_date")["actual_gain_pct"]
-            .mean()
-            .reset_index()
-            .sort_values("prediction_date")
-        )
-
-        if daily_trade_gain.empty:
+        if sim_df.empty:
             st.warning("No trades match the selected signals and date range.")
         else:
-            portfolio_values = []
-            capital = start_capital
-            for _, row in daily_trade_gain.iterrows():
-                capital = capital * (1 + row["actual_gain_pct"] / 100) - commission_fee
-                capital = max(capital, 0.0)
-                portfolio_values.append(capital)
-            daily_trade_gain["portfolio_value"] = portfolio_values
+            if "predicted_probability" in sim_df.columns:
+                sim_df = sim_df.sort_values("predicted_probability", ascending=False)
 
-            final_value  = daily_trade_gain["portfolio_value"].iloc[-1]
+            records = []
+            capital = start_capital
+            for trade_date, gdf in sim_df.groupby("prediction_date", sort=True):
+                trades = gdf.head(max_positions)
+                n = len(trades)
+                if n == 0:
+                    continue
+                position_size = capital / n
+                day_end_capital = 0.0
+                for gain in trades["actual_gain_pct"]:
+                    resolved = position_size * (1 + gain / 100) - commission_fee
+                    day_end_capital += max(resolved, 0.0)
+                capital = day_end_capital
+                records.append({
+                    "prediction_date": trade_date,
+                    "trades_taken": n,
+                    "portfolio_value": capital,
+                })
+
+            sim_result = pd.DataFrame(records).sort_values("prediction_date")
+
+            final_value  = sim_result["portfolio_value"].iloc[-1]
             total_return = (final_value - start_capital) / start_capital * 100
-            n_trades     = len(daily_trade_gain)
+            n_trades     = int(sim_result["trades_taken"].sum())
+            n_days       = len(sim_result)
             total_fees   = n_trades * commission_fee
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Final Portfolio Value", f"${final_value:,.2f}")
             m2.metric("Total Return", f"{total_return:+.2f}%")
-            m3.metric("Trades Simulated", f"{n_trades}")
+            m3.metric("Trades Simulated", f"{n_trades} across {n_days} day(s)")
             m4.metric("Total Fees Paid", f"${total_fees:,.2f}")
 
             fig = go.Figure(go.Scatter(
-                x=daily_trade_gain["prediction_date"], y=daily_trade_gain["portfolio_value"],
+                x=sim_result["prediction_date"], y=sim_result["portfolio_value"],
                 mode="lines+markers", name="Portfolio Value",
                 line=dict(color=COLORS["secondary"], width=2),
                 marker=dict(size=5),
@@ -1293,13 +1317,21 @@ def _render_performance_trends():
                 annotation_text="Starting capital", annotation_font_size=10,
             )
             fig.update_layout(
-                title=f"Cumulative Portfolio Value ({', '.join(sim_signals)})",
+                title=f"Cumulative Portfolio Value — Per-Trade Simulation ({', '.join(sim_signals)})",
                 xaxis_title="Date", yaxis_title="Portfolio Value ($)",
                 height=380, hovermode="x unified", **LAYOUT,
             )
             fig.update_xaxes(**AXIS_STYLE)
             fig.update_yaxes(**AXIS_STYLE)
             st.plotly_chart(fig, use_container_width=True)
+
+            st.caption(
+                "Note: results still assume every simulated trade could actually "
+                "be filled at the recorded actual gain, with no slippage, no "
+                "market-impact cost, and unlimited liquidity — treat this as a "
+                "best-case illustration of the model's signal quality, not a "
+                "guarantee of real-world tradeable returns."
+            )
 
 
 # ── Sub-tab 5 — System Info ────────────────────────────────────────────────────
