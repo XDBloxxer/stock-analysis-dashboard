@@ -17,9 +17,11 @@ CACHE STRATEGY: UNCHANGED — all Supabase fetching methods identical to v4.
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 
 from db import get_supabase_client
@@ -27,11 +29,16 @@ from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, 
 
 TAB_ID = "ml_predictions"
 
+# Row cap used by _get_table_full — surfaced in the UI when a fetch hits it,
+# so a truncated view doesn't silently look like a complete one.
+_TABLE_ROW_CAP = 500
+
 _DATE_COL = {
     "ml_explosion_predictions": "prediction_date",
     "ml_prediction_accuracy":   "prediction_date",
     "ml_missed_opportunities":  "detection_date",
     "ml_screening_logs":        "screening_date",
+    "ml_feature_importance":   "training_date",
 }
 
 _SELECT = {
@@ -50,9 +57,15 @@ _SELECT = {
         "predicted_probability,predicted_signal"
     ),
     "ml_screening_logs": "*",
+    "ml_feature_importance": "training_date,feature_name,importance,rank",
 }
 
-_ALL_TABLES = list(_DATE_COL.keys())
+# Tables that are known/required — used for cache refresh and System Info.
+_ALL_TABLES = [t for t in _DATE_COL.keys() if t != "ml_feature_importance"]
+# Tables that may not exist yet in every deployment — fetched quietly, no
+# warnings if missing, since they're an optional enhancement (see
+# _get_table_optional below).
+_OPTIONAL_TABLES = ["ml_feature_importance"]
 
 # ── TradingView exchange prefix mapping ───────────────────────────────────────
 _TV_EXCHANGE_MAP = {
@@ -138,10 +151,33 @@ def _get_table_full(table_name: str) -> pd.DataFrame:
         query      = client.table(table_name).select(select_str)
         if date_col:
             query = query.order(date_col, desc=True)
-        response = query.limit(500).execute()
-        return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        response = query.limit(_TABLE_ROW_CAP).execute()
+        df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        # Tag whether this fetch hit the row cap, so callers can warn the user
+        # instead of silently showing a truncated "Latest Predictions" view.
+        df.attrs["truncated"] = len(df) >= _TABLE_ROW_CAP
+        return df
     except Exception as e:
         st.warning(f"Could not load `{table_name}`: {e}")
+        return pd.DataFrame()
+
+
+def _get_table_optional(table_name: str) -> pd.DataFrame:
+    """
+    Like _get_table_full, but for tables that are an optional enhancement
+    (e.g. feature importance) and may not exist in every deployment yet.
+    Fails silently instead of showing a warning banner.
+    """
+    try:
+        client     = get_supabase_client()
+        date_col   = _DATE_COL.get(table_name)
+        select_str = _SELECT.get(table_name, "*")
+        query      = client.table(table_name).select(select_str)
+        if date_col:
+            query = query.order(date_col, desc=True)
+        response = query.limit(_TABLE_ROW_CAP).execute()
+        return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    except Exception:
         return pd.DataFrame()
 
 
@@ -175,6 +211,95 @@ def _get_table_all(table_name: str) -> pd.DataFrame:
     except Exception as e:
         st.warning(f"Could not load full history for `{table_name}`: {e}")
         return pd.DataFrame()
+
+
+# ── Statistics helpers (model diagnostics) ────────────────────────────────────
+def _wilson_ci(k: int, n: int, z: float = 1.96):
+    """
+    Wilson score interval for a binomial proportion. Far better-behaved than
+    a normal-approximation interval for small n or extreme proportions (both
+    common here — a single day can have only a handful of positive calls).
+    Returns (lower, upper) as fractions in [0, 1]. (nan, nan) if n == 0.
+    """
+    if n == 0:
+        return (np.nan, np.nan)
+    phat = k / n
+    denom = 1 + z**2 / n
+    center = (phat + z*z / (2*n)) / denom
+    half = (z * np.sqrt((phat*(1-phat) + z*z/(4*n)) / n)) / denom
+    return (max(0.0, center - half), min(1.0, center + half))
+
+
+def _roc_curve(y_true: np.ndarray, y_score: np.ndarray):
+    """
+    Minimal ROC curve + AUC computed from scratch (no sklearn dependency).
+    Returns (fpr, tpr, auc). y_true is 0/1, y_score is a continuous score.
+    """
+    order = np.argsort(-y_score)
+    y_true = y_true[order]
+    P = y_true.sum()
+    N = len(y_true) - P
+    if P == 0 or N == 0:
+        return None, None, np.nan
+    tps = np.cumsum(y_true)
+    fps = np.cumsum(1 - y_true)
+    tpr = np.concatenate(([0.0], tps / P, [1.0]))
+    fpr = np.concatenate(([0.0], fps / N, [1.0]))
+    auc = np.trapz(tpr, fpr)
+    return fpr, tpr, auc
+
+
+def _pr_curve(y_true: np.ndarray, y_score: np.ndarray):
+    """
+    Minimal precision-recall curve + average precision, computed from
+    scratch. Returns (recall, precision, avg_precision).
+    """
+    order = np.argsort(-y_score)
+    y_true = y_true[order]
+    P = y_true.sum()
+    if P == 0:
+        return None, None, np.nan
+    tps = np.cumsum(y_true)
+    fps = np.cumsum(1 - y_true)
+    precision = tps / (tps + fps)
+    recall = tps / P
+    # Average precision: step-wise area under PR curve (matches sklearn's
+    # definition, weighting by the change in recall).
+    recall_pad = np.concatenate(([0.0], recall))
+    precision_pad = np.concatenate(([precision[0]], precision))
+    ap = np.sum(np.diff(recall_pad) * precision_pad[1:])
+    return recall, precision, ap
+
+
+def _calibration_bins(y_true: np.ndarray, y_score: np.ndarray, n_bins: int = 10):
+    """
+    Reliability-diagram bins: for each bin of predicted probability, the mean
+    predicted probability vs. the empirical win rate, plus bin size. Uses
+    quantile-based bins so each bin has similar sample size (fixed-width bins
+    are misleading here since most scores cluster in a narrow range).
+    """
+    df = pd.DataFrame({"y": y_true, "p": y_score}).dropna()
+    if len(df) < n_bins:
+        n_bins = max(1, len(df) // 2) or 1
+    if n_bins == 0 or df.empty:
+        return pd.DataFrame(columns=["mean_pred", "empirical_rate", "count"])
+    try:
+        df["bin"] = pd.qcut(df["p"], q=n_bins, duplicates="drop")
+    except ValueError:
+        return pd.DataFrame(columns=["mean_pred", "empirical_rate", "count"])
+    grouped = df.groupby("bin", observed=True).agg(
+        mean_pred=("p", "mean"),
+        empirical_rate=("y", "mean"),
+        count=("y", "size"),
+    ).reset_index(drop=True)
+    return grouped
+
+
+def _brier_score(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    mask = ~np.isnan(y_true) & ~np.isnan(y_score)
+    if mask.sum() == 0:
+        return np.nan
+    return float(np.mean((y_score[mask] - y_true[mask]) ** 2))
 
 
 # ── Cache control (UNCHANGED) ─────────────────────────────────────────────────
