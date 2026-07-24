@@ -145,6 +145,38 @@ def _get_table_full(table_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(show_spinner=False)
+def _get_table_all(table_name: str) -> pd.DataFrame:
+    """
+    Like _get_table_full but paginates through the ENTIRE table instead of
+    stopping at 500 rows. Used for charts that need full history (e.g. the
+    Performance Trends tab) rather than just the most recent slice.
+    """
+    try:
+        client     = get_supabase_client()
+        date_col   = _DATE_COL.get(table_name)
+        select_str = _SELECT.get(table_name, "*")
+        page_size  = 1000
+        offset     = 0
+        frames     = []
+        while True:
+            query = client.table(table_name).select(select_str)
+            if date_col:
+                query = query.order(date_col, desc=False)
+            response = query.range(offset, offset + page_size - 1).execute()
+            rows = response.data or []
+            if not rows:
+                break
+            frames.append(pd.DataFrame(rows))
+            if len(rows) < page_size:
+                break
+            offset += page_size
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    except Exception as e:
+        st.warning(f"Could not load full history for `{table_name}`: {e}")
+        return pd.DataFrame()
+
+
 # ── Cache control (UNCHANGED) ─────────────────────────────────────────────────
 def clear_all_cache():
     _get_table_full.clear()
@@ -1021,7 +1053,7 @@ def _render_missed_opportunities():
 def _render_performance_trends():
     st.markdown("#### Model Performance Trends")
 
-    all_acc = _get_table_full("ml_prediction_accuracy")
+    all_acc = _get_table_all("ml_prediction_accuracy")
     if all_acc.empty:
         st.warning("No accuracy data available yet.")
         return
@@ -1116,61 +1148,57 @@ def _render_performance_trends():
         st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-    st.markdown("#### Performance by Signal Type")
+    st.markdown("#### Average Gain Over Time by Signal")
 
-    pos_signals = all_acc[all_acc["predicted_signal"].isin(["STRONG BUY", "BUY", "HOLD", "AVOID"])]
+    pos_signals = all_acc[all_acc["predicted_signal"].isin(["STRONG BUY", "BUY", "HOLD", "AVOID"])].copy()
+    pos_signals["prediction_date"] = pd.to_datetime(pos_signals["prediction_date"])
 
-    def _sig_agg(gdf):
-        total    = len(gdf)
-        hits     = int(gdf["became_winner"].sum())
-        avg_prob = gdf["predicted_probability"].mean() * 100
-        avg_gain = gdf.loc[ gdf["became_winner"] & gdf["actual_gain_pct"].notna(), "actual_gain_pct"].mean()
-        avg_loss = gdf.loc[~gdf["became_winner"] & gdf["actual_gain_pct"].notna(), "actual_gain_pct"].mean()
-        return pd.Series({
-            "total_predictions": total, "became_winner": hits,
-            "success_rate_pct":  hits / total * 100 if total else 0,
-            "avg_probability":   avg_prob,
-            "avg_gain_correct":  avg_gain,
-            "avg_gain_wrong":    avg_loss,
-        })
+    # Auto pick daily vs weekly bucketing based on how much history is available —
+    # daily stays readable up to ~60 unique days, otherwise roll up to weekly.
+    n_dates = pos_signals["prediction_date"].nunique()
+    use_weekly = n_dates > 60
 
-    sig_perf = pos_signals.groupby("predicted_signal").apply(_sig_agg).reset_index()
+    if use_weekly:
+        pos_signals["bucket"] = pos_signals["prediction_date"].dt.to_period("W").apply(lambda p: p.start_time)
+        bucket_label = "Week Of"
+    else:
+        pos_signals["bucket"] = pos_signals["prediction_date"]
+        bucket_label = "Date"
 
-    col_bar, col_tbl = st.columns([2, 3])
+    gain_by_signal = (
+        pos_signals[pos_signals["actual_gain_pct"].notna()]
+        .groupby(["bucket", "predicted_signal"])["actual_gain_pct"]
+        .mean()
+        .reset_index()
+        .sort_values("bucket")
+    )
 
-    with col_bar:
-        fig = go.Figure(go.Bar(
-            x=sig_perf["predicted_signal"],
-            y=sig_perf["success_rate_pct"],
-            text=sig_perf["success_rate_pct"].map(lambda x: f"{x:.1f}%"),
-            textposition="outside",
-            marker_color=[SIGNAL_COLORS.get(s, "#999") for s in sig_perf["predicted_signal"]],
-            opacity=0.9,
+    period_note = "weekly" if use_weekly else "daily"
+    st.caption(
+        f"Showing {period_note} average actual gain per signal, across all {n_dates} "
+        f"day(s) of available history."
+    )
+
+    fig = go.Figure()
+    for signal in ["STRONG BUY", "BUY", "HOLD", "AVOID"]:
+        sdf = gain_by_signal[gain_by_signal["predicted_signal"] == signal]
+        if sdf.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=sdf["bucket"], y=sdf["actual_gain_pct"],
+            mode="lines+markers", name=signal,
+            line=dict(color=SIGNAL_COLORS.get(signal, "#999"), width=2),
+            marker=dict(size=6),
         ))
-        fig.update_layout(
-            title="Success Rate by Signal",
-            xaxis_title="Signal", yaxis_title="Success Rate (%)",
-            height=300, **LAYOUT,
-        )
-        fig.update_xaxes(**AXIS_STYLE)
-        fig.update_yaxes(**AXIS_STYLE)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_tbl:
-        st.dataframe(
-            sig_perf.style.format(
-                {
-                    "success_rate_pct": "{:.2f}%",
-                    "avg_probability":  "{:.2f}%",
-                    "avg_gain_correct": "+{:.2f}%",
-                    "avg_gain_wrong":   "{:.2f}%",
-                },
-                na_rep="—",
-            ),
-            use_container_width=True,
-            hide_index=True,
-            height=280,
-        )
+    fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.12)")
+    fig.update_layout(
+        title=f"Average Gain ({period_note.capitalize()}) by Signal",
+        xaxis_title=bucket_label, yaxis_title="Avg Gain %",
+        height=380, hovermode="x unified", **LAYOUT,
+    )
+    fig.update_xaxes(**AXIS_STYLE)
+    fig.update_yaxes(**AXIS_STYLE)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ── Sub-tab 5 — System Info ────────────────────────────────────────────────────
