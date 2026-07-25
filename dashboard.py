@@ -97,13 +97,13 @@ def main():
         st.stop()
 
     tab1, tab2, tab3 = st.tabs([
+        "Today's Picks",
         "Daily Winners",
-        "ML Predictions",
         "Strategy Backtesting",
     ])
 
-    with tab1: render_daily_winners_tab()
-    with tab2: render_ml_predictions_tab()
+    with tab1: render_ml_predictions_tab()
+    with tab2: render_daily_winners_tab()
     with tab3: render_backtesting_tab()
 
 
