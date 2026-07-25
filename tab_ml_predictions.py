@@ -1223,9 +1223,16 @@ def _render_performance_trends():
         slope, intercept = np.polyfit(x_ordinal[mask], y[mask], 1)
         return slope * x_ordinal + intercept
 
+    _METRIC_EXPLAINERS = {
+        "accuracy_pct":  "Of all predictions made, the % that turned out correct (winner predicted as winner, non-winner predicted as non-winner).",
+        "precision_pct": "Of the stocks the model flagged as BUY/STRONG BUY, the % that actually became winners. High precision = few false alarms.",
+        "recall_pct":    "Of the stocks that actually became winners, the % the model successfully flagged as BUY/STRONG BUY. High recall = few missed winners.",
+    }
+
     def _metric_panel(col, metric: str, color: str, name: str):
         with col:
             st.markdown(f"**{name}**")
+            st.caption(_METRIC_EXPLAINERS[metric])
 
             dates  = pd.to_datetime(daily["prediction_date"])
             x_ord  = dates.map(lambda d: d.toordinal()).to_numpy(dtype=float)
