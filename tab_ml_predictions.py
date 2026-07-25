@@ -392,12 +392,6 @@ def render_ml_predictions_tab():
         refresh_cache()
         st.rerun()
 
-    st.subheader("Today's Picks")
-    st.caption(
-        "What the model is telling you to buy right now, plus how the system "
-        "as a whole has performed over time."
-    )
-
     subtab1, subtab2, subtab3, subtab4, subtab5 = st.tabs([
         "Today's Picks",
         "Predictions vs Actuals",
@@ -735,6 +729,9 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
 # ── Sub-tab 1 — Latest Predictions ────────────────────────────────────────────
 def _render_latest_predictions():
+    st.subheader("Today's Picks")
+    st.caption("What the model is telling you to buy right now.")
+
     all_preds = _get_table_full("ml_explosion_predictions")
 
     if all_preds.empty:
@@ -879,6 +876,8 @@ def _render_latest_predictions():
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
 def _render_predictions_vs_actuals():
+    st.subheader("Predictions vs Actuals")
+    st.caption("How past predictions compared to what actually happened.")
     st.markdown("#### Prediction Accuracy Analysis")
 
     all_acc = _get_table_full("ml_prediction_accuracy")
@@ -1024,6 +1023,7 @@ def _render_predictions_vs_actuals():
 
 # ── Sub-tab 3 — Missed Opportunities ──────────────────────────────────────────
 def _render_missed_opportunities():
+    st.subheader("Missed Opportunities")
     st.markdown("#### Missed Opportunities — Recall Analysis")
     st.caption("Winners the model didn't predict.")
 
@@ -1121,6 +1121,8 @@ def _render_missed_opportunities():
 
 # ── Sub-tab 4 — Performance Trends ────────────────────────────────────────────
 def _render_performance_trends():
+    st.subheader("Performance Trends")
+    st.caption("How the system as a whole has performed over time.")
     st.markdown("#### Model Performance Trends")
 
     all_acc = _get_table_all("ml_prediction_accuracy")
@@ -1307,6 +1309,7 @@ def _render_performance_trends():
 
 # ── Sub-tab 5 — System Info ────────────────────────────────────────────────────
 def _render_system_info():
+    st.subheader("System Info")
     st.markdown("#### System Information")
 
     log_df = _get_table_full("ml_screening_logs")
