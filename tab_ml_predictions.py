@@ -754,12 +754,10 @@ def _render_latest_predictions():
         )
     with col_notice:
         pred_dt = datetime.fromisoformat(selected_date).date()
-        st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
         if pred_dt >= datetime.now().date():
+            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
             st.success("Forward-looking predictions")
-        else:
-            st.info("Historical — see Predictions vs Actuals for outcomes")
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
     df = all_preds[all_preds["prediction_date"] == selected_date].copy()
     if df.empty:
@@ -846,27 +844,48 @@ def _render_latest_predictions():
             key=f"{TAB_ID}_picks_dl",
         )
 
-    # ── All-time win rate — quick trust signal right under the picks ───────────
-    acc_df = _get_table_full("ml_prediction_accuracy")
-    if not acc_df.empty and "predicted_signal" in acc_df.columns:
-        acc_copy = acc_df.copy()
-        acc_copy["became_winner"] = acc_copy["became_winner"].astype(bool)
-        sig_win = acc_copy.groupby("predicted_signal")["became_winner"].mean() * 100
-
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-        sig_order = ["STRONG BUY", "BUY", "HOLD", "AVOID"]
-        wr_cols   = st.columns(len(sig_order))
-        for i, sig in enumerate(sig_order):
-            if sig in sig_win.index:
-                wr = sig_win[sig]
-                with wr_cols[i]:
-                    st.metric(f"{sig.title()} — historical win rate", f"{wr:.1f}%")
-
     st.markdown("---")
 
+    # ── Filters — light, always visible, drive both the live view and table ──
+    with st.expander("Filter predictions", expanded=False):
+        fc1, fc2, fc3 = st.columns(3)
+        with fc1:
+            sig_filter = st.multiselect(
+                "Signal",
+                ["STRONG BUY", "BUY", "HOLD", "AVOID"],
+                default=["STRONG BUY", "BUY", "HOLD", "AVOID"],
+                key=f"{TAB_ID}_sig_f",
+            )
+        with fc2:
+            min_prob = st.slider("Min Probability %", 0, 100, 0, key=f"{TAB_ID}_prob_f")
+        with fc3:
+            min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
+
+    fdf = df[
+        df["signal"].isin(sig_filter) &
+        (df["explosion_probability"] >= min_prob / 100) &
+        (df["target_gain_pct"] >= min_tgt)
+    ].copy()
+
+    # Sort by signal strength then probability
+    signal_order = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "AVOID": 3}
+    fdf["_sig_rank"] = fdf["signal"].map(signal_order).fillna(9)
+    fdf = fdf.sort_values(["_sig_rank", "explosion_probability"], ascending=[True, False]).drop(columns=["_sig_rank"])
+
+    st.caption(f"{len(fdf)} stocks match current filters")
+
+    if fdf.empty:
+        st.warning("No stocks match the filters.")
+        return
+
     # ══════════════════════════════════════════════════════════════════════════
-    # Everything below is diagnostic / exploratory detail, not action items —
-    # collapsed by default so it doesn't compete with the picks above.
+    # Live Market View — surfaced immediately, not buried behind a table/expander
+    # ══════════════════════════════════════════════════════════════════════════
+    _render_live_market_table(fdf)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Everything below is diagnostic / exploratory detail (accuracy stats live
+    # on Performance Trends already) — collapsed so it doesn't compete above.
     # ══════════════════════════════════════════════════════════════════════════
     with st.expander(f"Full screening results & diagnostics — {len(df)} stocks screened", expanded=False):
         # ── Summary metrics ─────────────────────────────────────────────────
@@ -931,83 +950,43 @@ def _render_latest_predictions():
             fig.update_layout(title="Signal Breakdown", height=300, **LAYOUT)
             st.plotly_chart(fig, use_container_width=True)
 
-        # ── Filters ──────────────────────────────────────────────────────────
+        # ── Predictions table ────────────────────────────────────────────────
         st.markdown("---")
-        with st.expander("Filter predictions", expanded=True):
-            fc1, fc2, fc3 = st.columns(3)
-            with fc1:
-                sig_filter = st.multiselect(
-                    "Signal",
-                    ["STRONG BUY", "BUY", "HOLD", "AVOID"],
-                    default=["STRONG BUY", "BUY", "HOLD", "AVOID"],
-                    key=f"{TAB_ID}_sig_f",
-                )
-            with fc2:
-                min_prob = st.slider("Min Probability %", 0, 100, 0, key=f"{TAB_ID}_prob_f")
-            with fc3:
-                min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
+        fdf_display = fdf.copy()
+        fdf_display["explosion_probability"] = fdf_display["explosion_probability"] * 100
 
-        fdf = df[
-            df["signal"].isin(sig_filter) &
-            (df["explosion_probability"] >= min_prob / 100) &
-            (df["target_gain_pct"] >= min_tgt)
-        ].copy()
+        def _highlight_sig(row):
+            return [f"background-color: {SIGNAL_BG.get(row['signal'], '')}"] * len(row)
 
-        # Sort by signal strength then probability
-        signal_order = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "AVOID": 3}
-        fdf["_sig_rank"] = fdf["signal"].map(signal_order).fillna(9)
-        fdf = fdf.sort_values(["_sig_rank", "explosion_probability"], ascending=[True, False]).drop(columns=["_sig_rank"])
-
-        st.caption(f"{len(fdf)} stocks match current filters")
-
-        if fdf.empty:
-            st.warning("No stocks match the filters.")
-            return
-
-        # ── View switcher — tab-style, instant, no rerun ──────────────────────
-        view_tab_static, view_tab_live = st.tabs(["🗃 Predictions Table", "📡 Live Market View"])
-
-        with view_tab_static:
-            # ── Original static dataframe table (default) ──────────────────────
-            fdf_display = fdf.copy()
-            fdf_display["explosion_probability"] = fdf_display["explosion_probability"] * 100
-
-            def _highlight_sig(row):
-                return [f"background-color: {SIGNAL_BG.get(row['signal'], '')}"] * len(row)
-
-            display_cols = [
-                c for c in [
-                    "symbol", "exchange", "signal", "explosion_probability",
-                    "current_price", "target_price", "target_gain_pct",
-                    "target_price_low", "target_price_high",
-                ] if c in fdf_display.columns
-            ]
-            st.dataframe(
-                fdf_display[display_cols].style.format(
-                    {
-                        "explosion_probability": "{:.2f}%",
-                        "current_price":         "${:.2f}",
-                        "target_price":          "${:.2f}",
-                        "target_price_low":      "${:.2f}",
-                        "target_price_high":     "${:.2f}",
-                        "target_gain_pct":       "+{:.2f}%",
-                    },
-                    na_rep="—",
-                ).apply(_highlight_sig, axis=1),
-                use_container_width=True,
-                height=420,
-            )
-            st.download_button(
-                "Download CSV",
-                fdf[display_cols].to_csv(index=False),
-                f"ml_predictions_{selected_date}.csv",
-                "text/csv",
-                key=f"{TAB_ID}_dl",
-            )
-
-        with view_tab_live:
-            # ── Live Market Table — all stocks, inline ─────────────────────────
-            _render_live_market_table(fdf)
+        display_cols = [
+            c for c in [
+                "symbol", "exchange", "signal", "explosion_probability",
+                "current_price", "target_price", "target_gain_pct",
+                "target_price_low", "target_price_high",
+            ] if c in fdf_display.columns
+        ]
+        st.dataframe(
+            fdf_display[display_cols].style.format(
+                {
+                    "explosion_probability": "{:.2f}%",
+                    "current_price":         "${:.2f}",
+                    "target_price":          "${:.2f}",
+                    "target_price_low":      "${:.2f}",
+                    "target_price_high":     "${:.2f}",
+                    "target_gain_pct":       "+{:.2f}%",
+                },
+                na_rep="—",
+            ).apply(_highlight_sig, axis=1),
+            use_container_width=True,
+            height=420,
+        )
+        st.download_button(
+            "Download CSV",
+            fdf[display_cols].to_csv(index=False),
+            f"ml_predictions_{selected_date}.csv",
+            "text/csv",
+            key=f"{TAB_ID}_dl",
+        )
 
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
