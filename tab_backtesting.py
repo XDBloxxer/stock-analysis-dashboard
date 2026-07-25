@@ -15,7 +15,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
-from db import get_supabase_client
+from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import LAYOUT, AXIS_STYLE, COLORS
 from cache_ui import render_cache_buttons
 
@@ -41,12 +41,15 @@ def _get_table_all() -> pd.DataFrame:
         offset    = 0
         frames    = []
         while True:
-            query = (
-                client.table(_TABLE_NAME)
-                .select(_SELECT)
-                .order(_DATE_COL, desc=False)
-            )
-            response = query.range(offset, offset + page_size - 1).execute()
+            def _run(offset=offset):
+                query = (
+                    client.table(_TABLE_NAME)
+                    .select(_SELECT)
+                    .order(_DATE_COL, desc=False)
+                )
+                return query.range(offset, offset + page_size - 1).execute()
+
+            response = run_with_retry(_run, source=f"_get_table_all({_TABLE_NAME})")
             rows = response.data or []
             if not rows:
                 break
@@ -56,6 +59,7 @@ def _get_table_all() -> pd.DataFrame:
             offset += page_size
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     except Exception as e:
+        log_debug_error(f"_get_table_all({_TABLE_NAME})", e)
         st.warning(f"Could not load full history for `{_TABLE_NAME}`: {e}")
         return pd.DataFrame()
 
