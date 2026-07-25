@@ -37,7 +37,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import os
 
-from db import get_supabase_client
+from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
 
@@ -106,6 +106,18 @@ _INDICATOR_THRESHOLDS = {
 
 PALETTE = COLORS['series']
 
+# Row cap for a single date's winners list — surfaced via _warn_if_truncated
+# so a truncated view doesn't silently look like a complete one.
+_WINNERS_ROW_CAP = 200
+
+
+def _warn_if_truncated(df: pd.DataFrame, label: str) -> None:
+    if not df.empty and df.attrs.get("truncated"):
+        st.caption(
+            f"⚠️ Showing the first {_WINNERS_ROW_CAP} rows for {label} — "
+            "more rows exist but aren't loaded in this view."
+        )
+
 
 # ── Cached DB fetchers ─────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
@@ -119,18 +131,23 @@ def _get_all_dates() -> list[str]:
     on whatever the newest date in that stale window happened to be.
     """
     try:
-        client   = get_supabase_client()
-        response = (
-            client.table("daily_winners")
-            .select("detection_date")
-            .order("detection_date", desc=True)   # ← THE FIX
-            .limit(500)
-            .execute()
-        )
+        client = get_supabase_client()
+
+        def _run():
+            return (
+                client.table("daily_winners")
+                .select("detection_date")
+                .order("detection_date", desc=True)   # ← THE FIX
+                .limit(500)
+                .execute()
+            )
+
+        response = run_with_retry(_run, source="_get_all_dates")
         if response.data:
             return sorted(set(row["detection_date"] for row in response.data), reverse=True)
         return []
     except Exception as e:
+        log_debug_error("_get_all_dates", e)
         st.error(f"Error loading dates: {e}")
         return []
 
@@ -138,19 +155,25 @@ def _get_all_dates() -> list[str]:
 @st.cache_data(show_spinner=False)
 def _get_table_for_date(table_name: str, date: str) -> pd.DataFrame:
     try:
-        client   = get_supabase_client()
-        response = (
-            client.table(table_name)
-            .select("*")
-            .eq("detection_date", date)
-            .limit(200)
-            .execute()
-        )
+        client = get_supabase_client()
+
+        def _run():
+            return (
+                client.table(table_name)
+                .select("*")
+                .eq("detection_date", date)
+                .limit(_WINNERS_ROW_CAP)
+                .execute()
+            )
+
+        response = run_with_retry(_run, source=f"_get_table_for_date({table_name},{date})")
         if not response.data:
             return pd.DataFrame()
 
         df = pd.DataFrame(response.data)
         df = df.dropna(how='all')
+        # Tag whether this fetch hit the row cap (see _warn_if_truncated).
+        df.attrs["truncated"] = len(response.data) >= _WINNERS_ROW_CAP
 
         rename_map = {
             'macd.macd':    'macd_value',
@@ -176,6 +199,7 @@ def _get_table_for_date(table_name: str, date: str) -> pd.DataFrame:
             df['symbol'] = df['symbol'].str.strip().str.upper()
         return df
     except Exception as e:
+        log_debug_error(f"_get_table_for_date({table_name},{date})", e)
         st.warning(f"Could not load {table_name} for {date}: {e}")
         return pd.DataFrame()
 
@@ -193,18 +217,23 @@ def refresh_cache():
         return
     latest_cached = max(existing_dates)
     try:
-        client   = get_supabase_client()
-        response = (
-            client.table("daily_winners")
-            .select("detection_date")
-            .gt("detection_date", latest_cached)
-            .limit(500)
-            .execute()
-        )
+        client = get_supabase_client()
+
+        def _run():
+            return (
+                client.table("daily_winners")
+                .select("detection_date")
+                .gt("detection_date", latest_cached)
+                .limit(500)
+                .execute()
+            )
+
+        response = run_with_retry(_run, source="refresh_cache")
         new_dates = []
         if response.data:
             new_dates = sorted(set(row["detection_date"] for row in response.data), reverse=True)
     except Exception as e:
+        log_debug_error("refresh_cache", e)
         st.error(f"Error checking for new dates: {e}")
         return
     if not new_dates:
@@ -1002,6 +1031,8 @@ def render_daily_winners_tab():
     market_close_df    = _get_table_for_date("winners_market_close",    selected_date)
     day_prior_open_df  = _get_table_for_date("winners_day_prior_open",  selected_date)
     day_prior_close_df = _get_table_for_date("winners_day_prior_close", selected_date)
+
+    _warn_if_truncated(winners_df, f"daily_winners on {selected_date}")
 
     if winners_df.empty:
         _skeleton_metrics(5)
