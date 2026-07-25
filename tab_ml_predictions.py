@@ -764,13 +764,6 @@ def _render_latest_predictions():
         st.warning(f"No predictions for {selected_date}")
         return
 
-    # Delta vs previous date (used down in the diagnostics section)
-    prev_df = pd.DataFrame()
-    date_idx = dates.index(selected_date)
-    if date_idx + 1 < len(dates):
-        prev_date = dates[date_idx + 1]
-        prev_df   = all_preds[all_preds["prediction_date"] == prev_date].copy()
-
     # ══════════════════════════════════════════════════════════════════════════
     # TODAY'S PICKS — the thing partners actually open this dashboard for.
     # Everything else on this sub-tab is supporting detail, tucked away below.
@@ -882,111 +875,6 @@ def _render_latest_predictions():
     # Live Market View — surfaced immediately, not buried behind a table/expander
     # ══════════════════════════════════════════════════════════════════════════
     _render_live_market_table(fdf)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Everything below is diagnostic / exploratory detail (accuracy stats live
-    # on Performance Trends already) — collapsed so it doesn't compete above.
-    # ══════════════════════════════════════════════════════════════════════════
-    with st.expander(f"Full screening results & diagnostics — {len(df)} stocks screened", expanded=False):
-        # ── Summary metrics ─────────────────────────────────────────────────
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric(
-            "Screened",
-            len(df),
-            delta=f"{len(df)-len(prev_df):+.0f} vs prev" if not prev_df.empty else None,
-        )
-        col2.metric("Strong Buy", int((df["signal"] == "STRONG BUY").sum()))
-        col3.metric("Buy",        int((df["signal"] == "BUY").sum()))
-        col4.metric(
-            "Avg Probability",
-            f"{df['explosion_probability'].mean() * 100:.1f}%",
-            delta=(
-                f"{(df['explosion_probability'].mean() - prev_df['explosion_probability'].mean()) * 100:+.1f}% vs prev"
-                if not prev_df.empty else None
-            ),
-        )
-        col5.metric(
-            "Avg Target Gain",
-            f"+{df['target_gain_pct'].mean():.1f}%",
-            delta=(
-                f"{df['target_gain_pct'].mean() - prev_df['target_gain_pct'].mean():+.1f}% vs prev"
-                if not prev_df.empty else None
-            ),
-        )
-
-        # ── Charts ───────────────────────────────────────────────────────────
-        st.markdown("---")
-        col_left, col_right = st.columns(2)
-
-        with col_left:
-            fig = go.Figure(go.Histogram(
-                x=df["explosion_probability"] * 100,
-                nbinsx=20,
-                marker_color=COLORS["primary"],
-                opacity=0.85,
-            ))
-            fig.update_layout(
-                title="Probability Distribution",
-                xaxis_title="Probability (%)",
-                yaxis_title="Count",
-                height=300,
-                showlegend=False,
-                **LAYOUT,
-            )
-            fig.update_xaxes(**AXIS_STYLE)
-            fig.update_yaxes(**AXIS_STYLE)
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col_right:
-            sc  = df["signal"].value_counts()
-            fig = go.Figure(go.Pie(
-                labels=sc.index,
-                values=sc.values,
-                marker=dict(colors=[SIGNAL_COLORS.get(s, "#999") for s in sc.index]),
-                hole=0.5,
-                textinfo="label+percent",
-                textfont=dict(size=11, family="DM Mono, monospace"),
-            ))
-            fig.update_layout(title="Signal Breakdown", height=300, **LAYOUT)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # ── Predictions table ────────────────────────────────────────────────
-        st.markdown("---")
-        fdf_display = fdf.copy()
-        fdf_display["explosion_probability"] = fdf_display["explosion_probability"] * 100
-
-        def _highlight_sig(row):
-            return [f"background-color: {SIGNAL_BG.get(row['signal'], '')}"] * len(row)
-
-        display_cols = [
-            c for c in [
-                "symbol", "exchange", "signal", "explosion_probability",
-                "current_price", "target_price", "target_gain_pct",
-                "target_price_low", "target_price_high",
-            ] if c in fdf_display.columns
-        ]
-        st.dataframe(
-            fdf_display[display_cols].style.format(
-                {
-                    "explosion_probability": "{:.2f}%",
-                    "current_price":         "${:.2f}",
-                    "target_price":          "${:.2f}",
-                    "target_price_low":      "${:.2f}",
-                    "target_price_high":     "${:.2f}",
-                    "target_gain_pct":       "+{:.2f}%",
-                },
-                na_rep="—",
-            ).apply(_highlight_sig, axis=1),
-            use_container_width=True,
-            height=420,
-        )
-        st.download_button(
-            "Download CSV",
-            fdf[display_cols].to_csv(index=False),
-            f"ml_predictions_{selected_date}.csv",
-            "text/csv",
-            key=f"{TAB_ID}_dl",
-        )
 
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
