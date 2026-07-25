@@ -1161,6 +1161,64 @@ def _render_performance_trends():
         .sort_values("prediction_date")
     )
 
+    # ── Drift indicator ──────────────────────────────────────────────────
+    # Pools raw counts (rather than averaging daily percentages) so the
+    # recent window isn't skewed by a single thin day. Compares the most
+    # recent DRIFT_WINDOW_DAYS of predictions against everything before
+    # that window, and flags it if precision has meaningfully degraded.
+    DRIFT_WINDOW_DAYS = 14
+    DRIFT_MIN_SAMPLE  = 5     # min BUY/STRONG BUY calls needed on each side to trust the comparison
+    DRIFT_ALERT_PTS   = 10    # precision drop (percentage points) that triggers a warning
+
+    dates_sorted = pd.to_datetime(all_acc["prediction_date"]).sort_values()
+    if not dates_sorted.empty:
+        cutoff = dates_sorted.max() - pd.Timedelta(days=DRIFT_WINDOW_DAYS)
+        acc_dates = pd.to_datetime(all_acc["prediction_date"])
+        recent_mask   = acc_dates > cutoff
+        baseline_mask = ~recent_mask
+
+        def _pooled_precision(mask):
+            gdf      = all_acc[mask]
+            pos_mask = gdf["predicted_signal"].isin(["STRONG BUY", "BUY"])
+            pred_pos = int(pos_mask.sum())
+            tp       = int((pos_mask & gdf["became_winner"]).sum())
+            precision = tp / pred_pos * 100 if pred_pos else np.nan
+            return precision, pred_pos
+
+        recent_precision, recent_n     = _pooled_precision(recent_mask)
+        baseline_precision, baseline_n = _pooled_precision(baseline_mask)
+
+        if (
+            baseline_n >= DRIFT_MIN_SAMPLE and recent_n >= DRIFT_MIN_SAMPLE
+            and not np.isnan(recent_precision) and not np.isnan(baseline_precision)
+        ):
+            delta = recent_precision - baseline_precision
+            if delta <= -DRIFT_ALERT_PTS:
+                st.warning(
+                    f"⚠️ **Precision drift detected** — over the last {DRIFT_WINDOW_DAYS} days, "
+                    f"BUY/STRONG BUY precision is **{recent_precision:.1f}%** ({recent_n} calls) "
+                    f"vs **{baseline_precision:.1f}%** ({baseline_n} calls) before that — a "
+                    f"{abs(delta):.1f} point drop. Worth a look before trusting today's signals as-is."
+                )
+            elif delta >= DRIFT_ALERT_PTS:
+                st.success(
+                    f"✅ **Precision trending up** — last {DRIFT_WINDOW_DAYS} days: "
+                    f"**{recent_precision:.1f}%** ({recent_n} calls) vs **{baseline_precision:.1f}%** "
+                    f"({baseline_n} calls) before that, a {delta:.1f} point improvement."
+                )
+            else:
+                st.caption(
+                    f"Precision, last {DRIFT_WINDOW_DAYS} days vs. prior history: "
+                    f"{recent_precision:.1f}% ({recent_n} calls) vs {baseline_precision:.1f}% "
+                    f"({baseline_n} calls) — no significant drift."
+                )
+        else:
+            st.caption(
+                f"Not enough BUY/STRONG BUY calls yet on both sides of the last "
+                f"{DRIFT_WINDOW_DAYS} days to reliably check for precision drift "
+                f"(need ≥{DRIFT_MIN_SAMPLE} calls each side)."
+            )
+
     def _trendline(x_ordinal: np.ndarray, y: np.ndarray):
         """Least-squares linear trend; returns fitted y-values, or None if
         there isn't enough valid data to fit one."""
