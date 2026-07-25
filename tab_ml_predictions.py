@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 
-from db import get_supabase_client
+from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
 from cache_ui import render_cache_buttons
 
@@ -107,58 +107,98 @@ def _get_live_quote(symbol: str) -> dict | None:
         }
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        log_debug_error(f"_get_live_quote({symbol})", e)
         return None
+
+
+def _fetch_one_quote(symbol: str) -> tuple[str, dict | None]:
+    """Worker for the thread pool in _get_bulk_live_quotes — one symbol in, one quote out."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol).fast_info
+        return symbol, {
+            "last_price": getattr(info, "last_price",     None),
+            "day_high":   getattr(info, "day_high",       None),
+            "day_low":    getattr(info, "day_low",        None),
+            "open":       getattr(info, "open",           None),
+            "prev_close": getattr(info, "previous_close", None),
+            "volume":     getattr(info, "last_volume",    None),
+        }
+    except Exception as e:
+        log_debug_error(f"_get_bulk_live_quotes({symbol})", e)
+        return symbol, None
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _get_bulk_live_quotes(symbols: tuple) -> dict:
     """
-    Fetch live quotes for multiple symbols in one yfinance call.
-    Returns dict[symbol -> quote_dict].  TTL=60s, same as single-symbol fetch.
+    Fetch live quotes for multiple symbols in parallel via a thread pool.
+    Each yfinance `fast_info` call is a blocking HTTP request, so fetching
+    them one at a time (as the previous `yf.Tickers(...)` loop effectively
+    did — it still made N sequential calls under the hood) means the whole
+    table waits on N round-trips in series. Fanning them out across threads
+    turns that into ~1 round-trip's worth of wall-clock time regardless of
+    how many symbols are on screen.
+    Returns dict[symbol -> quote_dict]. TTL=60s, same as single-symbol fetch.
     symbols must be a tuple (hashable) for st.cache_data to work.
     """
     result = {}
+    if not symbols:
+        return result
     try:
-        import yfinance as yf
-        tickers = yf.Tickers(" ".join(symbols))
-        for sym in symbols:
-            try:
-                info = tickers.tickers[sym].fast_info
-                result[sym] = {
-                    "last_price": getattr(info, "last_price",     None),
-                    "day_high":   getattr(info, "day_high",       None),
-                    "day_low":    getattr(info, "day_low",        None),
-                    "open":       getattr(info, "open",           None),
-                    "prev_close": getattr(info, "previous_close", None),
-                    "volume":     getattr(info, "last_volume",    None),
-                }
-            except Exception:
-                result[sym] = None
+        import yfinance as yf  # noqa: F401 — import check before spinning up threads
     except ImportError:
-        pass
-    except Exception:
-        pass
+        return {sym: None for sym in symbols}
+
+    max_workers = min(16, len(symbols))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch_one_quote, sym): sym for sym in symbols}
+        for future in as_completed(futures):
+            sym = futures[future]
+            try:
+                _, quote = future.result()
+                result[sym] = quote
+            except Exception as e:
+                log_debug_error(f"_get_bulk_live_quotes future({sym})", e)
+                result[sym] = None
     return result
 
 
-# ── Cached DB fetchers (UNCHANGED) ────────────────────────────────────────────
+def _warn_if_truncated(df: pd.DataFrame, table_name: str) -> None:
+    """
+    Surface the `truncated` flag set by _get_table_full — without this, a
+    fetch that silently hit the row cap looks identical to a complete one.
+    """
+    if not df.empty and df.attrs.get("truncated"):
+        st.caption(
+            f"⚠️ Showing the most recent {_TABLE_ROW_CAP} rows of `{table_name}` — "
+            "older rows exist but aren't loaded in this view."
+        )
+
+
+# ── Cached DB fetchers ────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def _get_table_full(table_name: str) -> pd.DataFrame:
     try:
         client     = get_supabase_client()
         date_col   = _DATE_COL.get(table_name)
         select_str = _SELECT.get(table_name, "*")
-        query      = client.table(table_name).select(select_str)
-        if date_col:
-            query = query.order(date_col, desc=True)
-        response = query.limit(_TABLE_ROW_CAP).execute()
+
+        def _run():
+            query = client.table(table_name).select(select_str)
+            if date_col:
+                query = query.order(date_col, desc=True)
+            return query.limit(_TABLE_ROW_CAP).execute()
+
+        response = run_with_retry(_run, source=f"_get_table_full({table_name})")
         df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         # Tag whether this fetch hit the row cap, so callers can warn the user
         # instead of silently showing a truncated "Latest Predictions" view.
         df.attrs["truncated"] = len(df) >= _TABLE_ROW_CAP
         return df
     except Exception as e:
+        log_debug_error(f"_get_table_full({table_name})", e)
         st.warning(f"Could not load `{table_name}`: {e}")
         return pd.DataFrame()
 
@@ -167,18 +207,24 @@ def _get_table_optional(table_name: str) -> pd.DataFrame:
     """
     Like _get_table_full, but for tables that are an optional enhancement
     (e.g. feature importance) and may not exist in every deployment yet.
-    Fails silently instead of showing a warning banner.
+    Fails silently in the UI (still logged to the debug log) instead of
+    showing a warning banner.
     """
     try:
         client     = get_supabase_client()
         date_col   = _DATE_COL.get(table_name)
         select_str = _SELECT.get(table_name, "*")
-        query      = client.table(table_name).select(select_str)
-        if date_col:
-            query = query.order(date_col, desc=True)
-        response = query.limit(_TABLE_ROW_CAP).execute()
+
+        def _run():
+            query = client.table(table_name).select(select_str)
+            if date_col:
+                query = query.order(date_col, desc=True)
+            return query.limit(_TABLE_ROW_CAP).execute()
+
+        response = run_with_retry(_run, source=f"_get_table_optional({table_name})")
         return pd.DataFrame(response.data) if response.data else pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        log_debug_error(f"_get_table_optional({table_name})", e)
         return pd.DataFrame()
 
 
@@ -197,10 +243,13 @@ def _get_table_all(table_name: str) -> pd.DataFrame:
         offset     = 0
         frames     = []
         while True:
-            query = client.table(table_name).select(select_str)
-            if date_col:
-                query = query.order(date_col, desc=False)
-            response = query.range(offset, offset + page_size - 1).execute()
+            def _run(offset=offset):
+                query = client.table(table_name).select(select_str)
+                if date_col:
+                    query = query.order(date_col, desc=False)
+                return query.range(offset, offset + page_size - 1).execute()
+
+            response = run_with_retry(_run, source=f"_get_table_all({table_name})")
             rows = response.data or []
             if not rows:
                 break
@@ -210,6 +259,7 @@ def _get_table_all(table_name: str) -> pd.DataFrame:
             offset += page_size
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     except Exception as e:
+        log_debug_error(f"_get_table_all({table_name})", e)
         st.warning(f"Could not load full history for `{table_name}`: {e}")
         return pd.DataFrame()
 
@@ -697,6 +747,7 @@ def _render_latest_predictions():
     st.caption("What the model is telling you to buy right now.")
 
     all_preds = _get_table_full("ml_explosion_predictions")
+    _warn_if_truncated(all_preds, "ml_explosion_predictions")
 
     if all_preds.empty:
         st.warning("No predictions available yet.")
@@ -845,6 +896,7 @@ def _render_predictions_vs_actuals():
     st.markdown("#### Prediction Accuracy Analysis")
 
     all_acc = _get_table_full("ml_prediction_accuracy")
+    _warn_if_truncated(all_acc, "ml_prediction_accuracy")
     if all_acc.empty:
         st.warning("No accuracy data available yet.")
         return
@@ -992,6 +1044,7 @@ def _render_missed_opportunities():
     st.caption("Winners the model didn't predict.")
 
     all_missed = _get_table_full("ml_missed_opportunities")
+    _warn_if_truncated(all_missed, "ml_missed_opportunities")
     if all_missed.empty:
         st.warning("No missed opportunities data yet.")
         return
@@ -1393,6 +1446,7 @@ def _render_system_info():
     st.markdown("#### System Information")
 
     log_df = _get_table_full("ml_screening_logs")
+    _warn_if_truncated(log_df, "ml_screening_logs")
 
     if not log_df.empty:
         date_col = _DATE_COL.get("ml_screening_logs", "screening_date")
@@ -1464,6 +1518,11 @@ def _render_system_info():
     col1.metric("Prediction Records",  len(preds_df))
     col2.metric("Accuracy Records",    len(acc_df))
     col3.metric("Missed Opp. Records", len(missed_df))
+    if preds_df.attrs.get("truncated") or acc_df.attrs.get("truncated") or missed_df.attrs.get("truncated"):
+        st.caption(
+            f"⚠️ One or more counts above are capped at the most recent {_TABLE_ROW_CAP} "
+            "rows — actual table sizes may be larger."
+        )
 
     if not acc_df.empty:
         acc_df = acc_df.copy()
@@ -1503,3 +1562,18 @@ def _render_system_info():
         "Experimental system for research only. Not financial advice. "
         "Past performance does not guarantee future results."
     )
+
+    debug_errors = st.session_state.get("_debug_errors", [])
+    if debug_errors:
+        with st.expander(f"Debug Log ({len(debug_errors)} error(s) this session)"):
+            st.caption(
+                "Failures from Supabase/yfinance calls that were handled quietly "
+                "elsewhere in the UI are logged here instead of being lost."
+            )
+            st.dataframe(
+                pd.DataFrame(list(reversed(debug_errors))),
+                use_container_width=True, hide_index=True,
+            )
+            if st.button("Clear debug log", key=f"{TAB_ID}_clear_debug_log"):
+                st.session_state["_debug_errors"] = []
+                st.rerun()
