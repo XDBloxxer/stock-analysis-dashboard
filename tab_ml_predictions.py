@@ -392,14 +392,14 @@ def render_ml_predictions_tab():
         refresh_cache()
         st.rerun()
 
-    st.subheader("ML Explosion Predictions")
+    st.subheader("Today's Picks")
     st.caption(
-        "Autonomous system — screens 500–1500 stocks daily, generates predictions "
-        "with target gains, and tracks accuracy."
+        "What the model is telling you to buy right now, plus how the system "
+        "as a whole has performed over time."
     )
 
     subtab1, subtab2, subtab3, subtab4, subtab5 = st.tabs([
-        "Latest Predictions",
+        "Today's Picks",
         "Predictions vs Actuals",
         "Missed Opportunities",
         "Performance Trends",
@@ -766,170 +766,248 @@ def _render_latest_predictions():
         st.warning(f"No predictions for {selected_date}")
         return
 
-    # Delta vs previous date
+    # Delta vs previous date (used down in the diagnostics section)
     prev_df = pd.DataFrame()
     date_idx = dates.index(selected_date)
     if date_idx + 1 < len(dates):
         prev_date = dates[date_idx + 1]
         prev_df   = all_preds[all_preds["prediction_date"] == prev_date].copy()
 
-    # ── Summary metrics ────────────────────────────────────────────────────────
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric(
-        "Screened",
-        len(df),
-        delta=f"{len(df)-len(prev_df):+.0f} vs prev" if not prev_df.empty else None,
-    )
-    col2.metric("Strong Buy", int((df["signal"] == "STRONG BUY").sum()))
-    col3.metric("Buy",        int((df["signal"] == "BUY").sum()))
-    col4.metric(
-        "Avg Probability",
-        f"{df['explosion_probability'].mean() * 100:.1f}%",
-        delta=(
-            f"{(df['explosion_probability'].mean() - prev_df['explosion_probability'].mean()) * 100:+.1f}% vs prev"
-            if not prev_df.empty else None
-        ),
-    )
-    col5.metric(
-        "Avg Target Gain",
-        f"+{df['target_gain_pct'].mean():.1f}%",
-        delta=(
-            f"{df['target_gain_pct'].mean() - prev_df['target_gain_pct'].mean():+.1f}% vs prev"
-            if not prev_df.empty else None
-        ),
-    )
+    # ══════════════════════════════════════════════════════════════════════════
+    # TODAY'S PICKS — the thing partners actually open this dashboard for.
+    # Everything else on this sub-tab is supporting detail, tucked away below.
+    # ══════════════════════════════════════════════════════════════════════════
+    picks = df[df["signal"].isin(["STRONG BUY", "BUY"])].copy()
+    _signal_rank = {"STRONG BUY": 0, "BUY": 1}
+    picks["_rank"] = picks["signal"].map(_signal_rank)
+    picks = picks.sort_values(["_rank", "explosion_probability"], ascending=[True, False]).drop(columns=["_rank"])
 
-    # ── Signal win rates (from accuracy data) ─────────────────────────────────
+    _MAX_PICKS_SHOWN = 10
+    total_picks = len(picks)
+    shown_picks = picks.head(_MAX_PICKS_SHOWN)
+
+    if total_picks == 0:
+        st.info("No BUY / STRONG BUY signals for this date — the model isn't flagging anything actionable.")
+    else:
+        st.markdown(
+            f"##### 🎯 Buy these {min(total_picks, _MAX_PICKS_SHOWN)}"
+            + (f" (of {total_picks} flagged)" if total_picks > _MAX_PICKS_SHOWN else "")
+        )
+
+        _badge_class = {"STRONG BUY": "badge-green", "BUY": "badge-blue"}
+
+        for _, row in shown_picks.iterrows():
+            prob   = row["explosion_probability"] * 100
+            gain   = row.get("target_gain_pct")
+            price  = row.get("current_price")
+            target = row.get("target_price")
+            gain_str   = f"+{gain:.1f}%" if pd.notna(gain) else "—"
+            price_str  = f"${price:.2f}" if pd.notna(price) else "—"
+            target_str = f"${target:.2f}" if pd.notna(target) else "—"
+
+            st.markdown(
+                f"""
+<div class="data-card" style="display:flex;align-items:center;gap:18px;margin-bottom:8px;padding:14px 18px;">
+    <div style="min-width:150px;">
+        <span style="font-family:var(--font-display);font-weight:700;font-size:1.05rem;color:var(--text-0);">{row['symbol']}</span>
+        <span style="color:var(--text-2);font-size:0.72rem;margin-left:6px;">{row.get('exchange','')}</span>
+        <div style="margin-top:4px;"><span class="badge {_badge_class.get(row['signal'],'badge-blue')}">{row['signal']}</span></div>
+    </div>
+    <div style="flex:1;min-width:120px;">
+        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Confidence</div>
+        <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-0);font-weight:500;">{prob:.1f}%</div>
+    </div>
+    <div style="flex:1;min-width:120px;">
+        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Current Price</div>
+        <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-1);">{price_str}</div>
+    </div>
+    <div style="flex:1;min-width:120px;">
+        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Target</div>
+        <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-1);">{target_str}</div>
+    </div>
+    <div style="flex:1;min-width:120px;">
+        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Target Gain</div>
+        <div class="num positive" style="font-size:1.1rem;">{gain_str}</div>
+    </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
+        csv_cols = [c for c in [
+            "symbol", "exchange", "signal", "explosion_probability",
+            "current_price", "target_price", "target_gain_pct",
+        ] if c in picks.columns]
+        st.download_button(
+            "Download today's picks (CSV)",
+            picks[csv_cols].to_csv(index=False),
+            f"todays_picks_{selected_date}.csv",
+            "text/csv",
+            key=f"{TAB_ID}_picks_dl",
+        )
+
+    # ── All-time win rate — quick trust signal right under the picks ───────────
     acc_df = _get_table_full("ml_prediction_accuracy")
     if not acc_df.empty and "predicted_signal" in acc_df.columns:
         acc_copy = acc_df.copy()
         acc_copy["became_winner"] = acc_copy["became_winner"].astype(bool)
         sig_win = acc_copy.groupby("predicted_signal")["became_winner"].mean() * 100
 
-        st.markdown("---")
-        st.markdown("#### All-Time Win Rate by Signal")
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         sig_order = ["STRONG BUY", "BUY", "HOLD", "AVOID"]
         wr_cols   = st.columns(len(sig_order))
         for i, sig in enumerate(sig_order):
             if sig in sig_win.index:
-                wr    = sig_win[sig]
+                wr = sig_win[sig]
                 with wr_cols[i]:
-                    st.metric(sig.title(), f"{wr:.1f}%")
-                    st.progress(int(min(wr, 100)))
+                    st.metric(f"{sig.title()} — historical win rate", f"{wr:.1f}%")
 
-    # ── Charts ─────────────────────────────────────────────────────────────────
     st.markdown("---")
-    col_left, col_right = st.columns(2)
 
-    with col_left:
-        fig = go.Figure(go.Histogram(
-            x=df["explosion_probability"] * 100,
-            nbinsx=20,
-            marker_color=COLORS["primary"],
-            opacity=0.85,
-        ))
-        fig.update_layout(
-            title="Probability Distribution",
-            xaxis_title="Probability (%)",
-            yaxis_title="Count",
-            height=300,
-            showlegend=False,
-            **LAYOUT,
+    # ══════════════════════════════════════════════════════════════════════════
+    # Everything below is diagnostic / exploratory detail, not action items —
+    # collapsed by default so it doesn't compete with the picks above.
+    # ══════════════════════════════════════════════════════════════════════════
+    with st.expander(f"Full screening results & diagnostics — {len(df)} stocks screened", expanded=False):
+        # ── Summary metrics ─────────────────────────────────────────────────
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric(
+            "Screened",
+            len(df),
+            delta=f"{len(df)-len(prev_df):+.0f} vs prev" if not prev_df.empty else None,
         )
-        fig.update_xaxes(**AXIS_STYLE)
-        fig.update_yaxes(**AXIS_STYLE)
-        st.plotly_chart(fig, use_container_width=True)
+        col2.metric("Strong Buy", int((df["signal"] == "STRONG BUY").sum()))
+        col3.metric("Buy",        int((df["signal"] == "BUY").sum()))
+        col4.metric(
+            "Avg Probability",
+            f"{df['explosion_probability'].mean() * 100:.1f}%",
+            delta=(
+                f"{(df['explosion_probability'].mean() - prev_df['explosion_probability'].mean()) * 100:+.1f}% vs prev"
+                if not prev_df.empty else None
+            ),
+        )
+        col5.metric(
+            "Avg Target Gain",
+            f"+{df['target_gain_pct'].mean():.1f}%",
+            delta=(
+                f"{df['target_gain_pct'].mean() - prev_df['target_gain_pct'].mean():+.1f}% vs prev"
+                if not prev_df.empty else None
+            ),
+        )
 
-    with col_right:
-        sc  = df["signal"].value_counts()
-        fig = go.Figure(go.Pie(
-            labels=sc.index,
-            values=sc.values,
-            marker=dict(colors=[SIGNAL_COLORS.get(s, "#999") for s in sc.index]),
-            hole=0.5,
-            textinfo="label+percent",
-            textfont=dict(size=11, family="DM Mono, monospace"),
-        ))
-        fig.update_layout(title="Signal Breakdown", height=300, **LAYOUT)
-        st.plotly_chart(fig, use_container_width=True)
+        # ── Charts ───────────────────────────────────────────────────────────
+        st.markdown("---")
+        col_left, col_right = st.columns(2)
 
-    # ── Filters ────────────────────────────────────────────────────────────────
-    st.markdown("---")
-    with st.expander("Filter predictions", expanded=True):
-        fc1, fc2, fc3 = st.columns(3)
-        with fc1:
-            sig_filter = st.multiselect(
-                "Signal",
-                ["STRONG BUY", "BUY", "HOLD", "AVOID"],
-                default=["STRONG BUY", "BUY", "HOLD", "AVOID"],
-                key=f"{TAB_ID}_sig_f",
+        with col_left:
+            fig = go.Figure(go.Histogram(
+                x=df["explosion_probability"] * 100,
+                nbinsx=20,
+                marker_color=COLORS["primary"],
+                opacity=0.85,
+            ))
+            fig.update_layout(
+                title="Probability Distribution",
+                xaxis_title="Probability (%)",
+                yaxis_title="Count",
+                height=300,
+                showlegend=False,
+                **LAYOUT,
             )
-        with fc2:
-            min_prob = st.slider("Min Probability %", 0, 100, 0, key=f"{TAB_ID}_prob_f")
-        with fc3:
-            min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
+            fig.update_xaxes(**AXIS_STYLE)
+            fig.update_yaxes(**AXIS_STYLE)
+            st.plotly_chart(fig, use_container_width=True)
 
-    fdf = df[
-        df["signal"].isin(sig_filter) &
-        (df["explosion_probability"] >= min_prob / 100) &
-        (df["target_gain_pct"] >= min_tgt)
-    ].copy()
+        with col_right:
+            sc  = df["signal"].value_counts()
+            fig = go.Figure(go.Pie(
+                labels=sc.index,
+                values=sc.values,
+                marker=dict(colors=[SIGNAL_COLORS.get(s, "#999") for s in sc.index]),
+                hole=0.5,
+                textinfo="label+percent",
+                textfont=dict(size=11, family="DM Mono, monospace"),
+            ))
+            fig.update_layout(title="Signal Breakdown", height=300, **LAYOUT)
+            st.plotly_chart(fig, use_container_width=True)
 
-    # Sort by signal strength then probability
-    signal_order = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "AVOID": 3}
-    fdf["_sig_rank"] = fdf["signal"].map(signal_order).fillna(9)
-    fdf = fdf.sort_values(["_sig_rank", "explosion_probability"], ascending=[True, False]).drop(columns=["_sig_rank"])
+        # ── Filters ──────────────────────────────────────────────────────────
+        st.markdown("---")
+        with st.expander("Filter predictions", expanded=True):
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                sig_filter = st.multiselect(
+                    "Signal",
+                    ["STRONG BUY", "BUY", "HOLD", "AVOID"],
+                    default=["STRONG BUY", "BUY", "HOLD", "AVOID"],
+                    key=f"{TAB_ID}_sig_f",
+                )
+            with fc2:
+                min_prob = st.slider("Min Probability %", 0, 100, 0, key=f"{TAB_ID}_prob_f")
+            with fc3:
+                min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
 
-    st.caption(f"{len(fdf)} stocks match current filters")
+        fdf = df[
+            df["signal"].isin(sig_filter) &
+            (df["explosion_probability"] >= min_prob / 100) &
+            (df["target_gain_pct"] >= min_tgt)
+        ].copy()
 
-    if fdf.empty:
-        st.warning("No stocks match the filters.")
-        return
+        # Sort by signal strength then probability
+        signal_order = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "AVOID": 3}
+        fdf["_sig_rank"] = fdf["signal"].map(signal_order).fillna(9)
+        fdf = fdf.sort_values(["_sig_rank", "explosion_probability"], ascending=[True, False]).drop(columns=["_sig_rank"])
 
-    # ── View switcher — tab-style, instant, no rerun ──────────────────────────
-    view_tab_static, view_tab_live = st.tabs(["🗃 Predictions Table", "📡 Live Market View"])
+        st.caption(f"{len(fdf)} stocks match current filters")
 
-    with view_tab_static:
-        # ── Original static dataframe table (default) ──────────────────────────
-        fdf_display = fdf.copy()
-        fdf_display["explosion_probability"] = fdf_display["explosion_probability"] * 100
+        if fdf.empty:
+            st.warning("No stocks match the filters.")
+            return
 
-        def _highlight_sig(row):
-            return [f"background-color: {SIGNAL_BG.get(row['signal'], '')}"] * len(row)
+        # ── View switcher — tab-style, instant, no rerun ──────────────────────
+        view_tab_static, view_tab_live = st.tabs(["🗃 Predictions Table", "📡 Live Market View"])
 
-        display_cols = [
-            c for c in [
-                "symbol", "exchange", "signal", "explosion_probability",
-                "current_price", "target_price", "target_gain_pct",
-                "target_price_low", "target_price_high",
-            ] if c in fdf_display.columns
-        ]
-        st.dataframe(
-            fdf_display[display_cols].style.format(
-                {
-                    "explosion_probability": "{:.2f}%",
-                    "current_price":         "${:.2f}",
-                    "target_price":          "${:.2f}",
-                    "target_price_low":      "${:.2f}",
-                    "target_price_high":     "${:.2f}",
-                    "target_gain_pct":       "+{:.2f}%",
-                },
-                na_rep="—",
-            ).apply(_highlight_sig, axis=1),
-            use_container_width=True,
-            height=420,
-        )
-        st.download_button(
-            "Download CSV",
-            fdf[display_cols].to_csv(index=False),
-            f"ml_predictions_{selected_date}.csv",
-            "text/csv",
-            key=f"{TAB_ID}_dl",
-        )
+        with view_tab_static:
+            # ── Original static dataframe table (default) ──────────────────────
+            fdf_display = fdf.copy()
+            fdf_display["explosion_probability"] = fdf_display["explosion_probability"] * 100
 
-    with view_tab_live:
-        # ── Live Market Table — all stocks, inline ─────────────────────────────
-        _render_live_market_table(fdf)
+            def _highlight_sig(row):
+                return [f"background-color: {SIGNAL_BG.get(row['signal'], '')}"] * len(row)
+
+            display_cols = [
+                c for c in [
+                    "symbol", "exchange", "signal", "explosion_probability",
+                    "current_price", "target_price", "target_gain_pct",
+                    "target_price_low", "target_price_high",
+                ] if c in fdf_display.columns
+            ]
+            st.dataframe(
+                fdf_display[display_cols].style.format(
+                    {
+                        "explosion_probability": "{:.2f}%",
+                        "current_price":         "${:.2f}",
+                        "target_price":          "${:.2f}",
+                        "target_price_low":      "${:.2f}",
+                        "target_price_high":     "${:.2f}",
+                        "target_gain_pct":       "+{:.2f}%",
+                    },
+                    na_rep="—",
+                ).apply(_highlight_sig, axis=1),
+                use_container_width=True,
+                height=420,
+            )
+            st.download_button(
+                "Download CSV",
+                fdf[display_cols].to_csv(index=False),
+                f"ml_predictions_{selected_date}.csv",
+                "text/csv",
+                key=f"{TAB_ID}_dl",
+            )
+
+        with view_tab_live:
+            # ── Live Market Table — all stocks, inline ─────────────────────────
+            _render_live_market_table(fdf)
 
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
