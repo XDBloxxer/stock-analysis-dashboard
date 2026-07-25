@@ -632,3 +632,21 @@ div[data-testid="toastContainer"] {
 
 </style>
 """
+
+# ── Optional compact-density override ─────────────────────────────────────────
+# Injected in addition to DASHBOARD_CSS (not instead of) when the user turns on
+# "Compact mode" from the header — tightens vertical rhythm for people who want
+# more rows/charts visible without scrolling, without touching the base theme.
+COMPACT_CSS = """
+<style>
+.main .block-container { padding-top: 1.1rem !important; padding-bottom: 1.1rem !important; }
+div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
+hr { margin: 8px 0 !important; }
+div[data-testid="stMetric"] { padding: 6px 10px !important; }
+div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
+.stTabs [data-baseweb="tab-list"] { gap: 4px !important; }
+.stTabs [data-baseweb="tab"] { padding: 6px 12px !important; }
+div[data-testid="stExpander"] { margin-bottom: 6px !important; }
+.stMarkdown h4 { margin-top: 6px !important; margin-bottom: 6px !important; }
+</style>
+"""
