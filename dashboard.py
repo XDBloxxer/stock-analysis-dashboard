@@ -3,7 +3,7 @@ Main Dashboard - 3 TABS
 """
 
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 try:
     import pytz
@@ -14,6 +14,77 @@ except ImportError:
     def _now_et():
         return datetime.utcnow()
 
+
+# ── NYSE market holiday calendar ──────────────────────────────────────────────
+# Fixed-date + floating-date US market holidays, computed rather than hardcoded
+# per-year so the schedule stays correct without an annual edit. Observed-date
+# shifting (Sat -> preceding Fri, Sun -> following Mon) is applied for the
+# fixed-date holidays, matching NYSE convention.
+def _nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> date:
+    """weekday: Monday=0 ... Sunday=6. n=1 for first, n=3 for third, etc."""
+    d = date(year, month, 1)
+    offset = (weekday - d.weekday()) % 7
+    d += timedelta(days=offset + 7 * (n - 1))
+    return d
+
+
+def _last_weekday_of_month(year: int, month: int, weekday: int) -> date:
+    if month == 12:
+        d = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        d = date(year, month + 1, 1) - timedelta(days=1)
+    offset = (d.weekday() - weekday) % 7
+    return d - timedelta(days=offset)
+
+
+def _easter_sunday(year: int) -> date:
+    """Anonymous Gregorian algorithm (Meeus/Jones/Butcher) for Easter Sunday."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _observed(d: date) -> date:
+    """NYSE convention: Saturday holidays observed the preceding Friday,
+    Sunday holidays observed the following Monday."""
+    if d.weekday() == 5:
+        return d - timedelta(days=1)
+    if d.weekday() == 6:
+        return d + timedelta(days=1)
+    return d
+
+
+def _nyse_holidays(year: int) -> set[date]:
+    good_friday = _easter_sunday(year) - timedelta(days=2)
+    return {
+        _observed(date(year, 1, 1)),                          # New Year's Day
+        _nth_weekday_of_month(year, 1, 0, 3),                 # MLK Day (3rd Mon Jan)
+        _nth_weekday_of_month(year, 2, 0, 3),                 # Presidents' Day (3rd Mon Feb)
+        good_friday,                                          # Good Friday
+        _last_weekday_of_month(year, 5, 0),                   # Memorial Day (last Mon May)
+        _observed(date(year, 6, 19)),                         # Juneteenth
+        _observed(date(year, 7, 4)),                          # Independence Day
+        _nth_weekday_of_month(year, 9, 0, 1),                 # Labor Day (1st Mon Sep)
+        _nth_weekday_of_month(year, 11, 3, 4),                # Thanksgiving (4th Thu Nov)
+        _observed(date(year, 12, 25)),                        # Christmas
+    }
+
+
+def _is_market_holiday(d: date) -> bool:
+    return d in _nyse_holidays(d.year)
+
 st.set_page_config(
     page_title="Stock Analysis Dashboard",
     page_icon="📊",
@@ -21,7 +92,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
@@ -29,12 +100,14 @@ def main():
     now    = _now_et()
     hour   = now.hour
     minute = now.minute
-    is_weekday   = now.weekday() < 5
+    is_weekday    = now.weekday() < 5
+    is_holiday    = _is_market_holiday(now.date())
+    is_trading_day = is_weekday and not is_holiday
     after_open   = (hour > 9) or (hour == 9 and minute >= 30)
     before_close = hour < 16
-    market_open  = is_weekday and after_open and before_close
-    pre_market   = is_weekday and ((4 <= hour < 9) or (hour == 9 and minute < 30))
-    after_hours  = is_weekday and (16 <= hour < 20)
+    market_open  = is_trading_day and after_open and before_close
+    pre_market   = is_trading_day and ((4 <= hour < 9) or (hour == 9 and minute < 30))
+    after_hours  = is_trading_day and (16 <= hour < 20)
 
     if market_open:
         dot_cls, label, color = "live",    "Open",        "var(--green-bright)"
@@ -42,6 +115,8 @@ def main():
         dot_cls, label, color = "warning", "Pre-Market",  "var(--amber-bright)"
     elif after_hours:
         dot_cls, label, color = "warning", "After Hours", "var(--amber-bright)"
+    elif is_weekday and is_holiday:
+        dot_cls, label, color = "idle",    "Holiday",     "var(--text-2)"
     else:
         dot_cls, label, color = "idle",    "Closed",      "var(--text-2)"
 
@@ -76,7 +151,16 @@ def main():
             unsafe_allow_html=True,
         )
 
-    st.markdown('<hr style="margin:16px 0 22px;">', unsafe_allow_html=True)
+    col_hr, col_toggle = st.columns([6, 1])
+    with col_hr:
+        st.markdown('<hr style="margin:16px 0 22px;">', unsafe_allow_html=True)
+    with col_toggle:
+        compact = st.checkbox(
+            "Compact", value=st.session_state.get("compact_mode", False),
+            key="compact_mode", help="Tighter spacing — more rows/charts visible per screen.",
+        )
+    if compact:
+        st.markdown(COMPACT_CSS, unsafe_allow_html=True)
 
     # ── Credential check ──────────────────────────────────────────────────────
     if not st.secrets.get("supabase", {}).get("url") or not st.secrets.get("supabase", {}).get("key"):
