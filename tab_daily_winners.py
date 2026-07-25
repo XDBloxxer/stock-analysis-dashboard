@@ -39,6 +39,7 @@ import os
 
 from db import get_supabase_client
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
+from cache_ui import render_cache_buttons
 
 TAB_ID = "daily_winners"
 
@@ -235,44 +236,6 @@ def _skeleton_metrics(n: int = 5):
                 '<div class="skeleton" style="height:82px; margin-bottom:4px;"></div>',
                 unsafe_allow_html=True
             )
-
-
-def _render_cache_buttons(tab_id: str):
-    confirm_key = f"{tab_id}_confirm_clear"
-
-    col_r, col_c, col_spacer = st.columns([1, 1, 4])
-    with col_r:
-        st.markdown('<div class="btn-refresh">', unsafe_allow_html=True)
-        refresh = st.button("🔄 Refresh", key=f"{tab_id}_refresh",  use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with col_c:
-        st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-        clear = st.button("🗑️ Clear Cache", key=f"{tab_id}_clear",  use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    if clear:
-        st.session_state[confirm_key] = True
-
-    confirmed = False
-    if st.session_state.get(confirm_key):
-        st.markdown(
-            '<div class="cache-warning">⚠️ This will wipe ALL cached data and force a full re-fetch. '
-            'Click <strong>Confirm Clear</strong> to proceed, or <strong>Cancel</strong>.</div>',
-            unsafe_allow_html=True
-        )
-        cc1, cc2, _ = st.columns([1, 1, 5])
-        with cc1:
-            st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-            if st.button("✓ Confirm Clear", key=f"{tab_id}_confirm_yes",  use_container_width=True):
-                confirmed = True
-                st.session_state[confirm_key] = False
-            st.markdown('</div>', unsafe_allow_html=True)
-        with cc2:
-            if st.button("✕ Cancel", key=f"{tab_id}_confirm_no",  use_container_width=True):
-                st.session_state[confirm_key] = False
-                st.rerun()
-
-    return refresh, confirmed
 
 
 # ── Prediction signal helpers (UNCHANGED) ─────────────────────────────────────
@@ -990,7 +953,13 @@ def render_symbol_search(available_dates: list[str]):
 # ── Main entry point ───────────────────────────────────────────────────────────
 def render_daily_winners_tab():
 
-    refresh_clicked, clear_confirmed = _render_cache_buttons(TAB_ID)
+    refresh_clicked, clear_confirmed = render_cache_buttons(
+        TAB_ID,
+        warning_message=(
+            "⚠️ This will wipe ALL cached data and force a full re-fetch. "
+            "Click <strong>Confirm Clear</strong> to proceed, or <strong>Cancel</strong>."
+        ),
+    )
 
     if clear_confirmed:
         clear_all_cache()
