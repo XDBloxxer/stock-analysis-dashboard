@@ -26,6 +26,7 @@ import os
 
 from db import get_supabase_client
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
+from cache_ui import render_cache_buttons
 
 TAB_ID = "ml_predictions"
 
@@ -344,46 +345,9 @@ def refresh_cache():
         st.toast("✅ Cache is already up to date — no new data found.")
 
 
-# ── Shared button helper (UNCHANGED) ─────────────────────────────────────────
-def _render_cache_buttons(tab_id: str):
-    confirm_key = f"{tab_id}_confirm_clear"
-    col_r, col_c, _ = st.columns([1, 1, 5])
-    with col_r:
-        st.markdown('<div class="btn-refresh">', unsafe_allow_html=True)
-        refresh = st.button("🔄 Refresh", key=f"{tab_id}_refresh", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with col_c:
-        st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-        clear = st.button("🗑️ Clear Cache", key=f"{tab_id}_clear", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    if clear:
-        st.session_state[confirm_key] = True
-
-    confirmed = False
-    if st.session_state.get(confirm_key):
-        st.markdown(
-            '<div class="cache-warning">⚠️ This will wipe ALL cached data. '
-            'Click <strong>Confirm Clear</strong> to proceed.</div>',
-            unsafe_allow_html=True
-        )
-        cc1, cc2, _ = st.columns([1, 1, 5])
-        with cc1:
-            st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
-            if st.button("✓ Confirm Clear", key=f"{tab_id}_confirm_yes", use_container_width=True):
-                confirmed = True
-                st.session_state[confirm_key] = False
-            st.markdown('</div>', unsafe_allow_html=True)
-        with cc2:
-            if st.button("✕ Cancel", key=f"{tab_id}_confirm_no", use_container_width=True):
-                st.session_state[confirm_key] = False
-                st.rerun()
-    return refresh, confirmed
-
-
 # ── Main entry point ───────────────────────────────────────────────────────────
 def render_ml_predictions_tab():
-    refresh_clicked, clear_confirmed = _render_cache_buttons(TAB_ID)
+    refresh_clicked, clear_confirmed = render_cache_buttons(TAB_ID)
 
     if clear_confirmed:
         clear_all_cache()
@@ -1094,6 +1058,54 @@ def _render_missed_opportunities():
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
+    st.markdown("#### Top Reasons We Miss Winners (All History)")
+    st.caption(
+        "Rolled up across every date on record, not just the one selected above — "
+        "useful for spotting a persistent pattern (e.g. mostly a screener gap vs. "
+        "mostly a probability-threshold issue) rather than a single day's noise."
+    )
+
+    all_reason_col = all_missed["screening_failure_reason"].fillna(
+        all_missed["was_screened"].map({True: "screened_but_low_probability", False: "not_in_screener"})
+    )
+    all_reason_counts = all_reason_col.value_counts()
+
+    agg_col_left, agg_col_right = st.columns([3, 2])
+    with agg_col_left:
+        fig = go.Figure(go.Bar(
+            x=all_reason_counts.index.tolist(),
+            y=all_reason_counts.values.tolist(),
+            marker_color=COLORS["amber"],
+            opacity=0.85,
+            text=all_reason_counts.values.tolist(),
+            textposition="outside",
+        ))
+        fig.update_layout(
+            xaxis_title="Reason", yaxis_title="Count (all history)",
+            height=300, **LAYOUT,
+        )
+        fig.update_xaxes(**AXIS_STYLE)
+        fig.update_yaxes(**AXIS_STYLE)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with agg_col_right:
+        not_screened_pct = (~all_missed["was_screened"]).mean() * 100
+        st.metric(
+            "Missed because never screened",
+            f"{not_screened_pct:.0f}%",
+            help=(
+                "Of ALL missed winners on record, the % that never made it into "
+                "the screener at all (vs. being screened but scored too low to "
+                "flag as BUY/STRONG BUY)."
+            ),
+        )
+        st.caption(
+            "High and rising → look at the screening/universe-selection step. "
+            "Low and mostly 'screened but low probability' → look at the model's "
+            "probability threshold or feature set instead."
+        )
+
+    st.markdown("---")
     st.markdown("#### Detail Table")
     display_cols = [
         c for c in [
@@ -1165,10 +1177,11 @@ def _render_performance_trends():
     # Pools raw counts (rather than averaging daily percentages) so the
     # recent window isn't skewed by a single thin day. Compares the most
     # recent DRIFT_WINDOW_DAYS of predictions against everything before
-    # that window, and flags it if precision has meaningfully degraded.
+    # that window, and flags it if precision or recall has meaningfully
+    # degraded (or improved).
     DRIFT_WINDOW_DAYS = 14
-    DRIFT_MIN_SAMPLE  = 5     # min BUY/STRONG BUY calls needed on each side to trust the comparison
-    DRIFT_ALERT_PTS   = 10    # precision drop (percentage points) that triggers a warning
+    DRIFT_MIN_SAMPLE  = 5     # min relevant calls needed on each side to trust the comparison
+    DRIFT_ALERT_PTS   = 10    # point swing that triggers a warning/success banner
 
     dates_sorted = pd.to_datetime(all_acc["prediction_date"]).sort_values()
     if not dates_sorted.empty:
@@ -1177,47 +1190,56 @@ def _render_performance_trends():
         recent_mask   = acc_dates > cutoff
         baseline_mask = ~recent_mask
 
-        def _pooled_precision(mask):
+        def _pooled_metric(mask, metric: str):
+            """metric: 'precision' (of BUY/STRONG BUY calls, % that won) or
+            'recall' (of actual winners, % the model flagged as BUY/STRONG BUY)."""
             gdf      = all_acc[mask]
             pos_mask = gdf["predicted_signal"].isin(["STRONG BUY", "BUY"])
-            pred_pos = int(pos_mask.sum())
             tp       = int((pos_mask & gdf["became_winner"]).sum())
-            precision = tp / pred_pos * 100 if pred_pos else np.nan
-            return precision, pred_pos
+            if metric == "precision":
+                denom = int(pos_mask.sum())
+            else:  # recall
+                denom = int(gdf["became_winner"].sum())
+            value = tp / denom * 100 if denom else np.nan
+            return value, denom
 
-        recent_precision, recent_n     = _pooled_precision(recent_mask)
-        baseline_precision, baseline_n = _pooled_precision(baseline_mask)
+        def _render_drift_row(metric: str, label: str, noun: str):
+            recent_val, recent_n     = _pooled_metric(recent_mask, metric)
+            baseline_val, baseline_n = _pooled_metric(baseline_mask, metric)
 
-        if (
-            baseline_n >= DRIFT_MIN_SAMPLE and recent_n >= DRIFT_MIN_SAMPLE
-            and not np.isnan(recent_precision) and not np.isnan(baseline_precision)
-        ):
-            delta = recent_precision - baseline_precision
-            if delta <= -DRIFT_ALERT_PTS:
-                st.warning(
-                    f"⚠️ **Precision drift detected** — over the last {DRIFT_WINDOW_DAYS} days, "
-                    f"BUY/STRONG BUY precision is **{recent_precision:.1f}%** ({recent_n} calls) "
-                    f"vs **{baseline_precision:.1f}%** ({baseline_n} calls) before that — a "
-                    f"{abs(delta):.1f} point drop. Worth a look before trusting today's signals as-is."
-                )
-            elif delta >= DRIFT_ALERT_PTS:
-                st.success(
-                    f"✅ **Precision trending up** — last {DRIFT_WINDOW_DAYS} days: "
-                    f"**{recent_precision:.1f}%** ({recent_n} calls) vs **{baseline_precision:.1f}%** "
-                    f"({baseline_n} calls) before that, a {delta:.1f} point improvement."
-                )
+            if (
+                baseline_n >= DRIFT_MIN_SAMPLE and recent_n >= DRIFT_MIN_SAMPLE
+                and not np.isnan(recent_val) and not np.isnan(baseline_val)
+            ):
+                delta = recent_val - baseline_val
+                if delta <= -DRIFT_ALERT_PTS:
+                    st.warning(
+                        f"⚠️ **{label} drift detected** — over the last {DRIFT_WINDOW_DAYS} days, "
+                        f"{label.lower()} is **{recent_val:.1f}%** ({recent_n} {noun}) "
+                        f"vs **{baseline_val:.1f}%** ({baseline_n} {noun}) before that — a "
+                        f"{abs(delta):.1f} point drop. Worth a look before trusting today's signals as-is."
+                    )
+                elif delta >= DRIFT_ALERT_PTS:
+                    st.success(
+                        f"✅ **{label} trending up** — last {DRIFT_WINDOW_DAYS} days: "
+                        f"**{recent_val:.1f}%** ({recent_n} {noun}) vs **{baseline_val:.1f}%** "
+                        f"({baseline_n} {noun}) before that, a {delta:.1f} point improvement."
+                    )
+                else:
+                    st.caption(
+                        f"{label}, last {DRIFT_WINDOW_DAYS} days vs. prior history: "
+                        f"{recent_val:.1f}% ({recent_n} {noun}) vs {baseline_val:.1f}% "
+                        f"({baseline_n} {noun}) — no significant drift."
+                    )
             else:
                 st.caption(
-                    f"Precision, last {DRIFT_WINDOW_DAYS} days vs. prior history: "
-                    f"{recent_precision:.1f}% ({recent_n} calls) vs {baseline_precision:.1f}% "
-                    f"({baseline_n} calls) — no significant drift."
+                    f"Not enough {noun} yet on both sides of the last "
+                    f"{DRIFT_WINDOW_DAYS} days to reliably check for {label.lower()} drift "
+                    f"(need ≥{DRIFT_MIN_SAMPLE} {noun} each side)."
                 )
-        else:
-            st.caption(
-                f"Not enough BUY/STRONG BUY calls yet on both sides of the last "
-                f"{DRIFT_WINDOW_DAYS} days to reliably check for precision drift "
-                f"(need ≥{DRIFT_MIN_SAMPLE} calls each side)."
-            )
+
+        _render_drift_row("precision", "Precision", "BUY/STRONG BUY calls")
+        _render_drift_row("recall",    "Recall",    "actual winners")
 
     def _trendline(x_ordinal: np.ndarray, y: np.ndarray):
         """Least-squares linear trend; returns fitted y-values, or None if
