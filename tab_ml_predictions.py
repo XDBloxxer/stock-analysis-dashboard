@@ -1227,16 +1227,8 @@ def _render_performance_trends():
         with col:
             st.markdown(f"**{name}**")
 
-            sub = daily[["prediction_date", metric]].rename(
-                columns={"prediction_date": "Date", metric: name}
-            ).sort_values("Date", ascending=False).reset_index(drop=True)
-
-            st.dataframe(
-                sub.style.format({name: "{:.1f}%"}),
-                use_container_width=True, height=220, hide_index=True,
-            )
-
-            x_ord  = daily["prediction_date"].map(pd.Timestamp.toordinal).to_numpy(dtype=float)
+            dates  = pd.to_datetime(daily["prediction_date"])
+            x_ord  = dates.map(lambda d: d.toordinal()).to_numpy(dtype=float)
             y_vals = daily[metric].to_numpy(dtype=float)
             trend  = _trendline(x_ord, y_vals)
 
