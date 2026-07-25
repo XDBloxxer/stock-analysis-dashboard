@@ -12,7 +12,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from db import get_supabase_client
-from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS
+from chart_utils import LAYOUT, AXIS_STYLE, COLORS
 
 TAB_ID = "backtesting"
 
@@ -172,15 +172,33 @@ def render_backtesting_tab():
             default=["STRONG BUY", "BUY"], key="sim_signals",
         )
 
-    max_positions = st.slider(
-        "Max concurrent positions per day (caps how thin capital gets split)",
-        min_value=1, max_value=25, value=10, key="sim_max_positions",
-        help=(
-            "If more signals fire on a given day than this, only this many "
-            "(chosen by highest predicted probability, if available) are taken "
-            "— capital isn't split across an unlimited number of positions."
-        ),
-    )
+    sim_c5, sim_c6 = st.columns(2)
+    with sim_c5:
+        max_positions = st.slider(
+            "Max concurrent positions per day (caps how thin capital gets split)",
+            min_value=1, max_value=25, value=10, key="sim_max_positions",
+            help=(
+                "If more signals fire on a given day than this, only this many "
+                "(chosen by highest predicted probability, if available) are taken "
+                "— capital isn't split across an unlimited number of positions."
+            ),
+        )
+    with sim_c6:
+        exit_mode = st.selectbox(
+            "Exit strategy",
+            ["Close at end of day", "Take-profit at target (if hit intraday)"],
+            key="sim_exit_mode",
+            help=(
+                "'Close at end of day' resolves every position at its recorded "
+                "actual_gain_pct. 'Take-profit at target' instead assumes a limit "
+                "sell at the predicted target gain whenever the intraday high "
+                "(actual_high_pct) reached or exceeded it — otherwise it falls "
+                "back to the end-of-day gain. There's no intraday-low data "
+                "available, so a stop-loss mode isn't offered — it would have to "
+                "guess at the worst-case drawdown rather than use real data."
+            ),
+        )
+    use_take_profit = exit_mode.startswith("Take-profit")
 
     if isinstance(date_range, tuple) and len(date_range) == 2:
         sim_start, sim_end = date_range
@@ -203,6 +221,14 @@ def render_backtesting_tab():
             if "predicted_probability" in sim_df.columns:
                 sim_df = sim_df.sort_values("predicted_probability", ascending=False)
 
+            if use_take_profit and "actual_high_pct" in sim_df.columns and "predicted_target_gain" in sim_df.columns:
+                target = pd.to_numeric(sim_df["predicted_target_gain"], errors="coerce")
+                high   = pd.to_numeric(sim_df["actual_high_pct"], errors="coerce")
+                hit_target = target.notna() & high.notna() & (high >= target)
+                sim_df["resolved_gain_pct"] = np.where(hit_target, target, sim_df["actual_gain_pct"])
+            else:
+                sim_df["resolved_gain_pct"] = sim_df["actual_gain_pct"]
+
             records = []
             capital = start_capital
             for trade_date, gdf in sim_df.groupby("prediction_date", sort=True):
@@ -212,7 +238,7 @@ def render_backtesting_tab():
                     continue
                 position_size = capital / n
                 day_end_capital = 0.0
-                for gain in trades["actual_gain_pct"]:
+                for gain in trades["resolved_gain_pct"]:
                     resolved = position_size * (1 + gain / 100) - commission_fee
                     day_end_capital += max(resolved, 0.0)
                 capital = day_end_capital
@@ -229,12 +255,28 @@ def render_backtesting_tab():
             n_trades     = int(sim_result["trades_taken"].sum())
             n_days       = len(sim_result)
             total_fees   = n_trades * commission_fee
+            win_rate     = (sim_df["resolved_gain_pct"] > 0).mean() * 100
+
+            # Sharpe-like ratio on the day-over-day portfolio return series —
+            # "-like" because these are simulated per-day compounding steps,
+            # not literal daily market returns, so treat it as a rough
+            # risk-adjusted-return signal rather than a textbook Sharpe ratio.
+            daily_returns = sim_result["portfolio_value"].pct_change().dropna()
+            if len(daily_returns) >= 2 and daily_returns.std() > 0:
+                sharpe_like = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252)
+                sharpe_display = f"{sharpe_like:.2f}"
+            else:
+                sharpe_display = "N/A"
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Final Portfolio Value", f"${final_value:,.2f}")
             m2.metric("Total Return", f"{total_return:+.2f}%")
             m3.metric("Trades Simulated", f"{n_trades} across {n_days} day(s)")
             m4.metric("Total Fees Paid", f"${total_fees:,.2f}")
+
+            m5, m6 = st.columns(2)
+            m5.metric("Trade Win Rate", f"{win_rate:.1f}%", help="% of individual simulated trades with a positive resolved gain.")
+            m6.metric("Sharpe-like Ratio (annualized)", sharpe_display, help="Mean ÷ std. dev. of day-over-day portfolio returns, annualized by √252. A rough risk-adjusted-return signal, not a textbook Sharpe ratio.")
 
             fig = go.Figure(go.Scatter(
                 x=sim_result["prediction_date"], y=sim_result["portfolio_value"],
@@ -258,7 +300,7 @@ def render_backtesting_tab():
 
             st.caption(
                 "Note: results still assume every simulated trade could actually "
-                "be filled at the recorded actual gain, with no slippage, no "
+                "be filled at the resolved gain, with no slippage, no "
                 "market-impact cost, and unlimited liquidity — treat this as a "
                 "best-case illustration of the model's signal quality, not a "
                 "guarantee of real-world tradeable returns."
