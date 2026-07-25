@@ -1214,28 +1214,63 @@ def _render_performance_trends():
         .sort_values("prediction_date")
     )
 
-    fig = go.Figure()
-    for metric, color, name in [
-        ("accuracy_pct",  COLORS["primary"],   "Accuracy"),
-        ("precision_pct", COLORS["secondary"], "Precision"),
-        ("recall_pct",    COLORS["amber"],     "Recall"),
-    ]:
-        fig.add_trace(go.Scatter(
-            x=daily["prediction_date"], y=daily[metric],
-            mode="lines+markers", name=name,
-            line=dict(color=color, width=2),
-            marker=dict(size=5),
-        ))
-    fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.12)",
-                  annotation_text="50% baseline", annotation_font_size=10)
-    fig.update_layout(
-        title="Accuracy / Precision / Recall Over Time",
-        xaxis_title="Date", yaxis_title="%",
-        height=360, hovermode="x unified", **LAYOUT,
-    )
-    fig.update_xaxes(**AXIS_STYLE)
-    fig.update_yaxes(**AXIS_STYLE)
-    st.plotly_chart(fig, use_container_width=True)
+    def _trendline(x_ordinal: np.ndarray, y: np.ndarray):
+        """Least-squares linear trend; returns fitted y-values, or None if
+        there isn't enough valid data to fit one."""
+        mask = ~np.isnan(y)
+        if mask.sum() < 2:
+            return None
+        slope, intercept = np.polyfit(x_ordinal[mask], y[mask], 1)
+        return slope * x_ordinal + intercept
+
+    def _metric_panel(col, metric: str, color: str, name: str):
+        with col:
+            st.markdown(f"**{name}**")
+
+            sub = daily[["prediction_date", metric]].rename(
+                columns={"prediction_date": "Date", metric: name}
+            ).sort_values("Date", ascending=False).reset_index(drop=True)
+
+            st.dataframe(
+                sub.style.format({name: "{:.1f}%"}),
+                use_container_width=True, height=220, hide_index=True,
+            )
+
+            x_ord  = daily["prediction_date"].map(pd.Timestamp.toordinal).to_numpy(dtype=float)
+            y_vals = daily[metric].to_numpy(dtype=float)
+            trend  = _trendline(x_ord, y_vals)
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=daily["prediction_date"], y=y_vals,
+                mode="lines+markers", name=name,
+                line=dict(color=color, width=2),
+                marker=dict(size=5),
+            ))
+            if trend is not None:
+                fig.add_trace(go.Scatter(
+                    x=daily["prediction_date"], y=trend,
+                    mode="lines", name="Trend",
+                    line=dict(color=color, width=1.5, dash="dash"),
+                    opacity=0.55,
+                ))
+            fig.add_hline(y=50, line_dash="dot", line_color="rgba(255,255,255,0.12)",
+                          annotation_text="50% baseline", annotation_font_size=9)
+            fig.update_layout(
+                height=260, hovermode="x unified", showlegend=False,
+                margin=dict(t=12, b=24, l=24, r=16),
+                plot_bgcolor=LAYOUT["plot_bgcolor"], paper_bgcolor=LAYOUT["paper_bgcolor"],
+                font=LAYOUT["font"],
+            )
+            fig.update_xaxes(**AXIS_STYLE)
+            fig.update_yaxes(**AXIS_STYLE, title_text="%")
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("##### Accuracy / Precision / Recall Over Time")
+    t_col1, t_col2, t_col3 = st.columns(3)
+    _metric_panel(t_col1, "accuracy_pct",  COLORS["primary"],   "Accuracy")
+    _metric_panel(t_col2, "precision_pct", COLORS["secondary"], "Precision")
+    _metric_panel(t_col3, "recall_pct",    COLORS["amber"],     "Recall")
 
     col1, col2 = st.columns(2)
 
