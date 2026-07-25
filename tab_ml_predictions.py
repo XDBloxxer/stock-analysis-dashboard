@@ -1249,7 +1249,7 @@ def _render_performance_trends():
             fig.add_hline(y=50, line_dash="dot", line_color="rgba(255,255,255,0.12)",
                           annotation_text="50% baseline", annotation_font_size=9)
             fig.update_layout(
-                height=260, hovermode="x unified", showlegend=False,
+                height=320, hovermode="x unified", showlegend=False,
                 margin=dict(t=12, b=24, l=24, r=16),
                 plot_bgcolor=LAYOUT["plot_bgcolor"], paper_bgcolor=LAYOUT["paper_bgcolor"],
                 font=LAYOUT["font"],
@@ -1259,10 +1259,10 @@ def _render_performance_trends():
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("##### Accuracy / Precision / Recall Over Time")
-    t_col1, t_col2, t_col3 = st.columns(3)
-    _metric_panel(t_col1, "accuracy_pct",  COLORS["primary"],   "Accuracy")
-    _metric_panel(t_col2, "precision_pct", COLORS["secondary"], "Precision")
-    _metric_panel(t_col3, "recall_pct",    COLORS["amber"],     "Recall")
+    full_col = st.container()
+    _metric_panel(full_col, "accuracy_pct",  COLORS["primary"],   "Accuracy")
+    _metric_panel(full_col, "precision_pct", COLORS["secondary"], "Precision")
+    _metric_panel(full_col, "recall_pct",    COLORS["amber"],     "Recall")
 
     col1, col2 = st.columns(2)
 
