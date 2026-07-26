@@ -989,7 +989,7 @@ def _render_predictions_vs_actuals():
         col3.metric("Avg Gain Error",          f"{err_df.mean():.2f}%"      if not err_df.empty       else "—")
         col4.metric("Intraday High Populated", df["actual_high_pct"].notna().sum())
 
-    st.markdown("---")
+    render_labeled_divider("Confusion Matrix & Gain Distribution")
 
     col_cm, col_dist = st.columns(2)
 
@@ -1047,8 +1047,7 @@ def _render_predictions_vs_actuals():
         else:
             st.info("Gain distribution will appear once actual_gain_pct is populated.")
 
-    st.markdown("---")
-    st.markdown("#### Detailed Results")
+    render_labeled_divider("Detailed Results")
 
     display_cols = [
         c for c in [
@@ -1120,7 +1119,7 @@ def _render_missed_opportunities():
     col4.metric("Avg Missed Gain",         f"+{avg_gain:.1f}%"  if pd.notna(avg_gain)  else "—")
     col5.metric("Best Missed Gain",        f"+{best_gain:.1f}%" if pd.notna(best_gain) else "—")
 
-    st.markdown("---")
+    render_labeled_divider("Why We Miss Winners")
     col_left, col_right = st.columns(2)
 
     with col_left:
@@ -1152,8 +1151,7 @@ def _render_missed_opportunities():
             fig.update_yaxes(**AXIS_STYLE)
             st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("---")
-    st.markdown("#### Top Reasons We Miss Winners (All History)")
+    render_labeled_divider("Top Reasons We Miss Winners (All History)")
     st.caption(
         "Rolled up across every date on record, not just the one selected above — "
         "useful for spotting a persistent pattern (e.g. mostly a screener gap vs. "
@@ -1200,8 +1198,7 @@ def _render_missed_opportunities():
             "probability threshold or feature set instead."
         )
 
-    st.markdown("---")
-    st.markdown("#### Detail Table")
+    render_labeled_divider("Detail Table")
     display_cols = [
         c for c in [
             "symbol", "exchange", "actual_gain_pct", "actual_high_pct",
@@ -1428,8 +1425,7 @@ def _render_performance_trends():
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("---")
-    st.markdown("#### Average Gain Over Time by Signal")
+    render_labeled_divider("Average Gain Over Time by Signal")
 
     pos_signals = all_acc[all_acc["predicted_signal"].isin(["STRONG BUY", "BUY", "HOLD", "AVOID"])].copy()
     pos_signals["prediction_date"] = pd.to_datetime(pos_signals["prediction_date"])
@@ -1522,8 +1518,7 @@ def _render_system_info():
         available_steps = [(col, lbl) for col, lbl in funnel_steps if col in log.index and pd.notna(log[col])]
 
         if available_steps:
-            st.markdown("---")
-            st.markdown("#### Screening Funnel")
+            render_labeled_divider("Screening Funnel")
             funnel_df = pd.DataFrame(available_steps, columns=["Field", "Stage"])
             funnel_df["Value"] = funnel_df["Field"].map(lambda c: int(log[c]))
             fig = go.Figure(go.Funnel(
@@ -1536,8 +1531,7 @@ def _render_system_info():
             st.plotly_chart(fig, use_container_width=True)
 
         if len(log_df) > 1:
-            st.markdown("---")
-            st.markdown("#### Recent Screening Runs")
+            render_labeled_divider("Recent Screening Runs")
             show_cols = [c for c in log_df.columns if c != "id"]
             st.dataframe(log_df[show_cols], use_container_width=True, hide_index=True)
 
@@ -1549,8 +1543,7 @@ def _render_system_info():
     else:
         st.info("No screening logs found yet.")
 
-    st.markdown("---")
-    st.markdown("#### Database Summary")
+    render_labeled_divider("Database Summary")
 
     preds_df  = _get_table_full("ml_explosion_predictions")
     acc_df    = _get_table_full("ml_prediction_accuracy")
@@ -1574,8 +1567,7 @@ def _render_system_info():
         col1.metric("Overall Accuracy (all dates)", f"{acc_df['prediction_correct'].mean()*100:.1f}%")
         col2.metric("Overall Winner Rate",          f"{acc_df['became_winner'].mean()*100:.1f}%")
 
-    st.markdown("---")
-    st.markdown("#### Automated Schedule (Estonia Time)")
+    render_labeled_divider("Automated Schedule (Estonia Time)")
 
     col_sched, col_model = st.columns(2)
     with col_sched:
