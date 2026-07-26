@@ -86,8 +86,9 @@ def _is_market_holiday(d: date) -> bool:
     return d in _nyse_holidays(d.year)
 
 st.set_page_config(
-    page_title="Stock Analysis Dashboard",
-    page_icon="📊",
+    page_title="Market Intelligence Terminal",
+    page_icon="🟡",  # brass/gold dot — echoes the phosphor-terminal accent
+                      # rather than a generic 📊 bar-chart glyph
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -189,6 +190,14 @@ def main():
     with tab1: render_ml_predictions_tab()
     with tab2: render_daily_winners_tab()
     with tab3: render_backtesting_tab()
+
+    st.markdown(
+        '<div class="app-footer">'
+        'Data provided for informational purposes only — not financial advice. '
+        'Signals and backtests are model-generated and may lag real market conditions.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
