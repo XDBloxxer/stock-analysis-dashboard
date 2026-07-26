@@ -18,4 +18,4 @@ serverPort = 8501
 
 [runner]
 magicEnabled = false
-fastReruns = true
+fastReruns = false
