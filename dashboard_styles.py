@@ -349,7 +349,15 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     font-size: 0.65rem !important;
 }
 
-/* ── Tab Bar — segmented pill control, visible before AND after selection ── */
+/* ── Tab Bar — segmented pill control, visible before AND after selection ──
+   Selectors target [role="tablist"]/[role="tab"] (standard ARIA, stable
+   across versions) rather than relying only on data-baseweb hooks — a
+   Streamlit/BaseWeb bump dropped those data-baseweb attributes from the
+   tab-list and tab elements while leaving aria-selected untouched, which is
+   why only the selected-tab fill kept working and everything else quietly
+   fell back to unstyled text. data-baseweb selectors are kept alongside as
+   a harmless no-op fallback for older builds. */
+.stTabs [role="tablist"],
 .stTabs [data-baseweb="tab-list"] {
     background: var(--bg-1) !important;
     border-radius: var(--radius) !important;
@@ -364,6 +372,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
    so it reads as clickable even before any interaction. Uses a slight
    gradient (lighter top edge) plus a crisp drop shadow and inset top
    highlight to read as a physically raised key, not a text label. */
+.stTabs [role="tab"],
 .stTabs [data-baseweb="tab"] {
     background: linear-gradient(180deg, var(--bg-4) 0%, #171d27 100%) !important;
     border-radius: var(--radius-sm) !important;
@@ -387,6 +396,8 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 }
 /* Browser's default blue focus ring (tabs are real <button> elements)
    showed through uncontrolled on click — replaced with a themed outline. */
+.stTabs [role="tab"]:focus,
+.stTabs [role="tab"]:focus-visible,
 .stTabs [data-baseweb="tab"]:focus,
 .stTabs [data-baseweb="tab"]:focus-visible {
     outline: 2px solid var(--cyan-border) !important;
@@ -398,18 +409,27 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
    wraps tab labels in nested <p>/<div>/<span>, and an earlier global rule
    (`p, li { color: ... !important }`) matches those nodes directly and
    otherwise wins over a color set only on the ancestor tab element. */
+.stTabs [role="tab"],
+.stTabs [role="tab"] p,
+.stTabs [role="tab"] div,
+.stTabs [role="tab"] span,
 .stTabs [data-baseweb="tab"],
 .stTabs [data-baseweb="tab"] p,
 .stTabs [data-baseweb="tab"] div,
 .stTabs [data-baseweb="tab"] span {
     color: var(--text-1) !important;
 }
+.stTabs [role="tab"]:hover,
+.stTabs [role="tab"]:hover p,
+.stTabs [role="tab"]:hover div,
+.stTabs [role="tab"]:hover span,
 .stTabs [data-baseweb="tab"]:hover,
 .stTabs [data-baseweb="tab"]:hover p,
 .stTabs [data-baseweb="tab"]:hover div,
 .stTabs [data-baseweb="tab"]:hover span {
     color: var(--text-0) !important;
 }
+.stTabs [role="tab"]:hover,
 .stTabs [data-baseweb="tab"]:hover {
     background: linear-gradient(180deg, #232a36 0%, var(--bg-4) 100%) !important;
     border-color: rgba(255,255,255,0.24) !important;
@@ -440,6 +460,9 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 .stTabs [data-baseweb="tab-panel"] { padding-top: 24px !important; }
 
 /* Suppress .arrow_right leak */
+.stTabs [role="tab"] [data-testid="stIconMaterial"],
+.stTabs [role="tab"] svg ~ span,
+.stTabs [role="tab"] > span:last-child:not(:first-child),
 .stTabs [data-baseweb="tab"] [data-testid="stIconMaterial"],
 .stTabs [data-baseweb="tab"] svg ~ span,
 .stTabs [data-baseweb="tab"] > span:last-child:not(:first-child) {
@@ -834,8 +857,8 @@ div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
 hr { margin: 8px 0 !important; }
 div[data-testid="stMetric"] { padding: 6px 10px !important; }
 div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
-.stTabs [data-baseweb="tab-list"] { gap: 4px !important; }
-.stTabs [data-baseweb="tab"] { padding: 6px 12px !important; }
+.stTabs [role="tablist"], .stTabs [data-baseweb="tab-list"] { gap: 4px !important; }
+.stTabs [role="tab"], .stTabs [data-baseweb="tab"] { padding: 6px 12px !important; }
 div[data-testid="stExpander"] { margin-bottom: 6px !important; }
 .stMarkdown h4 { margin-top: 6px !important; margin-bottom: 6px !important; }
 </style>
