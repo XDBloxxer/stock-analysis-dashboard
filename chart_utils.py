@@ -88,9 +88,16 @@ COLORS = {
     ],
 }
 
+# Note: 'BUY' intentionally uses COLORS['blue'] rather than COLORS['buy']
+# here — COLORS['buy'] (brass, #e0a83c) sits right next to COLORS['hold']
+# (amber, #f59e0b) on the color wheel, so the two were nearly
+# indistinguishable on the "Average Gain by Signal" line chart where all
+# four signals appear together. COLORS['buy'] itself is unchanged and still
+# used for badges/backgrounds elsewhere, where BUY appears alone rather than
+# next to HOLD.
 SIGNAL_COLORS = {
     'STRONG BUY': COLORS['strong_buy'],
-    'BUY':        COLORS['buy'],
+    'BUY':        COLORS['blue'],
     'HOLD':       COLORS['hold'],
     'AVOID':      COLORS['avoid'],
 }
