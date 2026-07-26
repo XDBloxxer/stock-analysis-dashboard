@@ -962,26 +962,34 @@ def _render_predictions_vs_actuals():
 
     with col_cm:
         st.markdown("#### Confusion Matrix")
-        fig = go.Figure(data=go.Heatmap(
-            z=[[tp, fp], [fn, tn]],
-            x=["Actually Exploded", "Didn't Explode"],
-            y=["Predicted Explosion", "Predicted No Explosion"],
-            text=[
-                [f"<b>True Positive</b><br>{tp}", f"<b>False Positive</b><br>{fp}"],
-                [f"<b>False Negative</b><br>{fn}", f"<b>True Negative</b><br>{tn}"],
-            ],
-            texttemplate="%{text}",
-            textfont={"size": 13, "color": "white"},
-            colorscale=[
-                [0.0,  CONFUSION_COLORS["tn"]],
-                [0.33, CONFUSION_COLORS["fn"]],
-                [0.66, CONFUSION_COLORS["fp"]],
-                [1.0,  CONFUSION_COLORS["tp"]],
-            ],
-            showscale=False,
-        ))
-        fig.update_layout(height=320, **LAYOUT)
-        st.plotly_chart(fig, use_container_width=True)
+        # Fixed per-cell colors (not a value-driven colorscale — see note
+        # above) so each label always renders with its own correct color no
+        # matter which cell happens to have the highest/lowest count.
+        _cm_cells = [
+            ("True Positive",  tp, CONFUSION_COLORS["tp"], "#0b0f14"),   # bright green bg → dark text
+            ("False Positive", fp, CONFUSION_COLORS["fp"], "#0b0f14"),   # bright red bg   → dark text
+            ("False Negative", fn, CONFUSION_COLORS["fn"], "#0b0f14"),   # bright amber bg → dark text
+            ("True Negative",  tn, CONFUSION_COLORS["tn"], "#cbd5e1"),   # dark slate bg   → light text
+        ]
+        _cm_html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+        for _label, _val, _bg, _fg in _cm_cells:
+            _label_fg = "rgba(0,0,0,0.62)" if _fg == "#0b0f14" else "var(--text-2)"
+            _cm_html += (
+                f'<div style="background:{_bg};border-radius:var(--radius-sm);padding:16px 14px;text-align:center;">'
+                f'<div style="font-family:var(--font-body);font-size:0.68rem;font-weight:600;'
+                f'letter-spacing:0.08em;text-transform:uppercase;color:{_label_fg};margin-bottom:4px;">{_label}</div>'
+                f'<div style="font-family:var(--font-display);font-size:1.6rem;font-weight:800;color:{_fg};">{_val}</div>'
+                '</div>'
+            )
+        _cm_html += '</div>'
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:1fr 1fr;font-family:var(--font-body);'
+            'font-size:0.65rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-2);'
+            'text-align:center;margin-bottom:6px;">'
+            '<div>Actually Exploded</div><div>Didn\'t Explode</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(_cm_html, unsafe_allow_html=True)
 
     with col_dist:
         if gain_populated > 0:
