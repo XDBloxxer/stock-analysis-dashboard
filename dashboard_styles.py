@@ -248,36 +248,41 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDeltaIcon-Down"]):
     font-size: 0.65rem !important;
 }
 
-/* ── Tab Bar — underline style ───────────────────────────────────────────── */
+/* ── Tab Bar — segmented pill control (obvious clickable state) ─────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: transparent !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
+    background: var(--bg-2) !important;
+    border-radius: var(--radius) !important;
+    padding: 5px !important;
     gap: 4px !important;
-    border: none !important;
-    border-bottom: 1px solid var(--border-mid) !important;
+    border: 1px solid var(--border-mid) !important;
+    display: inline-flex !important;
+    width: auto !important;
 }
 
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-sm) !important;
     color: var(--text-2) !important;
     font-family: var(--font-display) !important;
     font-size: 0.8rem !important;
     font-weight: 700 !important;
-    letter-spacing: 0.08em !important;
+    letter-spacing: 0.06em !important;
     text-transform: uppercase !important;
-    padding: 11px 22px 13px !important;
+    padding: 10px 20px !important;
     border: none !important;
-    border-bottom: 2px solid transparent !important;
-    margin-bottom: -1px !important;
-    transition: color 0.15s !important;
+    margin-bottom: 0 !important;
+    transition: color 0.15s, background 0.15s !important;
 }
-.stTabs [data-baseweb="tab"]:hover { color: var(--text-1) !important; }
+.stTabs [data-baseweb="tab"]:hover { color: var(--text-1) !important; background: rgba(255,255,255,0.03) !important; }
 .stTabs [aria-selected="true"] {
-    color: var(--cyan) !important;
-    border-bottom: 2px solid var(--cyan) !important;
+    color: var(--bg-0) !important;
+    background: var(--cyan) !important;
+    box-shadow: 0 1px 8px rgba(34,211,238,0.35) !important;
 }
+.stTabs [aria-selected="true"]:hover { color: var(--bg-0) !important; background: var(--cyan) !important; }
+/* Remove the old baseweb selection underline entirely — the pill fill is the signal now */
+.stTabs [data-baseweb="tab-highlight"],
+.stTabs [data-baseweb="tab-border"] { display: none !important; background: transparent !important; }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 24px !important; }
 
 /* Suppress .arrow_right leak */
@@ -547,6 +552,27 @@ div[data-testid="stAlert"] {
     border-radius: var(--radius); padding: 16px 18px; transition: border-color 0.15s;
 }
 .data-card:hover { border-color: rgba(255,255,255,0.2); }
+
+/* Native st.container(border=True) — used for grouping controls/notes that
+   would otherwise float without a visual boundary (e.g. simulator config
+   panels, disclaimer notes). Styled to match .data-card so both approaches
+   (raw HTML vs. real Streamlit layout containers) look identical. */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid var(--border-mid) !important;
+    border-radius: var(--radius) !important;
+    background: var(--bg-2) !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] > div { border-radius: var(--radius) !important; }
+
+/* Text-only info/note block — left accent bar, quieter than a full data-card */
+.info-card {
+    background: var(--bg-2); border: 1px solid var(--border-mid);
+    border-left: 3px solid var(--cyan); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    padding: 12px 16px; margin: 8px 0 16px;
+    font-family: var(--font-body); font-size: 0.85rem; line-height: 1.55;
+    color: var(--text-1);
+}
+.info-card.muted { border-left-color: var(--text-3); }
 
 .search-result-card {
     background: var(--cyan-dim); border: 1px solid var(--cyan-border);
