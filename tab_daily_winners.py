@@ -40,7 +40,7 @@ import os
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
-from dashboard_styles import render_section_header
+from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_snapshot
 
 TAB_ID = "daily_winners"
 
@@ -499,8 +499,7 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
     summary_df['Signal']   = signals
     summary_df['Momentum'] = momentums
 
-    st.markdown("---")
-    st.markdown("### 📉 Indicator Timeline")
+    render_labeled_divider("Indicator Timeline")
 
     tp_first = available_timepoints[0]
     tp_last  = available_timepoints[-1]
@@ -690,8 +689,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
     tp_first = available_timepoints[0]
     tp_last  = available_timepoints[-1]
 
-    st.markdown("---")
-    st.markdown("#### 🔮 Indicator Prediction Table")
+    render_labeled_divider("Indicator Prediction Table")
     st.caption(
         f"**Δ = {tp_last} minus {tp_first}** · "
         f"**Signal** = historically bullish/bearish direction · "
@@ -825,23 +823,25 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
             if not available:
                 st.info(f"No {group_name} data available.")
                 continue
-            cols = st.columns(min(4, len(available)))
-            for j, field in enumerate(available):
-                with cols[j % 4]:
-                    value = data_row[field]
-                    label = group_info['labels'].get(field, field.replace(".", " ").replace("_", " ").upper())
-                    if field in bool_fields:
-                        display_val = "✅ Yes" if value else "❌ No"
-                    elif field == "volume":
-                        display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
-                    elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
-                        if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
-                        elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
-                        else:                        display_val = f"{value:.2f}"
-                    elif abs(value) >= 1000: display_val = f"{value:.2f}"
-                    elif abs(value) >= 1:    display_val = f"{value:.3f}"
-                    else:                    display_val = f"{value:.4f}"
-                    st.metric(label, display_val)
+            snapshot_items = []
+            for field in available:
+                value = data_row[field]
+                label = group_info['labels'].get(field, field.replace(".", " ").replace("_", " ").upper())
+                kind = None
+                if field in bool_fields:
+                    display_val = "Yes" if value else "No"
+                    kind = "true" if value else "false"
+                elif field == "volume":
+                    display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
+                elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
+                    if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
+                    elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
+                    else:                        display_val = f"{value:.2f}"
+                elif abs(value) >= 1000: display_val = f"{value:.2f}"
+                elif abs(value) >= 1:    display_val = f"{value:.3f}"
+                else:                    display_val = f"{value:.4f}"
+                snapshot_items.append((label, display_val, kind))
+            render_indicator_snapshot(snapshot_items)
 
 
 # ── Stock history (from ML predictions) ───────────────────────────────────────
@@ -1015,7 +1015,7 @@ def render_daily_winners_tab():
     if st.session_state[_key_search]:
         render_symbol_search(available_dates)
 
-    st.markdown("---")
+    render_labeled_divider("Date Selection")
 
     col1, col2 = st.columns([4, 1])
     with col1:
@@ -1090,7 +1090,6 @@ def render_daily_winners_tab():
         width='stretch', height=400,
     )
 
-    st.markdown("---")
     render_section_header(2, "Detailed Stock Analysis")
 
     symbols = sorted(winners_df['symbol'].unique())
@@ -1114,8 +1113,7 @@ def render_daily_winners_tab():
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Price Journey ─────────────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### Price Journey")
+    render_labeled_divider("Price Journey")
     st.caption("Close price step-chart — T-1 Open to T-1 Close to Market Open to Market Close. High/low shown as range bars.")
     render_price_journey(
         selected_symbol,
@@ -1124,8 +1122,7 @@ def render_daily_winners_tab():
     )
 
     # ── Technical Indicator Snapshots ────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### Technical Indicator Snapshots")
+    render_labeled_divider("Technical Indicator Snapshots")
 
     def _show_snapshot(df: pd.DataFrame, label: str, snap_type: str):
         if df.empty or 'symbol' not in df.columns:
@@ -1162,7 +1159,7 @@ def render_daily_winners_tab():
     )
 
     # ── ML History ───────────────────────────────────────────────────────────
-    st.markdown("---")
+    render_labeled_divider("ML History")
     _key_ml = f"ml_open_{selected_symbol}"
     if _key_ml not in st.session_state:
         st.session_state[_key_ml] = False
