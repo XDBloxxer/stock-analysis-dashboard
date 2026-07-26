@@ -1142,6 +1142,9 @@ def inject_count_up_script():
     st.metric value animate up from 0 instead of appearing instantly."""
     import streamlit.components.v1 as components
     components.html(_COUNT_UP_JS, height=0, width=0)
+
+
+def render_empty_state(message, glyph="◇"):
     """Styled "no data" placeholder — pairs with `.empty-state` CSS above.
 
     Use in place of a bare st.info()/st.warning() where the user has hit a
