@@ -88,12 +88,16 @@ DASHBOARD_CSS = """
        "only the static is visible" bug. */
 }
 
-/* Faint CRT scanline texture — decorative, ~1.5% opacity, never fights content.
-   z-index:-1 (not 0) is deliberate: a negative z-index is guaranteed to paint
-   behind any normally-positioned element in the SAME stacking context, and
-   critically also behind ones in nested stacking contexts Streamlit's own
-   wrapper divs may create — z-index:0 only wins in a direct same-context
-   comparison, which is not guaranteed given how deep Streamlit's DOM nests. */
+/* ── DIAGNOSTIC BUILD ──────────────────────────────────────────────────────
+   .stApp::before / ::after (scanline texture + ambient sweep) TEMPORARILY
+   REMOVED to test whether they are the actual cause of the invisible-
+   dashboard bug. If the dashboard renders fine with this block gone, the
+   effect will be rebuilt as a real fixed <div> (via st.markdown) instead of
+   pseudo-elements, so it can never interfere with .stApp's own stacking
+   context again. If the dashboard is STILL blank/static-only with this
+   removed, the cause is something else entirely and these rules were never
+   the problem. Original code kept below, commented out, for easy restore.
+
 .stApp::before {
     content: '';
     position: fixed; inset: 0;
@@ -104,10 +108,6 @@ DASHBOARD_CSS = """
     pointer-events: none;
     z-index: -1;
 }
-
-/* Slow ambient sweep — a soft horizontal band of brass light drifting down
-   the page on an endless loop, like a terminal's periodic refresh. Purely
-   ambient (no data implied), low opacity, ignored by prefers-reduced-motion. */
 .stApp::after {
     content: '';
     position: fixed; left: 0; right: 0;
@@ -124,6 +124,7 @@ DASHBOARD_CSS = """
 @media (prefers-reduced-motion: reduce) {
     .stApp::after { animation: none; display: none; }
 }
+──────────────────────────────────────────────────────────────────────── */
 
 
 /* ── Main Container ─────────────────────────────────────────────────────── */
