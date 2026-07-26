@@ -800,7 +800,7 @@ def _render_latest_predictions():
         render_empty_state("No BUY / STRONG BUY signals for this date — the model isn't flagging anything actionable.")
     else:
         st.markdown(
-            f"##### 🎯 Buy these {min(total_picks, _MAX_PICKS_SHOWN)}"
+            f"##### Top 10 picks for today {min(total_picks, _MAX_PICKS_SHOWN)}"
             + (f" (of {total_picks} flagged)" if total_picks > _MAX_PICKS_SHOWN else "")
         )
 
