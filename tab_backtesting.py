@@ -179,6 +179,95 @@ def _simulate(
     return sim_result, stats
 
 
+def _threshold_segments(x, y, threshold: float):
+    """
+    Split an (x, y) line into contiguous segments, each tagged 'above' or
+    'below' a threshold value, with a linearly-interpolated point inserted
+    exactly at each crossing so segments meet cleanly on the threshold line
+    instead of jumping color mid-step.
+
+    Returns a list of (x_seg: list, y_seg: list, side: 'above'|'below').
+    """
+    xs = list(x)
+    ys = list(y)
+    if not xs:
+        return []
+
+    def _side(v):
+        return "above" if v >= threshold else "below"
+
+    segments = []
+    cur_x = [xs[0]]
+    cur_y = [ys[0]]
+    cur_side = _side(ys[0])
+
+    for i in range(1, len(xs)):
+        x0, y0 = xs[i - 1], ys[i - 1]
+        x1, y1 = xs[i], ys[i]
+        side1 = _side(y1)
+
+        if side1 != cur_side:
+            if y1 != y0:
+                frac = (threshold - y0) / (y1 - y0)
+                cross_x = x0 + (x1 - x0) * frac
+            else:
+                cross_x = x1
+            cur_x.append(cross_x)
+            cur_y.append(threshold)
+            segments.append((cur_x, cur_y, cur_side))
+            cur_x = [cross_x, x1]
+            cur_y = [threshold, y1]
+            cur_side = side1
+        else:
+            cur_x.append(x1)
+            cur_y.append(y1)
+
+    segments.append((cur_x, cur_y, cur_side))
+    return segments
+
+
+def _add_threshold_colored_trace(fig: go.Figure, x, y, threshold: float, name: str):
+    """
+    Adds a portfolio-value line to `fig` that is green where it's at/above
+    `threshold` and red where it's below, each with a matching translucent
+    fill down to zero. Shows a single combined legend entry for `name`.
+    """
+    green = "rgba(0,255,136,0.9)"
+    green_fill = "rgba(0,255,136,0.10)"
+    red = "rgba(255,77,77,0.9)"
+    red_fill = "rgba(255,77,77,0.10)"
+
+    segments = _threshold_segments(x, y, threshold)
+    legend_shown = False
+    for seg_x, seg_y, side in segments:
+        is_above = side == "above"
+        fig.add_trace(go.Scatter(
+            x=seg_x, y=seg_y,
+            mode="lines",
+            line=dict(color=green if is_above else red, width=2),
+            fill="tozeroy",
+            fillcolor=green_fill if is_above else red_fill,
+            name=name,
+            legendgroup=name,
+            showlegend=not legend_shown,
+            hoverinfo="skip",
+        ))
+        legend_shown = True
+
+    # Separate marker + hover trace on top, colored per actual data point
+    # (not the interpolated crossing points) so hover values stay exact.
+    marker_colors = [green if v >= threshold else red for v in y]
+    fig.add_trace(go.Scatter(
+        x=list(x), y=list(y),
+        mode="markers",
+        marker=dict(size=5, color=marker_colors),
+        name=name,
+        legendgroup=name,
+        showlegend=False,
+        hovertemplate="%{x|%b %d, %Y}<br>$%{y:,.2f}<extra></extra>",
+    ))
+
+
 def _render_stats(stats: dict, key_prefix: str = ""):
     sharpe_display = f"{stats['sharpe_like']:.2f}" if stats["sharpe_like"] is not None else "N/A"
 
@@ -325,13 +414,11 @@ def render_backtesting_tab():
 
         _render_stats(stats)
 
-        fig = go.Figure(go.Scatter(
-            x=sim_result["prediction_date"], y=sim_result["portfolio_value"],
-            mode="lines+markers", name="Portfolio Value",
-            line=dict(color=COLORS["secondary"], width=2),
-            marker=dict(size=5),
-            fill="tozeroy", fillcolor="rgba(0,255,136,0.06)",
-        ))
+        fig = go.Figure()
+        _add_threshold_colored_trace(
+            fig, sim_result["prediction_date"], sim_result["portfolio_value"],
+            threshold=start_capital, name="Portfolio Value",
+        )
         fig.add_hline(
             y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
             annotation_text="Starting capital", annotation_font_size=10,
