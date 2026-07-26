@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import LAYOUT, AXIS_STYLE, COLORS
 from cache_ui import render_cache_buttons
+from dashboard_styles import render_section_header
 
 TAB_ID = "backtesting"
 
@@ -219,7 +220,7 @@ def _config_controls(label: str, key_prefix: str, min_date, max_date, default_si
 
 # ── Main entry point ───────────────────────────────────────────────────────
 def render_backtesting_tab():
-    st.subheader("Strategy Backtesting")
+    render_section_header(1, "Strategy Backtesting")
     st.markdown("Simulate cumulative portfolio performance from the model's historical signals")
 
     refresh_clicked, clear_confirmed = render_cache_buttons(
