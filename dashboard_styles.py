@@ -124,6 +124,33 @@ DASHBOARD_CSS = """
     [data-testid="stAppViewContainer"]::before { animation: none; }
 }
 
+/* ── Cursor glow — a soft brass light that follows the mouse ────────────────
+   Position comes from --mx/--my custom properties on <html>, updated by
+   inject_mouse_glow_script() below via requestAnimationFrame — the DOM
+   write only ever touches two CSS variables, never element styles/layout,
+   so this stays compositor-only and cheap even on a page this data-dense.
+   Lives on ::after (::before is already the ambient drift layer) and sits
+   at the same z-index: -1, i.e. still well under all content.
+   Defaults to page center via the fallback in var(--mx, 50vw) so there's
+   no jump/pop before the first mousemove event fires. Skipped entirely for
+   reduced-motion users and on touch devices (no hover = no cursor to
+   follow), same posture as the ambient drift animation above. */
+[data-testid="stAppViewContainer"]::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: radial-gradient(
+        circle 320px at var(--mx, 50vw) var(--my, 40vh),
+        rgba(224, 168, 60, 0.06) 0%,
+        transparent 70%
+    );
+    pointer-events: none;
+    z-index: -1;
+    transition: opacity 0.3s ease;
+}
+@media (prefers-reduced-motion: reduce), (hover: none) {
+    [data-testid="stAppViewContainer"]::after { opacity: 0 !important; }
+}
+
 
 /* ── Main Container ─────────────────────────────────────────────────────── */
 /* NOTE: previously had `animation: fadeUp 0.35s ease forwards;` here, whose
@@ -1258,6 +1285,47 @@ def inject_count_up_script():
     st.metric value animate up from 0 instead of appearing instantly."""
     import streamlit.components.v1 as components
     components.html(_COUNT_UP_JS, height=0, width=0)
+
+
+# Cursor-follow glow — updates --mx/--my on <html> via requestAnimationFrame
+# so the CSS radial-gradient in the ::after layer above tracks the mouse.
+# Same iframe-to-parent pattern as _COUNT_UP_JS: components.html runs this
+# in its own sandboxed iframe, so it reaches the real page through
+# window.parent.document rather than touching its own (invisible) document.
+# rAF-throttled and skipped for reduced-motion/touch, matching the CSS
+# media query that also hides the glow layer for those users.
+_MOUSE_GLOW_JS = """
+<script>
+(function() {
+  try {
+    var doc = window.parent.document;
+    var root = doc.documentElement;
+    var reduced = window.parent.matchMedia('(prefers-reduced-motion: reduce)').matches
+               || window.parent.matchMedia('(hover: none)').matches;
+    if (reduced) return;
+    var pending = false, lastX = null, lastY = null;
+    function apply() {
+      pending = false;
+      if (lastX === null) return;
+      root.style.setProperty('--mx', lastX + 'px');
+      root.style.setProperty('--my', lastY + 'px');
+    }
+    doc.addEventListener('mousemove', function(e) {
+      lastX = e.clientX; lastY = e.clientY;
+      if (!pending) { pending = true; window.parent.requestAnimationFrame(apply); }
+    }, { passive: true });
+  } catch (e) { /* cross-origin or DOM not ready — glow just stays centered */ }
+})();
+</script>
+"""
+
+
+def inject_mouse_glow_script():
+    """Call once per page render to make the ambient background glow
+    (`[data-testid="stAppViewContainer"]::after` in DASHBOARD_CSS) follow
+    the cursor. No-op for reduced-motion or touch/no-hover users."""
+    import streamlit.components.v1 as components
+    components.html(_MOUSE_GLOW_JS, height=0, width=0)
 
 
 def render_empty_state(message, glyph="◇"):
