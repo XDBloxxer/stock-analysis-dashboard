@@ -247,8 +247,9 @@ div[data-testid="stMetric"] {
     padding: 18px 20px 16px !important;
     position: relative !important;
     overflow: visible !important;
-    transition: border-color 0.15s, background-color 0.15s, background-size 0.35s cubic-bezier(0.16,1,0.3,1) !important;
+    transition: border-color 0.15s, background-color 0.15s, background-size 0.35s cubic-bezier(0.16,1,0.3,1), box-shadow 0.15s !important;
     min-height: 92px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.28) !important;
 
     /* Top-accent-bar reveal on hover — a thin gradient line that grows in
        from the left, borrowed from a portfolio site's `.project-card::before`
@@ -290,6 +291,7 @@ div[data-testid="stMetric"]::before {
 div[data-testid="stMetric"]:hover {
     border-color: var(--cyan-border) !important;
     background-color: var(--bg-3) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.32) !important;
 }
 div[data-testid="stMetric"]:hover::before {
     background: var(--cyan);
@@ -616,6 +618,18 @@ hr {
 }
 hr::after { display: none !important; }
 
+/* Labeled divider — "— Filters —" style, for splitting a page into named
+   blocks without a full section header. Used via render_labeled_divider(). */
+.labeled-divider {
+    display: flex; align-items: center; gap: 14px; margin: 26px 0;
+}
+.labeled-divider .ld-line { flex: 1; height: 1px; background: var(--border-mid); }
+.labeled-divider .ld-text {
+    font-family: var(--font-body); font-size: 0.66rem; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-2);
+    white-space: nowrap;
+}
+
 /* ── Expanders ──────────────────────────────────────────────────────────── */
 div[data-testid="stExpander"] {
     background: var(--bg-2) !important;
@@ -857,16 +871,36 @@ div[data-testid="stAlert"] {
 /* ── Data / search / warning cards ─────────────────────────────────────── */
 .data-card {
     background: var(--bg-2); border: 1px solid var(--border-mid);
-    border-radius: var(--radius); padding: 16px 18px; transition: border-color 0.15s;
+    border-radius: var(--radius); padding: 16px 18px;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.28);
     position: relative;
 }
-.data-card:hover { border-color: var(--cyan-border); }
+.data-card:hover {
+    border-color: var(--cyan-border);
+    background: var(--bg-3);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.32);
+}
 .data-card::after {
     content: ''; position: absolute; top: -1px; right: -1px; width: 9px; height: 9px;
     border-top: 1.5px solid var(--border-mid); border-right: 1.5px solid var(--border-mid);
     border-radius: 0 var(--radius) 0 0; transition: border-color 0.15s;
 }
 .data-card:hover::after { border-color: var(--cyan); }
+
+/* Signal-strength color bleed — STRONG BUY cards get a faint green wash
+   across the whole card, not just the badge, so the strongest signals are
+   readable from across the room rather than requiring a close look at each
+   badge individually. Add alongside `data-card` (e.g. class="data-card
+   card-strong-buy"). */
+.data-card.card-strong-buy {
+    background: linear-gradient(180deg, rgba(16,185,129,0.06), var(--bg-2) 60%);
+    border-color: rgba(16,185,129,0.22);
+}
+.data-card.card-strong-buy:hover {
+    background: linear-gradient(180deg, rgba(16,185,129,0.1), var(--bg-3) 60%);
+    border-color: rgba(16,185,129,0.35);
+}
 
 /* Native st.container(border=True) — used for grouping controls/notes that
    would otherwise float without a visual boundary (e.g. simulator config
@@ -1027,7 +1061,87 @@ def render_section_header(num, title):
     )
 
 
-def render_empty_state(message, glyph="◇"):
+def render_labeled_divider(text):
+    """"— Filters —" style divider: thin line, small-caps label, thin line.
+
+    Use in place of a bare st.markdown("---") between named blocks on a
+    page, so the break reads as a designed transition rather than a
+    leftover Markdown rule.
+
+        render_labeled_divider("Filters")
+    """
+    import streamlit as st
+    st.markdown(
+        f'<div class="labeled-divider">'
+        f'<div class="ld-line"></div>'
+        f'<div class="ld-text">{text}</div>'
+        f'<div class="ld-line"></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# Count-up animation for st.metric values. st.markdown-injected <script>
+# tags run inside Streamlit's sandboxed iframe and can't reliably reach the
+# real metric DOM nodes, so this uses components.v1.html (its own iframe)
+# and reaches out via `window.parent.document` — a well-worn pattern for
+# touching the main app DOM from a components iframe. Best-effort: it
+# parses whatever text is in each stMetricValue node (stripping a
+# currency/percent affix), so anything that doesn't look like "$1,234.5" or
+# "87%" is left alone rather than guessed at.
+_COUNT_UP_JS = """
+<script>
+(function() {
+  function processNode(node) {
+    if (node._cuAnimating) return;
+    var text = (node.textContent || '').trim();
+    var m = text.match(/^([^0-9\\-]*)(-?[0-9]*\\.?[0-9]+)(.*)$/);
+    if (!m) return;
+    var prefix = m[1] || '', suffix = m[3] || '';
+    var end = parseFloat(m[2]);
+    if (isNaN(end)) return;
+    var decimals = (m[2].split('.')[1] || '').length;
+    if (node._cuLastVal === end) return;
+    var start = (node._cuLastVal === undefined) ? 0 : node._cuLastVal;
+    node._cuLastVal = end;
+    node._cuAnimating = true;
+    var duration = 700, t0 = null;
+    function step(ts) {
+      if (!t0) t0 = ts;
+      var p = Math.min((ts - t0) / duration, 1);
+      var eased = 1 - Math.pow(1 - p, 3);
+      var cur = start + (end - start) * eased;
+      node.textContent = prefix + cur.toFixed(decimals) + suffix;
+      if (p < 1) { requestAnimationFrame(step); }
+      else { node.textContent = prefix + end.toFixed(decimals) + suffix; node._cuAnimating = false; }
+    }
+    requestAnimationFrame(step);
+  }
+  function scan() {
+    try {
+      var doc = window.parent.document;
+      doc.querySelectorAll('div[data-testid="stMetricValue"]').forEach(function(container) {
+        var valueEl = container.querySelector('div') || container;
+        processNode(valueEl);
+      });
+    } catch (e) { /* cross-origin or DOM not ready yet — skip this pass */ }
+  }
+  try {
+    var target = window.parent.document.body;
+    new MutationObserver(scan).observe(target, {childList: true, subtree: true, characterData: true});
+  } catch (e) {}
+  scan();
+  setTimeout(scan, 300);
+})();
+</script>
+"""
+
+
+def inject_count_up_script():
+    """Call once per page render (e.g. near the top of main()) to make every
+    st.metric value animate up from 0 instead of appearing instantly."""
+    import streamlit.components.v1 as components
+    components.html(_COUNT_UP_JS, height=0, width=0)
     """Styled "no data" placeholder — pairs with `.empty-state` CSS above.
 
     Use in place of a bare st.info()/st.warning() where the user has hit a
