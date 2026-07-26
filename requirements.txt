@@ -19,7 +19,7 @@ google-auth-httplib2>=0.1.1
 scipy>=1.17.0
 
 # Supabase
-supabase>=1.26.01
+supabase>=1.26.1
 
 # matplotlib
 matplotlib>=3.10
