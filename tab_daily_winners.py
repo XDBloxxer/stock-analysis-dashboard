@@ -746,7 +746,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
     def _style_signal(val):
         if 'Bullish' in str(val):  return 'color: #10b981; font-weight: 600'
         elif 'Bearish' in str(val): return 'color: #ef4444; font-weight: 600'
-        elif 'Rising' in str(val):  return 'color: #3b82f6; font-weight: 600'
+        elif 'Rising' in str(val):  return 'color: #8b5cf6; font-weight: 600'
         elif 'Falling' in str(val): return 'color: #f59e0b; font-weight: 600'
         return 'color: #b8bcc8'
 
