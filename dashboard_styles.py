@@ -1076,16 +1076,33 @@ def ticker_copy_html(symbol, style=""):
     sandboxed iframe, so `this` + the Clipboard API both work without the
     parent-document workaround the count-up script needs.
 
+    Tries navigator.clipboard.writeText() first, but that call silently
+    rejects in some hosting/browser setups (permissions-policy quirks,
+    non-secure contexts, older browsers) — with no visible error, it just
+    looks like a dead button. Falls back to the older
+    document.execCommand('copy') via a temporary offscreen textarea, which
+    works in effectively every environment a click handler runs in.
+
         st.markdown(ticker_copy_html("AAPL", style="font-size:1.05rem;font-weight:700;"),
                     unsafe_allow_html=True)
     """
     js = (
-        f"navigator.clipboard.writeText('{symbol}').then(function(){{"
-        f"var el=this;var orig=el.dataset.orig||el.textContent;"
-        f"el.dataset.orig=orig;el.textContent='\\u2713 copied';"
-        f"el.style.color='var(--green-bright)';"
-        f"setTimeout(function(){{el.textContent=orig;el.style.color='';}},900);"
-        f"}}.bind(this));"
+        "var el=this;"
+        "function _flash(){"
+        "var o=el.dataset.orig||el.textContent;el.dataset.orig=o;"
+        "el.textContent='\\u2713 copied';el.style.color='var(--green-bright)';"
+        "setTimeout(function(){el.textContent=o;el.style.color='';},900);"
+        "}"
+        "function _fallback(t){"
+        "var ta=document.createElement('textarea');ta.value=t;"
+        "ta.style.position='fixed';ta.style.opacity='0';ta.style.top='0';ta.style.left='0';"
+        "document.body.appendChild(ta);ta.focus();ta.select();"
+        "try{document.execCommand('copy');}catch(e){}"
+        "document.body.removeChild(ta);"
+        "}"
+        f"if(navigator.clipboard&&navigator.clipboard.writeText){{"
+        f"navigator.clipboard.writeText('{symbol}').then(_flash).catch(function(){{_fallback('{symbol}');_flash();}});"
+        f"}}else{{_fallback('{symbol}');_flash();}}"
     )
     return (
         f'<span class="ticker-copy" style="{style}" '
