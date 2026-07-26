@@ -41,6 +41,7 @@ from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
 from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_grid
+from format_utils import fmt_compact
 
 TAB_ID = "daily_winners"
 
@@ -743,11 +744,21 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
             display_summary[col] = pd.to_numeric(display_summary[col], errors='coerce').round(4)
 
     def _style_signal(val):
-        if 'Bullish' in str(val):  return 'color: #10b981; font-weight: 600'
-        elif 'Bearish' in str(val): return 'color: #ef4444; font-weight: 600'
-        elif 'Rising' in str(val):  return 'color: #8b5cf6; font-weight: 600'
-        elif 'Falling' in str(val): return 'color: #f59e0b; font-weight: 600'
-        return 'color: #cbd5e1'
+        s = str(val)
+        if 'Bullish' in s:
+            fg, bg = '#34d399', 'rgba(16,185,129,0.14)'
+        elif 'Bearish' in s:
+            fg, bg = '#f87171', 'rgba(239,68,68,0.14)'
+        elif 'Rising' in s:
+            fg, bg = '#a78bfa', 'rgba(139,92,246,0.14)'
+        elif 'Falling' in s:
+            fg, bg = '#fbbf24', 'rgba(245,158,11,0.14)'
+        else:
+            return 'color: #cbd5e1'
+        return (
+            f'color: {fg}; font-weight: 700; background-color: {bg}; '
+            'border-radius: 4px; text-align: center;'
+        )
 
     def _style_delta_pct(val):
         if pd.isna(val): return ''
@@ -832,11 +843,9 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                     display_val = "Yes" if value else "No"
                     kind = "true" if value else "false"
                 elif field == "volume":
-                    display_val = f"{value/1e6:.1f}M" if value > 1_000_000 else f"{value/1e3:.1f}K"
+                    display_val = fmt_compact(value)
                 elif field in ("volume_sma5","volume_sma10","volume_sma20","obv","force_index","vpt","nvi","eom","eom_signal"):
-                    if abs(value) >= 1_000_000: display_val = f"{value/1e6:.2f}M"
-                    elif abs(value) >= 1_000:   display_val = f"{value/1e3:.1f}K"
-                    else:                        display_val = f"{value:.2f}"
+                    display_val = fmt_compact(value, decimals=2)
                 elif abs(value) >= 1000: display_val = f"{value:.2f}"
                 elif abs(value) >= 1:    display_val = f"{value:.3f}"
                 else:                    display_val = f"{value:.4f}"
@@ -1068,9 +1077,10 @@ def render_daily_winners_tab():
     else:
         price_label = "Avg Price"
     col4.metric(price_label, f"${winners_df['price'].mean():.2f}")
+    _vol_delta = winners_df['volume'].mean() - prev_winners_df['volume'].mean() if not prev_winners_df.empty else None
     col5.metric(
-        "Avg Volume", f"{winners_df['volume'].mean()/1e6:.1f}M",
-        delta=f"{(winners_df['volume'].mean() - prev_winners_df['volume'].mean())/1e6:+.1f}M vs prev" if not prev_winners_df.empty else None,
+        "Avg Volume", fmt_compact(winners_df['volume'].mean()),
+        delta=f"{'+' if _vol_delta >= 0 else '-'}{fmt_compact(abs(_vol_delta))} vs prev" if _vol_delta is not None else None,
     )
 
     st.markdown("### Winners List")
@@ -1107,7 +1117,7 @@ def render_daily_winners_tab():
     col2.metric("Open",   f"${winner_info['open']:.2f}")
     col3.metric("Close",  f"${winner_info['price']:.2f}")
     col4.metric("Change", f"{winner_info['change_pct']:+.2f}%", delta=f"{winner_info['change_pct']:.2f}%")
-    col5.metric("Volume", f"{winner_info['volume']/1e6:.1f}M")
+    col5.metric("Volume", fmt_compact(winner_info['volume']))
     col6.metric("High",   f"${winner_info['high']:.2f}"  if 'high' in winner_info.index and pd.notna(winner_info.get('high'))  else "—")
     col7.metric("Low",    f"${winner_info['low']:.2f}"   if 'low'  in winner_info.index and pd.notna(winner_info.get('low'))   else "—")
     st.markdown('</div>', unsafe_allow_html=True)
