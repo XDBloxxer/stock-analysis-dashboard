@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import LAYOUT, AXIS_STYLE, COLORS
 from cache_ui import render_cache_buttons
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider
 
 TAB_ID = "backtesting"
 
@@ -384,7 +384,7 @@ def render_backtesting_tab():
             st.warning("No trades match one or both configurations over the selected date range.")
             return
 
-        st.markdown("---")
+        render_labeled_divider("Results")
         stat_a_col, stat_b_col = st.columns(2)
         with stat_a_col:
             st.markdown(f"**Configuration A** — {', '.join(signals_a)}")
