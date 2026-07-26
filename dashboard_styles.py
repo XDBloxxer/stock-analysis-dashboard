@@ -238,14 +238,30 @@ div.stSubheader h2::after {
 
 /* ── Metric Cards — the numbers should sing ─────────────────────────────── */
 div[data-testid="stMetric"] {
-    background: var(--bg-2) !important;
+    /* background-color kept separate from background-image (below) so both
+       layers survive — a plain `background:` shorthand here would wipe out
+       the accent-bar gradient every time. */
+    background-color: var(--bg-2) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
     padding: 18px 20px 16px !important;
     position: relative !important;
     overflow: visible !important;
-    transition: border-color 0.15s, background 0.15s !important;
+    transition: border-color 0.15s, background-color 0.15s, background-size 0.35s cubic-bezier(0.16,1,0.3,1) !important;
     min-height: 92px !important;
+
+    /* Top-accent-bar reveal on hover — a thin gradient line that grows in
+       from the left, borrowed from a portfolio site's `.project-card::before`
+       hover flourish. Implemented as a second background layer (rather than
+       a new pseudo-element) since ::before is the left accent bar and
+       ::after is the corner bracket on this same card. */
+    background-image: linear-gradient(90deg, var(--cyan), var(--purple)) !important;
+    background-repeat: no-repeat !important;
+    background-position: top left !important;
+    background-size: 0% 2px !important;
+}
+div[data-testid="stMetric"]:hover {
+    background-size: 100% 2px !important;
 }
 
 /* HUD corner brackets — quiet terminal signature, brightens on hover */
@@ -273,7 +289,7 @@ div[data-testid="stMetric"]::before {
 
 div[data-testid="stMetric"]:hover {
     border-color: var(--cyan-border) !important;
-    background: var(--bg-3) !important;
+    background-color: var(--bg-3) !important;
 }
 div[data-testid="stMetric"]:hover::before {
     background: var(--cyan);
@@ -729,6 +745,25 @@ div[data-testid="stAlert"] {
     50%      { opacity:0.6; transform:scale(0.85); }
 }
 
+/* ── Animated fill bar ──────────────────────────────────────────────────────
+   For any place a percentage was previously shown as plain text only
+   (confidence, precision/recall, etc.) — the bar makes relative magnitude
+   scannable across a list of rows without reading every number. Grows in
+   on load via a CSS animation (not a hover effect), same "grow from 0"
+   technique as a portfolio site's animated skill bars. Color is left to
+   the caller via an inline `background` on `.bar-fill` (green/cyan/amber
+   already carry meaning elsewhere in this app, e.g. signal strength). */
+.bar-track {
+    height: 4px; background: var(--bg-4); border-radius: 2px; overflow: hidden;
+    margin-top: 5px;
+}
+.bar-fill {
+    height: 100%; border-radius: 2px;
+    transform-origin: left; transform: scaleX(0);
+    animation: barGrow 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes barGrow { to { transform: scaleX(1); } }
+
 /* ── Num helpers ────────────────────────────────────────────────────────── */
 .num          { font-family: var(--font-body); font-weight: 500; font-size: 0.9rem; }
 .num.positive { color: var(--green-bright); }
@@ -740,6 +775,30 @@ div[data-testid="stAlert"] {
     font-family: var(--font-body); font-size: 0.68rem; font-weight: 500;
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-2);
     padding-bottom: 10px; border-bottom: 1px solid var(--border-mid); margin-bottom: 16px;
+}
+
+/* ── Numbered section header — "01 — Section" + trailing line ─────────────
+   Borrowed from a personal portfolio site's `.section-header` pattern
+   (numbered label, thin rule trailing off to the right). Used via
+   render_section_header() for the major heading in each sub-tab, in place
+   of a plain st.subheader(), so the hierarchy reads as designed rather than
+   default-Streamlit. */
+.section-header-num {
+    display: flex; align-items: center; gap: 14px;
+    margin: 4px 0 18px;
+}
+.section-header-num .sh-num {
+    font-family: var(--font-body); font-size: 0.72rem; font-weight: 500;
+    letter-spacing: 0.18em; color: var(--cyan); opacity: 0.8; flex-shrink: 0;
+    white-space: nowrap;
+}
+.section-header-num .sh-title {
+    font-family: var(--font-display); font-size: 1.1rem; font-weight: 700;
+    color: var(--text-0); letter-spacing: 0.01em; white-space: nowrap;
+}
+.section-header-num .sh-line {
+    flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--border-mid), transparent 90%);
 }
 
 /* ── Data / search / warning cards ─────────────────────────────────────── */
@@ -891,3 +950,25 @@ div[data-testid="stExpander"] { margin-bottom: 6px !important; }
 .stMarkdown h4 { margin-top: 6px !important; margin-bottom: 6px !important; }
 </style>
 """
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def render_section_header(num, title):
+    """Numbered section heading: "01 — Title" with a thin trailing line.
+
+    Drop-in replacement for st.subheader() at the top of a sub-tab's major
+    section — pairs with the `.section-header-num` CSS above. `num` can be
+    an int (auto zero-padded) or a string if you want custom numbering.
+
+        render_section_header(1, "Today's Picks")
+        render_section_header("02", "Predictions vs Actuals")
+    """
+    import streamlit as st
+    label = f"{int(num):02d}" if isinstance(num, int) else str(num)
+    st.markdown(
+        f'<div class="section-header-num">'
+        f'<span class="sh-num">{label} —</span>'
+        f'<span class="sh-title">{title}</span>'
+        f'<span class="sh-line"></span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
