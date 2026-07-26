@@ -388,6 +388,25 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
     scrollbar-width: thin !important;
+
+    /* Sticky top-level nav — the tab bar stays visible while scrolling a
+       long tab's content instead of scrolling out of view. Pinned just
+       under the app header; a faint bottom shadow appears once it's
+       actually stuck (see `top` value matching the app's fixed spacing). */
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 20 !important;
+    box-shadow: 0 6px 12px -6px rgba(0,0,0,0.4) !important;
+}
+/* Un-stick nested tab bars (tabs-within-a-tab, e.g. the sub-tabs inside
+   Today's Picks) — letting every level stick would pile multiple bars on
+   top of each other at the same `top: 0`, rather than stacking sensibly. */
+.stTabs [data-baseweb="tab-panel"] .stTabs [role="tablist"],
+.stTabs [data-baseweb="tab-panel"] .stTabs [data-baseweb="tab-list"] {
+    position: static !important;
+    top: auto !important;
+    z-index: auto !important;
+    box-shadow: none !important;
 }
 /* Narrow screens (phones): let the pill bar wrap onto multiple lines
    instead of forcing a tiny horizontal scrollbar users may not notice —
@@ -797,6 +816,15 @@ div[data-testid="stAlert"] {
     color: var(--cyan); letter-spacing: 0.04em; text-transform: uppercase;
 }
 
+/* Click-to-copy ticker symbols — a dashed underline hints it's
+   interactive; click briefly flashes green + "✓ copied" via the inline
+   onclick handler built by ticker_copy_html() (plain JS, not a component,
+   since this needs to run in the main document, not a sandboxed iframe). */
+.ticker-copy {
+    cursor: pointer; border-bottom: 1px dashed transparent; transition: border-color 0.15s;
+}
+.ticker-copy:hover { border-bottom-color: var(--cyan-border); }
+
 /* ── Status dot ─────────────────────────────────────────────────────────── */
 .status-dot {
     display: inline-block; width: 7px; height: 7px;
@@ -1039,6 +1067,32 @@ div[data-testid="stExpander"] { margin-bottom: 6px !important; }
 """
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+def ticker_copy_html(symbol, style=""):
+    """Inline clickable ticker span — copies `symbol` to the clipboard on
+    click, flashes green + "✓ copied" for ~900ms, then reverts.
+
+    Built as a plain onclick handler (not a components.html script) because
+    st.markdown content lives directly in the main document rather than a
+    sandboxed iframe, so `this` + the Clipboard API both work without the
+    parent-document workaround the count-up script needs.
+
+        st.markdown(ticker_copy_html("AAPL", style="font-size:1.05rem;font-weight:700;"),
+                    unsafe_allow_html=True)
+    """
+    js = (
+        f"navigator.clipboard.writeText('{symbol}').then(function(){{"
+        f"var el=this;var orig=el.dataset.orig||el.textContent;"
+        f"el.dataset.orig=orig;el.textContent='\\u2713 copied';"
+        f"el.style.color='var(--green-bright)';"
+        f"setTimeout(function(){{el.textContent=orig;el.style.color='';}},900);"
+        f"}}.bind(this));"
+    )
+    return (
+        f'<span class="ticker-copy" style="{style}" '
+        f'title="Click to copy {symbol}" onclick="{js}">{symbol}</span>'
+    )
+
+
 def render_section_header(num, title):
     """Numbered section heading: "01 — Title" with a thin trailing line.
 
