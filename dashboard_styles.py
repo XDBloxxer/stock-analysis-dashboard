@@ -92,8 +92,8 @@ DASHBOARD_CSS = """
     content: '';
     position: fixed; inset: 0;
     background-image: repeating-linear-gradient(
-        0deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px,
-        transparent 1px, transparent 3px
+        0deg, rgba(255,255,255,0.09) 0px, rgba(255,255,255,0.09) 2px,
+        transparent 2px, transparent 4px
     );
     pointer-events: none;
     z-index: -1;
@@ -133,11 +133,29 @@ DASHBOARD_CSS = """
    patched further: an entrance fade adds nothing worth re-risking this. */
 .main .block-container,
 [data-testid="stMainBlockContainer"] {
-    padding-top: 1.75rem !important;
+    padding-top: 5.5rem !important; /* was 1.75rem — too little to clear
+       Streamlit's fixed-position native header (~3.75rem), which was
+       overlapping/hiding the first row of content (market status, clock). */
     padding-bottom: 4rem !important;
     max-width: 1400px !important;
     position: relative !important;
     z-index: 1 !important;
+}
+
+/* ── Native Streamlit header bar ───────────────────────────────────────────
+   Previously completely unstyled — the default light/translucent Streamlit
+   chrome (Stop/Share/Star/GitHub/⋮) sat untouched on top of the custom dark
+   theme, which read as "two different themes stitched together." Restyled
+   to match the app background so it reads as one cohesive surface. */
+[data-testid="stHeader"] {
+    background: var(--bg-0) !important;
+    border-bottom: 1px solid var(--border) !important;
+}
+[data-testid="stHeader"] * {
+    color: var(--text-1) !important;
+}
+[data-testid="stToolbar"] button:hover {
+    background: var(--bg-3) !important;
 }
 
 /* ── Typography ─────────────────────────────────────────────────────────── */
