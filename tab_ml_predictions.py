@@ -464,7 +464,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
     # ── Helpers ────────────────────────────────────────────────────────────────
     _sig_colors = {
         "STRONG BUY": ("var(--green-bright)", "rgba(16,185,129,0.12)", "rgba(16,185,129,0.25)"),
-        "BUY":        ("var(--cyan)",          "rgba(0,212,255,0.08)",  "rgba(0,212,255,0.2)"),
+        "BUY":        ("var(--cyan)",          "rgba(224,168,60,0.10)", "rgba(224,168,60,0.25)"),
         "HOLD":       ("var(--amber-bright)",  "rgba(245,158,11,0.08)", "rgba(245,158,11,0.2)"),
         "AVOID":      ("var(--red-bright)",    "rgba(239,68,68,0.08)",  "rgba(239,68,68,0.2)"),
     }
