@@ -73,10 +73,10 @@ DASHBOARD_CSS = """
 
 /* ── Base — quiet gradients + faint scanline texture + slow scan sweep ──── */
 .stApp {
-    background: var(--bg-0) !important;
+    background-color: var(--bg-0) !important;
     background-image:
         radial-gradient(ellipse 80% 50% at 0% 0%,   rgba(224,168,60,0.055) 0%, transparent 55%),
-        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(16,185,129,0.045) 0%, transparent 55%);
+        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(16,185,129,0.045) 0%, transparent 55%) !important;
     font-family: var(--font-body);
     /* NOTE: deliberately NO position/z-index here. An earlier attempt added
        `position:relative; z-index:0;` to force .stApp into its own stacking
@@ -88,7 +88,17 @@ DASHBOARD_CSS = """
 }
 
 /* Faint CRT scanline texture — decorative, never fights content. */
-.stApp::before {
+[data-testid="stAppViewContainer"] {
+    z-index: 0; /* stAppViewContainer is already positioned by Streamlit's
+       own default CSS, so adding only z-index (no position override) is
+       safe — creates a stacking context without touching layout. This is
+       where the scanline/sweep pseudo-elements now live instead of on the
+       root .stApp: .stApp itself is a plain, huge, non-positioned div, so
+       its own opaque background paints AFTER its negative-z-index ::before
+       at the root stacking context level — silently covering it. Scoping
+       the effect one level down avoids that trap entirely. */
+}
+[data-testid="stAppViewContainer"]::before {
     content: '';
     position: fixed; inset: 0;
     background-image: repeating-linear-gradient(
@@ -101,7 +111,7 @@ DASHBOARD_CSS = """
 
 /* Slow ambient sweep — a soft horizontal band of brass light drifting down
    the page on an endless loop, like a terminal's periodic refresh. */
-.stApp::after {
+[data-testid="stAppViewContainer"]::after {
     content: '';
     position: fixed; left: 0; right: 0;
     height: 34vh; top: -34vh;
@@ -357,7 +367,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 /* Base chip state — a real bordered/filled button look, not bare text,
    so it reads as clickable even before any interaction. */
 .stTabs [data-baseweb="tab"] {
-    background: var(--bg-3) !important;
+    background: var(--bg-4) !important;
     border-radius: var(--radius-sm) !important;
     border: 1px solid var(--border-mid) !important;
     font-family: var(--font-display) !important;
@@ -367,7 +377,19 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     text-transform: uppercase !important;
     padding: 10px 20px !important;
     margin-bottom: 0 !important;
+    cursor: pointer !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3) !important; /* lifts it off the
+        near-black page background so it visibly reads as a pressable
+        chip/button rather than plain text */
     transition: color 0.15s, background 0.15s, border-color 0.15s !important;
+}
+/* Browser's default blue focus ring (tabs are real <button> elements)
+   showed through uncontrolled on click — replaced with a themed outline. */
+.stTabs [data-baseweb="tab"]:focus,
+.stTabs [data-baseweb="tab"]:focus-visible {
+    outline: 2px solid var(--cyan-border) !important;
+    outline-offset: 1px !important;
+    box-shadow: none !important;
 }
 
 /* Force text color on every descendant text node explicitly — Streamlit
