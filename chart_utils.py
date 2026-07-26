@@ -26,6 +26,13 @@ CHART_THEME = {
         linecolor='rgba(148,163,184,0.18)',
         tickfont=dict(size=11),
     ),
+    # Without this, Plotly falls back to its default white tooltip box on
+    # hover — jarring against a near-black theme and easy to miss since it
+    # only appears on interaction, not in a static screenshot.
+    'hoverlabel':    dict(
+        bgcolor='#161b24', bordercolor='rgba(224,168,60,0.35)',
+        font=dict(color='#f8fafc', family='DM Mono, monospace', size=12),
+    ),
 }
 
 # Compact layout for plotly (used in _LAYOUT style dicts)
@@ -34,6 +41,10 @@ LAYOUT = dict(
     paper_bgcolor='rgba(0,0,0,0)',
     font=dict(color='#cbd5e1', family='DM Mono, monospace'),
     margin=dict(t=44, b=24, l=24, r=16),
+    hoverlabel=dict(
+        bgcolor='#161b24', bordercolor='rgba(224,168,60,0.35)',
+        font=dict(color='#f8fafc', family='DM Mono, monospace', size=12),
+    ),
 )
 
 AXIS_STYLE = dict(
