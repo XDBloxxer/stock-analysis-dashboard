@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider
 from cache_ui import render_cache_buttons
 
 TAB_ID = "ml_predictions"
@@ -819,7 +819,7 @@ def _render_latest_predictions():
 
             st.markdown(
                 f"""
-<div class="data-card" style="display:flex;align-items:center;gap:18px;margin-bottom:8px;padding:14px 18px;">
+<div class="data-card{' card-strong-buy' if row['signal'] == 'STRONG BUY' else ''}" style="display:flex;align-items:center;gap:18px;margin-bottom:8px;padding:14px 18px;">
     <div style="min-width:150px;">
         <span style="font-family:var(--font-display);font-weight:700;font-size:1.05rem;color:var(--text-0);">{row['symbol']}</span>
         <span style="color:var(--text-2);font-size:0.72rem;margin-left:6px;">{row.get('exchange','')}</span>
@@ -859,7 +859,7 @@ def _render_latest_predictions():
             key=f"{TAB_ID}_picks_dl",
         )
 
-    st.markdown("---")
+    render_labeled_divider("Filters")
 
     # ── Filters — light, always visible, drive both the live view and table ──
     with st.expander("Filter predictions", expanded=False):
