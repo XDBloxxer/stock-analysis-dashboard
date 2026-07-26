@@ -112,40 +112,53 @@ DASHBOARD_CSS = """
     background-repeat: no-repeat;
     pointer-events: none;
     z-index: -1;
+    /* Auto-drift (keyframes) is layered with a cursor parallax nudge via
+       the --px/--py custom properties (set alongside --mx/--my by
+       inject_mouse_glow_script()'s JS below). Mixing a % keyframe value
+       with a px var() inside calc() is valid CSS — the blobs keep their
+       slow autonomous drift and *also* lean a few px toward the cursor,
+       rather than the cursor fully driving position (which would fight
+       the animation and feel jittery next to dense data). */
+    transform: translate(calc(var(--px, 0px)), calc(var(--py, 0px))) scale(1);
     animation: ambientDrift 32s ease-in-out infinite;
     will-change: transform;
 }
 @keyframes ambientDrift {
-    0%   { transform: translate(0, 0) scale(1); }
-    50%  { transform: translate(-2.5%, 2%) scale(1.04); }
-    100% { transform: translate(0, 0) scale(1); }
+    0%   { transform: translate(calc(var(--px, 0px)), calc(var(--py, 0px))) scale(1); }
+    50%  { transform: translate(calc(-2.5% + var(--px, 0px)), calc(2% + var(--py, 0px))) scale(1.04); }
+    100% { transform: translate(calc(var(--px, 0px)), calc(var(--py, 0px))) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-    [data-testid="stAppViewContainer"]::before { animation: none; }
+    [data-testid="stAppViewContainer"]::before { animation: none; transform: none; }
 }
 
 /* ── Cursor glow — a soft brass light that follows the mouse ────────────────
    Position comes from --mx/--my custom properties on <html>, updated by
    inject_mouse_glow_script() below via requestAnimationFrame — the DOM
-   write only ever touches two CSS variables, never element styles/layout,
-   so this stays compositor-only and cheap even on a page this data-dense.
+   write only ever touches a handful of CSS variables, never element
+   styles/layout, so this stays compositor-only and cheap even on a page
+   this data-dense.
    Lives on ::after (::before is already the ambient drift layer) and sits
    at the same z-index: -1, i.e. still well under all content.
    Defaults to page center via the fallback in var(--mx, 50vw) so there's
    no jump/pop before the first mousemove event fires. Skipped entirely for
    reduced-motion users and on touch devices (no hover = no cursor to
-   follow), same posture as the ambient drift animation above. */
+   follow), same posture as the ambient drift animation above.
+   Kept deliberately faint — low opacity, wide soft falloff, no hard edge —
+   so it reads as light catching a screen rather than a spotlight chasing
+   the pointer around a data-dense finance UI. */
 [data-testid="stAppViewContainer"]::after {
     content: '';
     position: fixed; inset: 0;
     background: radial-gradient(
-        circle 320px at var(--mx, 50vw) var(--my, 40vh),
-        rgba(224, 168, 60, 0.06) 0%,
-        transparent 70%
+        circle 380px at var(--mx, 50vw) var(--my, 40vh),
+        rgba(224, 168, 60, 0.028) 0%,
+        rgba(224, 168, 60, 0.012) 45%,
+        transparent 72%
     );
     pointer-events: none;
     z-index: -1;
-    transition: opacity 0.3s ease;
+    transition: opacity 0.4s ease;
 }
 @media (prefers-reduced-motion: reduce), (hover: none) {
     [data-testid="stAppViewContainer"]::after { opacity: 0 !important; }
@@ -985,8 +998,29 @@ div[data-testid="stAlert"] {
     content: ''; position: absolute; top: -1px; right: -1px; width: 9px; height: 9px;
     border-top: 1.5px solid var(--border-mid); border-right: 1.5px solid var(--border-mid);
     border-radius: 0 var(--radius) 0 0; transition: border-color 0.15s;
+    z-index: 2;
 }
 .data-card:hover::after { border-color: var(--cyan); }
+
+/* Cursor-proximity glow — a soft brass light that tracks the pointer
+   *inside* the card while hovered, via the --cx/--cy custom properties
+   set (per-card, in local %) by the same mousemove handler that drives
+   the page-level cursor glow above. This is a border/wash brighten, not
+   a 3D tilt: a tilt effect reads as playful/gamey and would clash with a
+   data-dense finance UI where numbers need to stay flat and legible. */
+.data-card::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit;
+    background: radial-gradient(
+        260px circle at var(--cx, 50%) var(--cy, 50%),
+        rgba(224, 168, 60, 0.10),
+        transparent 72%
+    );
+    opacity: 0; transition: opacity 0.25s ease; pointer-events: none; z-index: 0;
+}
+.data-card:hover::before { opacity: 1; }
+@media (prefers-reduced-motion: reduce), (hover: none) {
+    .data-card::before { display: none; }
+}
 
 /* Signal-strength color bleed — STRONG BUY cards get a faint green wash
    across the whole card, not just the badge, so the strongest signals are
@@ -1287,13 +1321,15 @@ def inject_count_up_script():
     components.html(_COUNT_UP_JS, height=0, width=0)
 
 
-# Cursor-follow glow — updates --mx/--my on <html> via requestAnimationFrame
-# so the CSS radial-gradient in the ::after layer above tracks the mouse.
+# Cursor-follow glow — updates --mx/--my (page-level glow position),
+# --px/--py (ambient blob parallax offset), and --cx/--cy (per-card local
+# glow position, set on the hovered .data-card itself) all from a single
+# rAF-throttled mousemove handler.
 # Same iframe-to-parent pattern as _COUNT_UP_JS: components.html runs this
 # in its own sandboxed iframe, so it reaches the real page through
 # window.parent.document rather than touching its own (invisible) document.
-# rAF-throttled and skipped for reduced-motion/touch, matching the CSS
-# media query that also hides the glow layer for those users.
+# Skipped entirely for reduced-motion/touch, matching the CSS media queries
+# that also hide/disable the glow layers for those users.
 _MOUSE_GLOW_JS = """
 <script>
 (function() {
@@ -1303,27 +1339,54 @@ _MOUSE_GLOW_JS = """
     var reduced = window.parent.matchMedia('(prefers-reduced-motion: reduce)').matches
                || window.parent.matchMedia('(hover: none)').matches;
     if (reduced) return;
-    var pending = false, lastX = null, lastY = null;
+    var pending = false, lastX = null, lastY = null, hoveredCard = null;
+    // Parallax divisor: larger = more subtle. 40px of mouse travel from
+    // center yields ~1px of blob shift at PARALLAX_DIV=40.
+    var PARALLAX_DIV = 40, PARALLAX_MAX = 14;
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
     function apply() {
       pending = false;
       if (lastX === null) return;
+      var w = window.parent.innerWidth, h = window.parent.innerHeight;
+
+      // Page-level cursor glow position.
       root.style.setProperty('--mx', lastX + 'px');
       root.style.setProperty('--my', lastY + 'px');
+
+      // Ambient blob parallax — offset from viewport center, scaled down
+      // and clamped so blobs only ever lean a few px, never chase fully.
+      var px = clamp((lastX - w / 2) / PARALLAX_DIV, -PARALLAX_MAX, PARALLAX_MAX);
+      var py = clamp((lastY - h / 2) / PARALLAX_DIV, -PARALLAX_MAX, PARALLAX_MAX);
+      root.style.setProperty('--px', px.toFixed(1) + 'px');
+      root.style.setProperty('--py', py.toFixed(1) + 'px');
+
+      // Per-card local glow position, only while a card is hovered.
+      if (hoveredCard) {
+        var rect = hoveredCard.getBoundingClientRect();
+        var cx = ((lastX - rect.left) / rect.width) * 100;
+        var cy = ((lastY - rect.top) / rect.height) * 100;
+        hoveredCard.style.setProperty('--cx', cx.toFixed(1) + '%');
+        hoveredCard.style.setProperty('--cy', cy.toFixed(1) + '%');
+      }
     }
     doc.addEventListener('mousemove', function(e) {
       lastX = e.clientX; lastY = e.clientY;
+      hoveredCard = e.target.closest ? e.target.closest('.data-card') : null;
       if (!pending) { pending = true; window.parent.requestAnimationFrame(apply); }
     }, { passive: true });
-  } catch (e) { /* cross-origin or DOM not ready — glow just stays centered */ }
+  } catch (e) { /* cross-origin or DOM not ready — effects just stay static */ }
 })();
 </script>
 """
 
 
 def inject_mouse_glow_script():
-    """Call once per page render to make the ambient background glow
-    (`[data-testid="stAppViewContainer"]::after` in DASHBOARD_CSS) follow
-    the cursor. No-op for reduced-motion or touch/no-hover users."""
+    """Call once per page render to wire up all cursor-driven effects:
+    the page-level background glow, the ambient-blob parallax lean, and
+    the per-card proximity glow (see DASHBOARD_CSS: the
+    `[data-testid="stAppViewContainer"]::after/::before` rules and
+    `.data-card::before`). No-op for reduced-motion or touch/no-hover
+    users."""
     import streamlit.components.v1 as components
     components.html(_MOUSE_GLOW_JS, height=0, width=0)
 
