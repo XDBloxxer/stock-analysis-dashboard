@@ -407,6 +407,50 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     font-size: 0.65rem !important;
 }
 
+/* ── Hero metric — one visually-dominant number per section ─────────────────
+   Pairs with render_hero_metric() below. A row of equal-weight st.metric
+   cards has no visual entry point — the eye doesn't know which of 5-7
+   numbers matters most. This is deliberately ~2x the size/brightness of a
+   normal stMetricValue, with a soft color-matched glow, so the one stat a
+   section is really about (best performer, top pick's confidence, total
+   return) reads as the headline at a glance, before anything else. */
+.hero-metric {
+    background: var(--bg-2);
+    border: 1px solid var(--border-mid);
+    border-left: 3px solid var(--hero-color, var(--cyan));
+    border-radius: var(--radius);
+    padding: 18px 22px 16px;
+    margin-bottom: 14px;
+    position: relative;
+    overflow: hidden;
+    animation: tabFadeIn 0.3s ease-out;
+}
+.hero-metric::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 70% 90% at 0% 0%, var(--hero-glow, var(--cyan-glow)) 0%, transparent 70%);
+    pointer-events: none;
+}
+.hero-metric-label {
+    font-family: var(--font-body); font-size: 0.68rem; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-2);
+    position: relative;
+}
+.hero-metric-value {
+    font-family: var(--font-display); font-size: 2.6rem; font-weight: 800;
+    line-height: 1.05; color: var(--hero-color, var(--cyan)); letter-spacing: -0.01em;
+    margin-top: 4px; position: relative;
+    text-shadow: 0 0 28px var(--hero-glow, var(--cyan-glow));
+}
+.hero-metric-glyph { font-size: 0.55em; opacity: 0.7; margin-right: 8px; vertical-align: middle; }
+.hero-metric-sub {
+    font-family: var(--font-body); font-size: 0.78rem; color: var(--text-1);
+    margin-top: 6px; position: relative;
+}
+@media (max-width: 640px) {
+    .hero-metric-value { font-size: 2rem; }
+}
+
 /* ── Indicator snapshot grid — compact label/value pairs ────────────────────
    For dense technical-indicator readouts (10-24 fields per group), a grid
    of bordered stMetric cards is too heavy — each field is a single number,
@@ -1438,6 +1482,47 @@ def render_indicator_grid(items):
             f'</div>'
         )
     st.markdown(f'<div class="indicator-snapshot">{"".join(cells)}</div>', unsafe_allow_html=True)
+
+
+def render_hero_metric(label, value, sub=None, accent="cyan", glyph=None):
+    """One visually-dominant number for the single stat a section is really
+    about — pairs with the `.hero-metric` CSS above.
+
+    Every st.metric on a page currently renders at the same weight, so on a
+    dense tab (5-7 metrics in a row) nothing tells the eye which one to look
+    at first. This renders one large, bright, glow-accented value — sized
+    and colored distinctly from the surrounding st.metric grid — so the
+    single number a partner should see in the first second (best performer,
+    top pick's confidence, total return, ...) actually reads as the
+    headline instead of competing at equal size with five supporting ones.
+
+    accent: "cyan" (brand/neutral), "green" (gain), "red" (loss), or "amber".
+
+        render_hero_metric("Best Performer", "+18.4%", sub="AAPL · today", accent="green")
+    """
+    import streamlit as st
+    color_var = {
+        "cyan":  "var(--cyan)",
+        "green": "var(--green-bright)",
+        "red":   "var(--red-bright)",
+        "amber": "var(--amber-bright)",
+    }.get(accent, "var(--cyan)")
+    glow_var = {
+        "cyan":  "var(--cyan-glow)",
+        "green": "rgba(52, 211, 153, 0.16)",
+        "red":   "rgba(248, 113, 113, 0.16)",
+        "amber": "rgba(251, 191, 36, 0.16)",
+    }.get(accent, "var(--cyan-glow)")
+    glyph_html = f'<span class="hero-metric-glyph">{glyph}</span>' if glyph else ""
+    sub_html = f'<div class="hero-metric-sub">{sub}</div>' if sub else ""
+    st.markdown(
+        f'<div class="hero-metric" style="--hero-color:{color_var};--hero-glow:{glow_var};">'
+        f'<div class="hero-metric-label">{label}</div>'
+        f'<div class="hero-metric-value">{glyph_html}{value}</div>'
+        f'{sub_html}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_skeleton_rows(n=3, height=70, gap=8):
