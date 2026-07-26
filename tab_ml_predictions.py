@@ -26,6 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
+from dashboard_styles import render_section_header
 from cache_ui import render_cache_buttons
 
 TAB_ID = "ml_predictions"
@@ -599,10 +600,9 @@ def _render_live_market_table(fdf: pd.DataFrame):
                 else "var(--amber-bright)"
             )
             prob_bar = (
-                f'<div style="height:3px;background:var(--bg-4);border-radius:2px;'
-                f'margin-top:4px;overflow:hidden;">'
-                f'<div style="height:100%;width:{prob_pct:.0f}%;background:{p_color};'
-                f'border-radius:2px;"></div></div>'
+                f'<div class="bar-track" style="margin-top:4px;">'
+                f'<div class="bar-fill" style="width:{prob_pct:.0f}%;background:{p_color};"></div>'
+                f'</div>'
             )
 
         # Target price range sub-label
@@ -743,7 +743,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
 # ── Sub-tab 1 — Latest Predictions ────────────────────────────────────────────
 def _render_latest_predictions():
-    st.subheader("Today's Picks")
+    render_section_header(1, "Today's Picks")
     st.caption("What the model is telling you to buy right now.")
 
     with st.spinner("Loading predictions…"):
@@ -808,6 +808,11 @@ def _render_latest_predictions():
             gain_str   = f"+{gain:.1f}%" if pd.notna(gain) else "—"
             price_str  = f"${price:.2f}" if pd.notna(price) else "—"
             target_str = f"${target:.2f}" if pd.notna(target) else "—"
+            prob_color = (
+                "var(--green-bright)" if prob >= 70
+                else "var(--cyan)" if prob >= 50
+                else "var(--amber-bright)"
+            )
 
             st.markdown(
                 f"""
@@ -820,6 +825,7 @@ def _render_latest_predictions():
     <div style="flex:1;min-width:120px;">
         <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Confidence</div>
         <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-0);font-weight:500;">{prob:.1f}%</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{prob:.0f}%;background:{prob_color};"></div></div>
     </div>
     <div style="flex:1;min-width:120px;">
         <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Current Price</div>
@@ -892,7 +898,7 @@ def _render_latest_predictions():
 
 # ── Sub-tab 2 — Predictions vs Actuals ────────────────────────────────────────
 def _render_predictions_vs_actuals():
-    st.subheader("Predictions vs Actuals")
+    render_section_header(2, "Predictions vs Actuals")
     st.caption("How past predictions compared to what actually happened.")
     st.markdown("#### Prediction Accuracy Analysis")
 
@@ -943,6 +949,23 @@ def _render_predictions_vs_actuals():
     col4.metric("Pred. Winners",  predicted_winners)
     col5.metric("Precision",      f"{precision:.1f}%")
     col6.metric("Recall",         f"{recall:.1f}%")
+
+    # Animated fill bars under Precision/Recall — a plain st.metric only
+    # shows the number, but these two rates are meant to be weighed against
+    # each other (few false alarms vs. few missed winners), so a bar makes
+    # the trade-off visible at a glance instead of requiring mental math.
+    with col5:
+        st.markdown(
+            f'<div class="bar-track"><div class="bar-fill" '
+            f'style="width:{precision:.0f}%;background:var(--cyan);"></div></div>',
+            unsafe_allow_html=True,
+        )
+    with col6:
+        st.markdown(
+            f'<div class="bar-track"><div class="bar-fill" '
+            f'style="width:{recall:.0f}%;background:var(--purple);"></div></div>',
+            unsafe_allow_html=True,
+        )
 
     gain_populated = df["actual_gain_pct"].notna().sum()
     if gain_populated > 0:
@@ -1048,7 +1071,7 @@ def _render_predictions_vs_actuals():
 
 # ── Sub-tab 3 — Missed Opportunities ──────────────────────────────────────────
 def _render_missed_opportunities():
-    st.subheader("Missed Opportunities")
+    render_section_header(3, "Missed Opportunities")
     st.markdown("#### Missed Opportunities — Recall Analysis")
     st.caption("Winners the model didn't predict.")
 
@@ -1195,7 +1218,7 @@ def _render_missed_opportunities():
 
 # ── Sub-tab 4 — Performance Trends ────────────────────────────────────────────
 def _render_performance_trends():
-    st.subheader("Performance Trends")
+    render_section_header(4, "Performance Trends")
     st.caption("How the system as a whole has performed over time.")
     st.markdown("#### Model Performance Trends")
 
@@ -1451,7 +1474,7 @@ def _render_performance_trends():
 
 # ── Sub-tab 5 — System Info ────────────────────────────────────────────────────
 def _render_system_info():
-    st.subheader("System Info")
+    render_section_header(5, "System Info")
     st.markdown("#### System Information")
 
     log_df = _get_table_full("ml_screening_logs")
