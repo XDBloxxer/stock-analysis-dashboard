@@ -40,7 +40,7 @@ import os
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
-from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_grid
+from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_grid, render_hero_metric
 from format_utils import fmt_compact
 
 TAB_ID = "daily_winners"
@@ -1061,7 +1061,15 @@ def render_daily_winners_tab():
         prev_date = available_dates[date_idx + 1]
         prev_winners_df = _get_table_for_date("daily_winners", prev_date)
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    _best_row = winners_df.loc[winners_df['change_pct'].idxmax()]
+    render_hero_metric(
+        "Best Performer",
+        f"+{_best_row['change_pct']:.2f}%",
+        sub=f"{_best_row.get('symbol', '—')} · {selected_date}",
+        accent="green",
+    )
+
+    col1, col2, col4, col5 = st.columns(4)
     col1.metric(
         "Total Winners", len(winners_df),
         delta=f"{len(winners_df)-len(prev_winners_df):+.0f} vs prev" if not prev_winners_df.empty else None,
@@ -1070,7 +1078,6 @@ def render_daily_winners_tab():
         "Avg Change", f"{winners_df['change_pct'].mean():.2f}%",
         delta=f"{winners_df['change_pct'].mean() - prev_winners_df['change_pct'].mean():+.2f}% vs prev" if not prev_winners_df.empty else None,
     )
-    col3.metric("Best Performer", f"{winners_df['change_pct'].max():.2f}%")
     if not prev_winners_df.empty:
         price_diff = winners_df['price'].mean() - prev_winners_df['price'].mean()
         price_label = f"Avg Price  ({price_diff:+.2f} vs prev)"
