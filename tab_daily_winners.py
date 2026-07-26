@@ -40,6 +40,7 @@ import os
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
+from dashboard_styles import render_section_header
 
 TAB_ID = "daily_winners"
 
@@ -1043,7 +1044,7 @@ def render_daily_winners_tab():
         winners_df = winners_df.copy()
         winners_df['symbol'] = winners_df['symbol'].str.strip().str.upper()
 
-    st.subheader(f"Top {len(winners_df)} Winners — {selected_date}")
+    render_section_header(1, f"Top {len(winners_df)} Winners — {selected_date}")
 
     prev_winners_df = pd.DataFrame()
     date_idx = available_dates.index(selected_date)
@@ -1090,7 +1091,7 @@ def render_daily_winners_tab():
     )
 
     st.markdown("---")
-    st.subheader("Detailed Stock Analysis")
+    render_section_header(2, "Detailed Stock Analysis")
 
     symbols = sorted(winners_df['symbol'].unique())
     selected_symbol = st.selectbox("Select a stock to analyse:", symbols, key="daily_winners_symbol")
