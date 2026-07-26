@@ -93,7 +93,7 @@ st.set_page_config(
 )
 
 from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS
-st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
+#st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
