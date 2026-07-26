@@ -85,19 +85,28 @@ def _nyse_holidays(year: int) -> set[date]:
 def _is_market_holiday(d: date) -> bool:
     return d in _nyse_holidays(d.year)
 
+_FAVICON = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+    "%3Ccircle cx='16' cy='16' r='13' fill='%2305070a' stroke='%23e0a83c' stroke-width='2'/%3E"
+    "%3Ccircle cx='16' cy='16' r='5.5' fill='%23e0a83c'/%3E"
+    "%3C/svg%3E"
+)
+
 st.set_page_config(
     page_title="Market Intelligence Terminal",
-    page_icon="🟡",  # brass/gold dot — echoes the phosphor-terminal accent
-                      # rather than a generic 📊 bar-chart glyph
+    page_icon=_FAVICON,  # custom SVG dot matching the exact brass accent hex,
+                         # rather than a generic 🟡/📊 emoji glyph
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
+    inject_count_up_script()
     now    = _now_et()
     hour   = now.hour
     minute = now.minute
