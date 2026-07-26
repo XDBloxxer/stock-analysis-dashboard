@@ -81,7 +81,12 @@ DASHBOARD_CSS = """
     position: relative;
 }
 
-/* Faint CRT scanline texture — decorative, ~1.5% opacity, never fights content */
+/* Faint CRT scanline texture — decorative, ~1.5% opacity, never fights content.
+   z-index:-1 (not 0) is deliberate: a negative z-index is guaranteed to paint
+   behind any normally-positioned element in the SAME stacking context, and
+   critically also behind ones in nested stacking contexts Streamlit's own
+   wrapper divs may create — z-index:0 only wins in a direct same-context
+   comparison, which is not guaranteed given how deep Streamlit's DOM nests. */
 .stApp::before {
     content: '';
     position: fixed; inset: 0;
@@ -90,7 +95,7 @@ DASHBOARD_CSS = """
         transparent 1px, transparent 3px
     );
     pointer-events: none;
-    z-index: 0;
+    z-index: -1;
 }
 
 /* Slow ambient sweep — a soft horizontal band of brass light drifting down
@@ -102,7 +107,7 @@ DASHBOARD_CSS = """
     height: 34vh; top: -34vh;
     background: linear-gradient(180deg, transparent 0%, rgba(224,168,60,0.05) 50%, transparent 100%);
     pointer-events: none;
-    z-index: 0;
+    z-index: -1;
     animation: scanSweep 11s linear infinite;
 }
 @keyframes scanSweep {
