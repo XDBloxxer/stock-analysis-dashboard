@@ -87,12 +87,17 @@ DASHBOARD_CSS = """
        not re-add position/z-index to .stApp without testing live first. */
 }
 
-/* Faint CRT scanline texture — decorative, never fights content. */
+/* Ambient background wash — a very slow, soft drift of brass/emerald light
+   behind the content. Replaces the old CRT scanline texture + hard sweep
+   band, which read as "TV static" at normal viewing distance rather than
+   a quiet terminal signature. This version has no repeating line texture
+   at all, moves gently over ~30s, and stays well under the content so it
+   never competes with data. */
 [data-testid="stAppViewContainer"] {
     z-index: 0; /* stAppViewContainer is already positioned by Streamlit's
        own default CSS, so adding only z-index (no position override) is
        safe — creates a stacking context without touching layout. This is
-       where the scanline/sweep pseudo-elements now live instead of on the
+       where the ambient-wash pseudo-element now lives instead of on the
        root .stApp: .stApp itself is a plain, huge, non-positioned div, so
        its own opaque background paints AFTER its negative-z-index ::before
        at the root stacking context level — silently covering it. Scoping
@@ -100,32 +105,23 @@ DASHBOARD_CSS = """
 }
 [data-testid="stAppViewContainer"]::before {
     content: '';
-    position: fixed; inset: 0;
-    background-image: repeating-linear-gradient(
-        0deg, rgba(255,255,255,0.09) 0px, rgba(255,255,255,0.09) 2px,
-        transparent 2px, transparent 4px
-    );
+    position: fixed; inset: -10%;
+    background-image:
+        radial-gradient(ellipse 55% 40% at 15% 20%, rgba(224,168,60,0.05) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 40% at 85% 75%, rgba(16,185,129,0.04) 0%, transparent 60%);
+    background-repeat: no-repeat;
     pointer-events: none;
     z-index: -1;
+    animation: ambientDrift 32s ease-in-out infinite;
+    will-change: transform;
 }
-
-/* Slow ambient sweep — a soft horizontal band of brass light drifting down
-   the page on an endless loop, like a terminal's periodic refresh. */
-[data-testid="stAppViewContainer"]::after {
-    content: '';
-    position: fixed; left: 0; right: 0;
-    height: 34vh; top: -34vh;
-    background: linear-gradient(180deg, transparent 0%, rgba(224,168,60,0.14) 50%, transparent 100%);
-    pointer-events: none;
-    z-index: -1;
-    animation: scanSweep 11s linear infinite;
-}
-@keyframes scanSweep {
-    0%   { transform: translateY(0); }
-    100% { transform: translateY(394vh); }
+@keyframes ambientDrift {
+    0%   { transform: translate(0, 0) scale(1); }
+    50%  { transform: translate(-2.5%, 2%) scale(1.04); }
+    100% { transform: translate(0, 0) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-    .stApp::after { animation: none; display: none; }
+    [data-testid="stAppViewContainer"]::before { animation: none; }
 }
 
 
@@ -365,9 +361,11 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 }
 
 /* Base chip state — a real bordered/filled button look, not bare text,
-   so it reads as clickable even before any interaction. */
+   so it reads as clickable even before any interaction. Uses a slight
+   gradient (lighter top edge) plus a crisp drop shadow and inset top
+   highlight to read as a physically raised key, not a text label. */
 .stTabs [data-baseweb="tab"] {
-    background: var(--bg-4) !important;
+    background: linear-gradient(180deg, var(--bg-4) 0%, #171d27 100%) !important;
     border-radius: var(--radius-sm) !important;
     border: 1px solid var(--border-mid) !important;
     font-family: var(--font-display) !important;
@@ -378,10 +376,14 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     padding: 10px 20px !important;
     margin-bottom: 0 !important;
     cursor: pointer !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3) !important; /* lifts it off the
-        near-black page background so it visibly reads as a pressable
-        chip/button rather than plain text */
-    transition: color 0.15s, background 0.15s, border-color 0.15s !important;
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.05) inset,
+        0 2px 5px rgba(0,0,0,0.45) !important; /* inset top highlight + real
+        drop shadow so it reads as a pressable, physically raised chip
+        rather than plain text sitting on the track */
+    transform: translateY(0) !important;
+    transition: color 0.15s, background 0.15s, border-color 0.15s,
+        box-shadow 0.15s, transform 0.15s !important;
 }
 /* Browser's default blue focus ring (tabs are real <button> elements)
    showed through uncontrolled on click — replaced with a themed outline. */
@@ -408,12 +410,21 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 .stTabs [data-baseweb="tab"]:hover span {
     color: var(--text-0) !important;
 }
-.stTabs [data-baseweb="tab"]:hover { background: var(--bg-4) !important; border-color: rgba(255,255,255,0.22) !important; }
+.stTabs [data-baseweb="tab"]:hover {
+    background: linear-gradient(180deg, #232a36 0%, var(--bg-4) 100%) !important;
+    border-color: rgba(255,255,255,0.24) !important;
+    transform: translateY(-1px) !important;
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.06) inset,
+        0 4px 10px rgba(0,0,0,0.5) !important;
+}
 
 .stTabs [aria-selected="true"] {
-    background: var(--cyan) !important;
+    background: linear-gradient(180deg, var(--cyan-bright, #f0b94e) 0%, var(--cyan) 100%) !important;
     border-color: var(--cyan) !important;
-    box-shadow: 0 2px 12px rgba(224,168,60,0.28) !important;
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.35) inset,
+        0 3px 14px rgba(224,168,60,0.38) !important;
 }
 .stTabs [aria-selected="true"],
 .stTabs [aria-selected="true"] p,
