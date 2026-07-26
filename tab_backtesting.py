@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import LAYOUT, AXIS_STYLE, COLORS
 from cache_ui import render_cache_buttons
-from dashboard_styles import render_section_header
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows
 
 TAB_ID = "backtesting"
 
@@ -234,10 +234,13 @@ def render_backtesting_tab():
         refresh_cache()
         st.rerun()
 
-    with st.spinner("Loading backtesting data…"):
-        all_acc = _get_table_all()
+    _bt_placeholder = st.empty()
+    with _bt_placeholder.container():
+        render_skeleton_rows(4, height=64)
+    all_acc = _get_table_all()
+    _bt_placeholder.empty()
     if all_acc.empty:
-        st.warning("No accuracy data available yet.")
+        render_empty_state("No accuracy data available yet — check back once the model has a track record.")
         return
 
     all_acc = all_acc.copy()
