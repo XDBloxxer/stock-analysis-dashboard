@@ -746,7 +746,8 @@ def _render_latest_predictions():
     st.subheader("Today's Picks")
     st.caption("What the model is telling you to buy right now.")
 
-    all_preds = _get_table_full("ml_explosion_predictions")
+    with st.spinner("Loading predictions…"):
+        all_preds = _get_table_full("ml_explosion_predictions")
     _warn_if_truncated(all_preds, "ml_explosion_predictions")
 
     if all_preds.empty:
