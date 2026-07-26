@@ -120,17 +120,23 @@ DASHBOARD_CSS = """
 
 
 /* ── Main Container ─────────────────────────────────────────────────────── */
+/* NOTE: previously had `animation: fadeUp 0.35s ease forwards;` here, whose
+   keyframe starts at opacity:0. Streamlit reruns the whole script (and
+   rebuilds this container) far more often than a typical page — on every
+   widget interaction, every cached-data refresh, etc. If a rerun retriggers
+   the animation and the browser doesn't finish/settle it for any reason
+   (a "prefers-reduced-motion" override that zeroes animation-duration but
+   freezes on the FROM keyframe rather than the TO one is a known browser
+   quirk on some platforms), the container is left stuck at opacity:0 —
+   i.e. permanently invisible content with only the background showing,
+   which matches the exact symptom reported. Removed entirely rather than
+   patched further: an entrance fade adds nothing worth re-risking this. */
 .main .block-container {
     padding-top: 1.75rem !important;
     padding-bottom: 4rem !important;
     max-width: 1400px !important;
-    animation: fadeUp 0.35s ease forwards;
     position: relative !important;
     z-index: 1 !important;
-}
-@keyframes fadeUp {
-    from { opacity:0; transform:translateY(6px); }
-    to   { opacity:1; transform:translateY(0); }
 }
 
 /* ── Typography ─────────────────────────────────────────────────────────── */
@@ -758,12 +764,9 @@ div[data-testid="toastContainer"] {
     font-family: var(--font-body) !important; font-size: 0.82rem !important;
 }
 
-/* ── Entry animations — subtle, not staggered so far it feels sluggish ──── */
-.main .block-container > div > div:nth-child(1) { animation: fadeUp 0.3s ease 0.02s both; }
-.main .block-container > div > div:nth-child(2) { animation: fadeUp 0.3s ease 0.05s both; }
-.main .block-container > div > div:nth-child(3) { animation: fadeUp 0.3s ease 0.08s both; }
-.main .block-container > div > div:nth-child(4) { animation: fadeUp 0.3s ease 0.11s both; }
-.main .block-container > div > div:nth-child(5) { animation: fadeUp 0.3s ease 0.14s both; }
+/* Per-block entrance animations removed — same opacity:0-stuck risk as the
+   block-container animation above, for the same reason (frequent Streamlit
+   reruns rebuilding these nodes). Not worth the risk for a fade-in. */
 
 </style>
 """
