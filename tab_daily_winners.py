@@ -40,7 +40,7 @@ import os
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
-from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_snapshot
+from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_grid
 
 TAB_ID = "daily_winners"
 
@@ -841,7 +841,7 @@ def render_indicator_snapshot(data_row, title, snapshot_type):
                 elif abs(value) >= 1:    display_val = f"{value:.3f}"
                 else:                    display_val = f"{value:.4f}"
                 snapshot_items.append((label, display_val, kind))
-            render_indicator_snapshot(snapshot_items)
+            render_indicator_grid(snapshot_items)
 
 
 # ── Stock history (from ML predictions) ───────────────────────────────────────
