@@ -93,8 +93,12 @@ SIGNAL_BG = {
 
 # ── Confusion matrix 4-color scheme ───────────────────────────────────────────
 CONFUSION_COLORS = {
-    'tp': '#10b981',  # green  — True Positive
-    'fp': '#ef4444',  # red    — False Positive
-    'fn': '#f59e0b',  # amber  — False Negative
-    'tn': '#1e3a5f',  # dark   — True Negative
+    'tp': '#10b981',  # green  — True Positive  (correctly caught a winner)
+    'fp': '#ef4444',  # red    — False Positive (false alarm)
+    'fn': '#f59e0b',  # amber  — False Negative (missed a real winner)
+    'tn': '#2a3240',  # neutral slate — True Negative (correctly stayed out;
+                       # deliberately quiet/desaturated so it doesn't compete
+                       # visually with the three outcomes that actually carry
+                       # a signal, and — unlike the old dark navy — reads as
+                       # neutral rather than as a stray brand-blue accent)
 }
