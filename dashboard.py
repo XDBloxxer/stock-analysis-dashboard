@@ -101,12 +101,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
     inject_count_up_script()
+    inject_mouse_glow_script()
     now    = _now_et()
     hour   = now.hour
     minute = now.minute
