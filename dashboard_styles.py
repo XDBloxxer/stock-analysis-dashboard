@@ -1,11 +1,27 @@
 """
-dashboard_styles.py — Terminal Noir v7 "Clean Pass"
-Same dark aesthetic, refit for readability:
-  - Text-2 (labels/captions) brought up to real AA contrast on dark cards
-  - Tiny, over-tracked uppercase labels bumped to a legible size/spacing
-  - Background reduced to one quiet gradient + no dot-grid noise
-  - More consistent spacing rhythm, calmer hover/glow effects
-  - Metric numbers heavier weight so they read at a glance
+dashboard_styles.py — Terminal Noir v8 "Brass & Phosphor"
+
+Full visual pass, prompted by the tab-bar being both low-contrast (a global
+`p { color }` rule was silently beating the tab-selected color — fixed by
+targeting text nodes explicitly instead of relying on inheritance) and
+visually flat before interaction (unselected tabs had zero affordance).
+
+Also repoints the brand accent from a generic cyan-on-near-black (the
+default "AI dashboard" look) to a warm brass/gold — closer to the phosphor
+glow of a real trading terminal / ticker display, which fits the brief
+("Market Intelligence Terminal") rather than being a stock choice. Green/red
+stay reserved purely for gain/loss, matching real finance convention, so the
+accent never gets confused with a P&L signal.
+
+Ambient signature: a slow vertical "scan" sweep + faint CRT scanline
+texture across the whole app background, and HUD-style corner brackets on
+card containers — quiet, not distracting, but unmistakably a terminal
+rather than a generic dark dashboard.
+
+--cyan / --cyan-dim / --cyan-border / --cyan-glow variable NAMES are kept
+as-is (dozens of call sites across dashboard.py / tab_ml_predictions.py
+reference them directly) — only their color VALUES changed, from cyan to
+brass/gold.
 """
 
 DASHBOARD_CSS = """
@@ -14,17 +30,18 @@ DASHBOARD_CSS = """
 
 :root {
     /* Backgrounds — clear, ordered steps */
-    --bg-0:        #060a12;
-    --bg-1:        #0a0f19;
-    --bg-2:        #10161f;
-    --bg-3:        #171f2b;
-    --bg-4:        #1e2836;
+    --bg-0:        #05070a;
+    --bg-1:        #090c11;
+    --bg-2:        #0f131a;
+    --bg-3:        #161b24;
+    --bg-4:        #1e2530;
 
-    /* Accents */
-    --cyan:        #22d3ee;
-    --cyan-dim:    rgba(34, 211, 238, 0.10);
-    --cyan-border: rgba(34, 211, 238, 0.28);
-    --cyan-glow:   rgba(34, 211, 238, 0.10);
+    /* Accents — brass/gold "phosphor" accent (was cyan); names kept for
+       backward compatibility with existing call sites, values repointed. */
+    --cyan:        #e0a83c;
+    --cyan-dim:    rgba(224, 168, 60, 0.12);
+    --cyan-border: rgba(224, 168, 60, 0.34);
+    --cyan-glow:   rgba(224, 168, 60, 0.16);
     --green:       #10b981;
     --green-bright:#34d399;
     --green-dim:   rgba(16, 185, 129, 0.12);
@@ -45,7 +62,7 @@ DASHBOARD_CSS = """
 
     --border:      rgba(255,255,255,0.08);
     --border-mid:  rgba(255,255,255,0.14);
-    --border-focus:rgba(34, 211, 238, 0.5);
+    --border-focus:rgba(224, 168, 60, 0.55);
 
     --font-display:'Syne', sans-serif;
     --font-body:   'DM Mono', monospace;
@@ -54,14 +71,48 @@ DASHBOARD_CSS = """
     --radius-sm:   6px;
 }
 
-/* ── Base — one quiet gradient, no dot-grid clutter ─────────────────────── */
+/* ── Base — quiet gradients + faint scanline texture + slow scan sweep ──── */
 .stApp {
     background: var(--bg-0) !important;
     background-image:
-        radial-gradient(ellipse 80% 50% at 0% 0%,   rgba(34,211,238,0.06) 0%, transparent 55%),
-        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(16,185,129,0.05) 0%, transparent 55%);
+        radial-gradient(ellipse 80% 50% at 0% 0%,   rgba(224,168,60,0.055) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(16,185,129,0.045) 0%, transparent 55%);
     font-family: var(--font-body);
+    position: relative;
 }
+
+/* Faint CRT scanline texture — decorative, ~1.5% opacity, never fights content */
+.stApp::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: repeating-linear-gradient(
+        0deg, rgba(255,255,255,0.014) 0px, rgba(255,255,255,0.014) 1px,
+        transparent 1px, transparent 3px
+    );
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Slow ambient sweep — a soft horizontal band of brass light drifting down
+   the page on an endless loop, like a terminal's periodic refresh. Purely
+   ambient (no data implied), low opacity, ignored by prefers-reduced-motion. */
+.stApp::after {
+    content: '';
+    position: fixed; left: 0; right: 0;
+    height: 34vh; top: -34vh;
+    background: linear-gradient(180deg, transparent 0%, rgba(224,168,60,0.05) 50%, transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+    animation: scanSweep 11s linear infinite;
+}
+@keyframes scanSweep {
+    0%   { transform: translateY(0); }
+    100% { transform: translateY(394vh); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .stApp::after { animation: none; display: none; }
+}
+
 
 /* ── Main Container ─────────────────────────────────────────────────────── */
 .main .block-container {
@@ -69,6 +120,8 @@ DASHBOARD_CSS = """
     padding-bottom: 4rem !important;
     max-width: 1400px !important;
     animation: fadeUp 0.35s ease forwards;
+    position: relative !important;
+    z-index: 1 !important;
 }
 @keyframes fadeUp {
     from { opacity:0; transform:translateY(6px); }
@@ -154,10 +207,22 @@ div[data-testid="metric-container"] {
     border-radius: var(--radius) !important;
     padding: 18px 20px 16px !important;
     position: relative !important;
-    overflow: hidden !important;
+    overflow: visible !important;
     transition: border-color 0.15s, background 0.15s !important;
     min-height: 92px !important;
 }
+
+/* HUD corner brackets — quiet terminal signature, brightens on hover */
+div[data-testid="metric-container"]::after {
+    content: '';
+    position: absolute; top: -1px; right: -1px;
+    width: 9px; height: 9px;
+    border-top: 1.5px solid var(--border-mid);
+    border-right: 1.5px solid var(--border-mid);
+    border-radius: 0 var(--radius) 0 0;
+    transition: border-color 0.15s;
+}
+div[data-testid="metric-container"]:hover::after { border-color: var(--cyan); }
 
 /* Left accent bar */
 div[data-testid="metric-container"]::before {
@@ -248,39 +313,65 @@ div[data-testid="metric-container"]:has([data-testid="stMetricDeltaIcon-Down"]):
     font-size: 0.65rem !important;
 }
 
-/* ── Tab Bar — segmented pill control (obvious clickable state) ─────────── */
+/* ── Tab Bar — segmented pill control, visible before AND after selection ── */
 .stTabs [data-baseweb="tab-list"] {
-    background: var(--bg-2) !important;
+    background: var(--bg-1) !important;
     border-radius: var(--radius) !important;
     padding: 5px !important;
-    gap: 4px !important;
+    gap: 6px !important;
     border: 1px solid var(--border-mid) !important;
     display: inline-flex !important;
     width: auto !important;
 }
 
+/* Base chip state — a real bordered/filled button look, not bare text,
+   so it reads as clickable even before any interaction. */
 .stTabs [data-baseweb="tab"] {
-    background: transparent !important;
+    background: var(--bg-3) !important;
     border-radius: var(--radius-sm) !important;
-    color: var(--text-2) !important;
+    border: 1px solid var(--border-mid) !important;
     font-family: var(--font-display) !important;
     font-size: 0.8rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.06em !important;
     text-transform: uppercase !important;
     padding: 10px 20px !important;
-    border: none !important;
     margin-bottom: 0 !important;
-    transition: color 0.15s, background 0.15s !important;
+    transition: color 0.15s, background 0.15s, border-color 0.15s !important;
 }
-.stTabs [data-baseweb="tab"]:hover { color: var(--text-1) !important; background: rgba(255,255,255,0.03) !important; }
+
+/* Force text color on every descendant text node explicitly — Streamlit
+   wraps tab labels in nested <p>/<div>/<span>, and an earlier global rule
+   (`p, li { color: ... !important }`) matches those nodes directly and
+   otherwise wins over a color set only on the ancestor tab element. */
+.stTabs [data-baseweb="tab"],
+.stTabs [data-baseweb="tab"] p,
+.stTabs [data-baseweb="tab"] div,
+.stTabs [data-baseweb="tab"] span {
+    color: var(--text-1) !important;
+}
+.stTabs [data-baseweb="tab"]:hover,
+.stTabs [data-baseweb="tab"]:hover p,
+.stTabs [data-baseweb="tab"]:hover div,
+.stTabs [data-baseweb="tab"]:hover span {
+    color: var(--text-0) !important;
+}
+.stTabs [data-baseweb="tab"]:hover { background: var(--bg-4) !important; border-color: rgba(255,255,255,0.22) !important; }
+
 .stTabs [aria-selected="true"] {
-    color: var(--bg-0) !important;
     background: var(--cyan) !important;
-    box-shadow: 0 1px 8px rgba(34,211,238,0.35) !important;
+    border-color: var(--cyan) !important;
+    box-shadow: 0 2px 12px rgba(224,168,60,0.28) !important;
 }
-.stTabs [aria-selected="true"]:hover { color: var(--bg-0) !important; background: var(--cyan) !important; }
-/* Remove the old baseweb selection underline entirely — the pill fill is the signal now */
+.stTabs [aria-selected="true"],
+.stTabs [aria-selected="true"] p,
+.stTabs [aria-selected="true"] div,
+.stTabs [aria-selected="true"] span {
+    color: #14100a !important;   /* near-black — guaranteed contrast on the gold fill */
+}
+.stTabs [aria-selected="true"]:hover { background: var(--cyan) !important; }
+
+/* Remove baseweb's own underline/highlight bar — the chip fill is the signal now */
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display: none !important; background: transparent !important; }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 24px !important; }
@@ -550,8 +641,15 @@ div[data-testid="stAlert"] {
 .data-card {
     background: var(--bg-2); border: 1px solid var(--border-mid);
     border-radius: var(--radius); padding: 16px 18px; transition: border-color 0.15s;
+    position: relative;
 }
-.data-card:hover { border-color: rgba(255,255,255,0.2); }
+.data-card:hover { border-color: var(--cyan-border); }
+.data-card::after {
+    content: ''; position: absolute; top: -1px; right: -1px; width: 9px; height: 9px;
+    border-top: 1.5px solid var(--border-mid); border-right: 1.5px solid var(--border-mid);
+    border-radius: 0 var(--radius) 0 0; transition: border-color 0.15s;
+}
+.data-card:hover::after { border-color: var(--cyan); }
 
 /* Native st.container(border=True) — used for grouping controls/notes that
    would otherwise float without a visual boundary (e.g. simulator config
@@ -561,8 +659,14 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     border: 1px solid var(--border-mid) !important;
     border-radius: var(--radius) !important;
     background: var(--bg-2) !important;
+    position: relative !important;
 }
 div[data-testid="stVerticalBlockBorderWrapper"] > div { border-radius: var(--radius) !important; }
+div[data-testid="stVerticalBlockBorderWrapper"]::after {
+    content: ''; position: absolute; top: -1px; right: -1px; width: 9px; height: 9px;
+    border-top: 1.5px solid var(--border-mid); border-right: 1.5px solid var(--border-mid);
+    border-radius: 0 var(--radius) 0 0; pointer-events: none;
+}
 
 /* Text-only info/note block — left accent bar, quieter than a full data-card */
 .info-card {
