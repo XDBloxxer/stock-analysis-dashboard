@@ -973,7 +973,7 @@ def render_symbol_search(available_dates: list[str]):
             'Change (%)': '{:+.2f}%',
             'Volume':     '{:,.0f}',
         }, na_rep='—')
-        .background_gradient(subset=['Change (%)'], cmap='RdYlGn'),
+        .background_gradient(subset=['Change (%)'], cmap='Greens'),
         width='stretch',
         hide_index=True,
     )
@@ -1085,7 +1085,7 @@ def render_daily_winners_tab():
     st.dataframe(
         display_df.style
         .format({'Price ($)': '${:.2f}', 'Change (%)': '{:+.2f}%', 'Volume': '{:,.0f}'})
-        .background_gradient(subset=['Change (%)'], cmap='PiYG'),
+        .background_gradient(subset=['Change (%)'], cmap='Greens'),
         width='stretch', height=400,
     )
 
