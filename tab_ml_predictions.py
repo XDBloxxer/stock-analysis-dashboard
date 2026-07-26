@@ -28,6 +28,7 @@ from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
 from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html
 from cache_ui import render_cache_buttons
+from format_utils import fmt_compact
 
 TAB_ID = "ml_predictions"
 
@@ -164,6 +165,72 @@ def _get_bulk_live_quotes(symbols: tuple) -> dict:
                 log_debug_error(f"_get_bulk_live_quotes future({sym})", e)
                 result[sym] = None
     return result
+
+
+def _fetch_one_sparkline(symbol: str) -> tuple[str, list | None]:
+    """Worker for the thread pool in _get_bulk_sparklines — one symbol's
+    today's intraday closes, downsampled to a short list for a mini chart."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(symbol).history(period="1d", interval="15m")
+        if hist.empty or "Close" not in hist.columns:
+            return symbol, None
+        closes = hist["Close"].dropna().tolist()
+        return symbol, closes if len(closes) >= 2 else None
+    except Exception as e:
+        log_debug_error(f"_get_bulk_sparklines({symbol})", e)
+        return symbol, None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_bulk_sparklines(symbols: tuple) -> dict:
+    """
+    Fetch today's intraday closes for multiple symbols in parallel, for the
+    small inline sparkline next to Live price in the market table.
+    TTL=300s (vs 60s for live quotes) — the day's overall shape barely
+    changes minute to minute, so a slower refresh here avoids doubling the
+    yfinance call volume of _get_bulk_live_quotes for little visual benefit.
+    """
+    result = {}
+    if not symbols:
+        return result
+    try:
+        import yfinance as yf  # noqa: F401 — import check before spinning up threads
+    except ImportError:
+        return {sym: None for sym in symbols}
+
+    max_workers = min(16, len(symbols))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch_one_sparkline, sym): sym for sym in symbols}
+        for future in as_completed(futures):
+            sym = futures[future]
+            try:
+                _, closes = future.result()
+                result[sym] = closes
+            except Exception as e:
+                log_debug_error(f"_get_bulk_sparklines future({sym})", e)
+                result[sym] = None
+    return result
+
+
+def _sparkline_svg(values: list, color: str, width: int = 64, height: int = 22) -> str:
+    """Tiny inline SVG polyline — no axes/labels, just the day's shape."""
+    if not values or len(values) < 2:
+        return ""
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1.0
+    n = len(values)
+    pts = [
+        f"{(i / (n - 1)) * width:.1f},{height - ((v - lo) / span) * height:.1f}"
+        for i, v in enumerate(values)
+    ]
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'style="display:block;overflow:visible;">'
+        f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" '
+        f'stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>'
+        f'</svg>'
+    )
 
 
 def _warn_if_truncated(df: pd.DataFrame, table_name: str) -> None:
@@ -438,6 +505,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     with st.spinner(f"Fetching live quotes for {len(symbols)} stocks… (cached 60 s)"):
         quotes = _get_bulk_live_quotes(symbols)
+    sparklines = _get_bulk_sparklines(symbols)
 
     yf_available = bool(quotes)
 
@@ -513,8 +581,18 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
         progress  = min(max((high_pct or 0) / target_pct, 0.0), 1.0)
         hit       = progress >= 1.0
-        bar_color = "var(--green-bright)" if hit else "var(--cyan)"
-        lbl_color = "var(--green-bright)" if hit else "var(--text-0)"
+        # Gradient by proximity to target, not a flat on/off color — early
+        # progress reads as brass (matches the "not there yet" default),
+        # the final stretch shifts to amber as a visual "getting close"
+        # signal, and hitting/exceeding target goes full green. Three
+        # fixed bands rather than a continuous interpolation, so the color
+        # a user sees stays legible/nameable rather than a blurry gradient.
+        if hit:
+            bar_color, lbl_color = "var(--green-bright)", "var(--green-bright)"
+        elif progress >= 0.75:
+            bar_color, lbl_color = "var(--amber-bright)", "var(--amber-bright)"
+        else:
+            bar_color, lbl_color = "var(--cyan)", "var(--text-0)"
         bar_w     = progress * 100
 
         high_str  = _val(
@@ -554,7 +632,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
         "text-transform:uppercase;color:var(--text-1);padding-bottom:6px;"
         "border-bottom:1px solid var(--border-mid);"
     )
-    h = st.columns([2.6, 1.4, 1.1, 1.1, 1.3, 1.3, 4.2, 0.7])
+    h = st.columns([2.6, 1.4, 1.1, 1.1, 1.8, 1.3, 3.7, 0.7])
     for col, lbl in zip(h, ["Stock", "Signal", "Prob", "Entry", "Live", "Day High", "→ Target", "TV"]):
         col.markdown(f'<div style="{hdr_style}">{lbl}</div>', unsafe_allow_html=True)
 
@@ -586,10 +664,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
         left_color = _left_bar.get(signal, "var(--border-mid)")
 
         # Volume formatting
-        if volume:
-            vol_str = f"{volume/1e6:.1f}M" if volume >= 1_000_000 else f"{volume/1e3:.0f}K"
-        else:
-            vol_str = "—"
+        vol_str = fmt_compact(volume) if volume else "—"
 
         # Probability bar (inline mini)
         prob_pct = (prob * 100) if prob is not None else None
@@ -620,7 +695,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
             f'color:var(--text-1);margin-top:2px;">L ${day_low:.2f}</div>'
         ) if day_low else ""
 
-        cols = st.columns([2.6, 1.4, 1.1, 1.1, 1.3, 1.3, 4.2, 0.7])
+        cols = st.columns([2.6, 1.4, 1.1, 1.1, 1.8, 1.3, 3.7, 0.7])
 
         # Col 0 — Ticker + exchange + volume
         with cols[0]:
@@ -675,15 +750,20 @@ def _render_live_market_table(fdf: pd.DataFrame):
                 unsafe_allow_html=True,
             )
 
-        # Col 4 — Live price + day change
+        # Col 4 — Live price + day change + intraday sparkline
         with cols[4]:
             chg_color = _chg_color(day_chg)
             chg_str   = f'{day_chg:+.2f}%' if day_chg is not None else "—"
             live_str  = _val(live, "$.2f")
+            spark_vals = sparklines.get(sym) if sparklines else None
+            spark_svg  = _sparkline_svg(spark_vals, chg_color) if spark_vals else ""
             st.markdown(
                 f'<div style="padding:7px 0 5px;">'
+                f'<div style="display:flex;align-items:center;gap:8px;">'
                 f'<span style="font-family:var(--font-body);font-size:0.9rem;'
-                f'font-weight:700;color:var(--text-0);">{live_str}</span>'
+                f'font-weight:700;color:var(--text-0);white-space:nowrap;">{live_str}</span>'
+                f'{spark_svg}'
+                f'</div>'
                 f'<div style="font-family:var(--font-body);font-size:0.72rem;'
                 f'font-weight:600;color:{chg_color};margin-top:2px;">{chg_str}</div>'
                 f'</div>',
@@ -741,6 +821,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     st.caption(
         f"{len(fdf)} stocks · Bar = intraday high % of the way to target gain · "
+        f"Sparkline = today's price shape (15-min bars, refreshed every 5 min) · "
         f"Entry = price at time of prediction · Live data via Yahoo Finance · not financial advice"
     )
 
