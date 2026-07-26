@@ -565,6 +565,47 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     border-radius: var(--radius) !important;
     overflow: hidden !important;
 }
+/* Toolbar (search / download / fullscreen icons) — default is a flat grey
+   that reads as unstyled against the rest of the theme; these are real DOM
+   elements (unlike the canvas-rendered grid body), so a light touch here
+   goes a long way. */
+[data-testid="stElementToolbar"] {
+    background: var(--bg-2) !important;
+    border: 1px solid var(--border-mid) !important;
+    border-radius: var(--radius-sm) !important;
+}
+[data-testid="stElementToolbar"] button svg { color: var(--text-2) !important; }
+[data-testid="stElementToolbar"] button:hover svg { color: var(--cyan) !important; }
+
+/* ── Empty states ───────────────────────────────────────────────────────────
+   Replaces plain st.info/st.warning "no data" boxes with something that
+   matches the terminal aesthetic instead of falling back to default
+   Streamlit chrome mid-experience. Used via render_empty_state(). */
+.empty-state {
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 10px; padding: 40px 24px; background: var(--bg-2);
+    border: 1px dashed var(--border-mid); border-radius: var(--radius);
+    color: var(--text-2);
+}
+.empty-state .es-glyph {
+    font-family: var(--font-body); font-size: 1.4rem; color: var(--text-3); opacity: 0.7;
+}
+.empty-state .es-msg {
+    font-family: var(--font-body); font-size: 0.85rem; color: var(--text-2); line-height: 1.6;
+    max-width: 420px;
+}
+
+/* ── Tab-switch fade-in ─────────────────────────────────────────────────────
+   Streamlit re-renders the panel body on every tab click, so a short
+   entrance animation on the panel itself gives a soft fade instead of a
+   hard pop each time the content swaps in. */
+.stTabs [data-baseweb="tab-panel"] {
+    animation: tabFadeIn 0.22s ease-out;
+}
+@keyframes tabFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
 
 /* ── Dividers ───────────────────────────────────────────────────────────── */
 hr {
@@ -721,6 +762,18 @@ div[data-testid="stAlert"] {
 .badge-amber { background: var(--amber-dim);  color: var(--amber-bright); border: 1px solid rgba(245,158,11,0.3); }
 .badge-red   { background: var(--red-dim);    color: var(--red-bright);   border: 1px solid rgba(239,68,68,0.3); }
 .badge-blue  { background: var(--cyan-dim);   color: var(--cyan);         border: 1px solid var(--cyan-border); }
+
+/* Subtle "this one matters" cue for the top-tier signal only — reuses the
+   same slow pulse already driving the market-status dot, just on the
+   badge's border/glow rather than opacity, so it reads as emphasis rather
+   than a blinking alert. */
+.badge-pulse {
+    animation: badgePulse 2.4s ease-in-out infinite;
+}
+@keyframes badgePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.35); }
+    50%      { box-shadow: 0 0 0 4px rgba(16,185,129,0); }
+}
 
 /* ── Ticker ─────────────────────────────────────────────────────────────── */
 .ticker {
@@ -972,3 +1025,44 @@ def render_section_header(num, title):
         f'</div>',
         unsafe_allow_html=True,
     )
+
+
+def render_empty_state(message, glyph="◇"):
+    """Styled "no data" placeholder — pairs with `.empty-state` CSS above.
+
+    Use in place of a bare st.info()/st.warning() where the user has hit a
+    genuine dead end (no rows for this filter/date), not for transient
+    warnings, so the terminal look doesn't break for the most common
+    non-error state a data dashboard hits.
+
+        render_empty_state("No BUY / STRONG BUY signals for this date.")
+    """
+    import streamlit as st
+    st.markdown(
+        f'<div class="empty-state">'
+        f'<div class="es-glyph">{glyph}</div>'
+        f'<div class="es-msg">{message}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_skeleton_rows(n=3, height=70, gap=8):
+    """n stacked shimmering placeholder rows, shown while a slow load runs.
+
+    Pairs with the `.skeleton` CSS (shimmer keyframe already defined above).
+    Use with st.empty() so the placeholder can be cleared once real data is
+    ready, e.g.:
+
+        placeholder = st.empty()
+        with placeholder.container():
+            render_skeleton_rows(3)
+        data = slow_fetch()
+        placeholder.empty()
+    """
+    import streamlit as st
+    rows_html = "".join(
+        f'<div class="skeleton" style="height:{height}px;margin-bottom:{gap}px;"></div>'
+        for _ in range(n)
+    )
+    st.markdown(rows_html, unsafe_allow_html=True)
