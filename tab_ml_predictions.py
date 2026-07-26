@@ -919,7 +919,7 @@ def _render_latest_predictions():
         <div class="bar-track"><div class="bar-fill" style="width:{prob:.0f}%;background:{prob_color};"></div></div>
     </div>
     <div style="flex:1;min-width:120px;">
-        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Current Price</div>
+        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Entry Price</div>
         <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-1);">{price_str}</div>
     </div>
     <div style="flex:1;min-width:120px;">
