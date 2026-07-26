@@ -87,12 +87,12 @@ DASHBOARD_CSS = """
        not re-add position/z-index to .stApp without testing live first. */
 }
 
-/* Faint CRT scanline texture — decorative, ~1.5% opacity, never fights content. */
+/* Faint CRT scanline texture — decorative, never fights content. */
 .stApp::before {
     content: '';
     position: fixed; inset: 0;
     background-image: repeating-linear-gradient(
-        0deg, rgba(255,255,255,0.014) 0px, rgba(255,255,255,0.014) 1px,
+        0deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px,
         transparent 1px, transparent 3px
     );
     pointer-events: none;
@@ -105,7 +105,7 @@ DASHBOARD_CSS = """
     content: '';
     position: fixed; left: 0; right: 0;
     height: 34vh; top: -34vh;
-    background: linear-gradient(180deg, transparent 0%, rgba(224,168,60,0.05) 50%, transparent 100%);
+    background: linear-gradient(180deg, transparent 0%, rgba(224,168,60,0.14) 50%, transparent 100%);
     pointer-events: none;
     z-index: -1;
     animation: scanSweep 11s linear infinite;
@@ -213,7 +213,7 @@ div.stSubheader h2::after {
 }
 
 /* ── Metric Cards — the numbers should sing ─────────────────────────────── */
-div[data-testid="metric-container"] {
+div[data-testid="stMetric"] {
     background: var(--bg-2) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
@@ -225,7 +225,7 @@ div[data-testid="metric-container"] {
 }
 
 /* HUD corner brackets — quiet terminal signature, brightens on hover */
-div[data-testid="metric-container"]::after {
+div[data-testid="stMetric"]::after {
     content: '';
     position: absolute; top: -1px; right: -1px;
     width: 9px; height: 9px;
@@ -234,10 +234,10 @@ div[data-testid="metric-container"]::after {
     border-radius: 0 var(--radius) 0 0;
     transition: border-color 0.15s;
 }
-div[data-testid="metric-container"]:hover::after { border-color: var(--cyan); }
+div[data-testid="stMetric"]:hover::after { border-color: var(--cyan); }
 
 /* Left accent bar */
-div[data-testid="metric-container"]::before {
+div[data-testid="stMetric"]::before {
     content: '';
     position: absolute;
     left: 0; top: 18%; bottom: 18%;
@@ -247,11 +247,11 @@ div[data-testid="metric-container"]::before {
     transition: background 0.15s;
 }
 
-div[data-testid="metric-container"]:hover {
+div[data-testid="stMetric"]:hover {
     border-color: var(--cyan-border) !important;
     background: var(--bg-3) !important;
 }
-div[data-testid="metric-container"]:hover::before {
+div[data-testid="stMetric"]:hover::before {
     background: var(--cyan);
 }
 
@@ -299,22 +299,22 @@ div[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) {
 }
 
 /* Green-accented cards */
-div[data-testid="metric-container"]:has([data-testid="stMetricDeltaIcon-Up"])::before {
+div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Up"])::before {
     background: var(--green);
 }
-div[data-testid="metric-container"]:has([data-testid="stMetricDeltaIcon-Up"]):hover::before {
+div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Up"]):hover::before {
     background: var(--green-bright);
 }
 
 /* Red-accented cards */
-div[data-testid="metric-container"]:has([data-testid="stMetricDeltaIcon-Down"])::before {
+div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"])::before {
     background: var(--red);
 }
-div[data-testid="metric-container"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::before {
+div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::before {
     background: var(--red-bright);
 }
 
-.metrics-sm div[data-testid="metric-container"] {
+.metrics-sm div[data-testid="stMetric"] {
     min-height: 72px !important;
     padding: 13px 16px 11px !important;
 }
