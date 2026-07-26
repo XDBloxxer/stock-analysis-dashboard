@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html
 from cache_ui import render_cache_buttons
 
 TAB_ID = "ml_predictions"
@@ -624,10 +624,13 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
         # Col 0 — Ticker + exchange + volume
         with cols[0]:
+            sym_html = ticker_copy_html(
+                sym, style="font-family:var(--font-body);font-size:0.95rem;"
+                            "font-weight:700;color:var(--text-0);letter-spacing:0.04em;"
+            )
             st.markdown(
                 f'<div style="padding:7px 0 5px;border-left:2px solid {left_color};padding-left:10px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.95rem;'
-                f'font-weight:700;color:var(--text-0);letter-spacing:0.04em;">{sym}</span>'
+                f'{sym_html}'
                 f'<span style="font-family:var(--font-body);font-size:0.66rem;'
                 f'color:var(--text-1);margin-left:7px;">{exchange}</span>'
                 f'<div style="font-family:var(--font-body);font-size:0.68rem;'
@@ -817,11 +820,15 @@ def _render_latest_predictions():
                 else "var(--amber-bright)"
             )
 
+            sym_html = ticker_copy_html(
+                row['symbol'],
+                style="font-family:var(--font-display);font-weight:700;font-size:1.05rem;color:var(--text-0);"
+            )
             st.markdown(
                 f"""
 <div class="data-card{' card-strong-buy' if row['signal'] == 'STRONG BUY' else ''}" style="display:flex;align-items:center;gap:18px;margin-bottom:8px;padding:14px 18px;">
     <div style="min-width:150px;">
-        <span style="font-family:var(--font-display);font-weight:700;font-size:1.05rem;color:var(--text-0);">{row['symbol']}</span>
+        {sym_html}
         <span style="color:var(--text-2);font-size:0.72rem;margin-left:6px;">{row.get('exchange','')}</span>
         <div style="margin-top:4px;"><span class="badge {_badge_class.get(row['signal'],'badge-blue')}{' badge-pulse' if row['signal'] == 'STRONG BUY' else ''}">{row['signal']}</span></div>
     </div>
