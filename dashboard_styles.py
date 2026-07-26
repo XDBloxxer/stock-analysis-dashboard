@@ -373,7 +373,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
    not a headline stat. This renders the same data as a tight CSS-grid of
    label/value cells inside one card-like surface instead, so a full
    indicator group reads as one scannable table rather than a wall of boxes.
-   Pairs with render_indicator_snapshot() below. */
+   Pairs with render_indicator_grid() below. */
 .indicator-snapshot {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -1280,7 +1280,7 @@ def render_empty_state(message, glyph="◇"):
     )
 
 
-def render_indicator_snapshot(items):
+def render_indicator_grid(items):
     """Compact label/value grid for dense field lists (e.g. a technical
     indicator group with 10-24 fields) — pairs with the `.indicator-snapshot`
     CSS above. Drop-in replacement for a `st.columns(4)` grid of `st.metric`
@@ -1291,7 +1291,7 @@ def render_indicator_snapshot(items):
         "true" / "false" for boolean fields (colored accordingly) or None
         for plain numeric/text values.
 
-        render_indicator_snapshot([
+        render_indicator_grid([
             ("RSI", "61.2", None),
             ("EMA20 > EMA50", "Yes", "true"),
         ])
