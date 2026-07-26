@@ -233,7 +233,8 @@ def render_backtesting_tab():
         refresh_cache()
         st.rerun()
 
-    all_acc = _get_table_all()
+    with st.spinner("Loading backtesting data…"):
+        all_acc = _get_table_all()
     if all_acc.empty:
         st.warning("No accuracy data available yet.")
         return
