@@ -436,12 +436,21 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
                 0 8px 28px -6px var(--hero-glow, var(--cyan-glow)),
                 0 0 46px var(--hero-glow, var(--cyan-glow));
 }
-.hero-metric:hover::before {
+.hero-metric::before {
     content: '';
     position: absolute; inset: -40%;
     background: radial-gradient(circle, var(--hero-glow, var(--cyan-glow)) 0%, transparent 65%);
-    animation: heroAuraPulse 2.2s ease-in-out infinite;
+    opacity: 0.35;
+    animation: heroAuraIdle 3.6s ease-in-out infinite;
     pointer-events: none;
+    transition: opacity 0.22s ease;
+}
+@keyframes heroAuraIdle {
+    0%, 100% { opacity: 0.22; transform: scale(1); }
+    50%      { opacity: 0.42; transform: scale(1.03); }
+}
+.hero-metric:hover::before {
+    animation: heroAuraPulse 2.2s ease-in-out infinite;
 }
 .hero-metric:hover .hero-metric-value {
     text-shadow: 0 0 40px var(--hero-glow, var(--cyan-glow)),
