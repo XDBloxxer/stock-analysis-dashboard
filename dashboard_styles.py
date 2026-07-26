@@ -424,6 +424,32 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     position: relative;
     overflow: hidden;
     animation: tabFadeIn 0.3s ease-out;
+    transition: transform 0.22s ease, border-color 0.22s ease,
+                box-shadow 0.22s ease, background 0.22s ease;
+    cursor: default;
+}
+.hero-metric:hover {
+    transform: translateY(-2px);
+    border-color: var(--hero-color, var(--cyan));
+    background: var(--bg-3);
+    box-shadow: 0 0 0 1px var(--hero-glow, var(--cyan-glow)),
+                0 8px 28px -6px var(--hero-glow, var(--cyan-glow)),
+                0 0 46px var(--hero-glow, var(--cyan-glow));
+}
+.hero-metric:hover::before {
+    content: '';
+    position: absolute; inset: -40%;
+    background: radial-gradient(circle, var(--hero-glow, var(--cyan-glow)) 0%, transparent 65%);
+    animation: heroAuraPulse 2.2s ease-in-out infinite;
+    pointer-events: none;
+}
+.hero-metric:hover .hero-metric-value {
+    text-shadow: 0 0 40px var(--hero-glow, var(--cyan-glow)),
+                 0 0 14px var(--hero-glow, var(--cyan-glow));
+}
+@keyframes heroAuraPulse {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50%      { opacity: 1;    transform: scale(1.06); }
 }
 .hero-metric::after {
     content: '';
@@ -441,6 +467,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     line-height: 1.05; color: var(--hero-color, var(--cyan)); letter-spacing: -0.01em;
     margin-top: 4px; position: relative;
     text-shadow: 0 0 28px var(--hero-glow, var(--cyan-glow));
+    transition: text-shadow 0.22s ease;
 }
 .hero-metric-glyph { font-size: 0.55em; opacity: 0.7; margin-right: 8px; vertical-align: middle; }
 .hero-metric-sub {
