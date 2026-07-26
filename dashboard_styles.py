@@ -367,6 +367,51 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     font-size: 0.65rem !important;
 }
 
+/* ── Indicator snapshot grid — compact label/value pairs ────────────────────
+   For dense technical-indicator readouts (10-24 fields per group), a grid
+   of bordered stMetric cards is too heavy — each field is a single number,
+   not a headline stat. This renders the same data as a tight CSS-grid of
+   label/value cells inside one card-like surface instead, so a full
+   indicator group reads as one scannable table rather than a wall of boxes.
+   Pairs with render_indicator_snapshot() below. */
+.indicator-snapshot {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+.indicator-snapshot .is-cell {
+    background: var(--bg-2);
+    padding: 9px 12px 8px;
+    transition: background 0.15s ease;
+}
+.indicator-snapshot .is-cell:hover {
+    background: var(--bg-3);
+}
+.indicator-snapshot .is-label {
+    font-family: var(--font-body);
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+}
+.indicator-snapshot .is-value {
+    font-family: var(--font-body);
+    font-size: 0.92rem;
+    font-weight: 500;
+    color: var(--text-0);
+}
+.indicator-snapshot .is-value.is-true  { color: var(--green-bright); }
+.indicator-snapshot .is-value.is-false { color: var(--text-3); }
+
 /* ── Tab Bar — segmented pill control, visible before AND after selection ──
    Selectors target [role="tablist"]/[role="tab"] (standard ARIA, stable
    across versions) rather than relying only on data-baseweb hooks — a
@@ -1233,6 +1278,35 @@ def render_empty_state(message, glyph="◇"):
         f'</div>',
         unsafe_allow_html=True,
     )
+
+
+def render_indicator_snapshot(items):
+    """Compact label/value grid for dense field lists (e.g. a technical
+    indicator group with 10-24 fields) — pairs with the `.indicator-snapshot`
+    CSS above. Drop-in replacement for a `st.columns(4)` grid of `st.metric`
+    calls, which turns into a wall of bordered cards once a group has more
+    than a handful of fields.
+
+    items: list of (label, display_value, kind) tuples, where kind is
+        "true" / "false" for boolean fields (colored accordingly) or None
+        for plain numeric/text values.
+
+        render_indicator_snapshot([
+            ("RSI", "61.2", None),
+            ("EMA20 > EMA50", "Yes", "true"),
+        ])
+    """
+    import streamlit as st
+    cells = []
+    for label, value, kind in items:
+        value_cls = " is-true" if kind == "true" else (" is-false" if kind == "false" else "")
+        cells.append(
+            f'<div class="is-cell">'
+            f'<div class="is-label">{label}</div>'
+            f'<div class="is-value{value_cls}">{value}</div>'
+            f'</div>'
+        )
+    st.markdown(f'<div class="indicator-snapshot">{"".join(cells)}</div>', unsafe_allow_html=True)
 
 
 def render_skeleton_rows(n=3, height=70, gap=8):
