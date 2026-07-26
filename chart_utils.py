@@ -52,8 +52,11 @@ AXIS_STYLE_SM = dict(
 )
 
 # ── Brand color palette ────────────────────────────────────────────────────────
+# 'primary' repointed from cyan (#22d3ee) to brass/gold (#e0a83c) to match the
+# v8 "Brass & Phosphor" theme in dashboard_styles.py. Gain/loss colors
+# (secondary=green, red) are untouched — those are semantic, not brand accent.
 COLORS = {
-    'primary':   '#22d3ee',
+    'primary':   '#e0a83c',
     'secondary': '#34d399',
     'amber':     '#fbbf24',
     'red':       '#f87171',
@@ -63,14 +66,14 @@ COLORS = {
 
     # Signal colors
     'strong_buy': '#10b981',
-    'buy':        '#22d3ee',
+    'buy':        '#e0a83c',
     'hold':       '#f59e0b',
     'avoid':      '#ef4444',
 
     # Chart series palette (10 colors, never repeat adjacent)
     'series': [
-        '#22d3ee', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
-        '#38bdf8', '#2dd4bf', '#fb923c', '#a3e635', '#f472b6',
+        '#e0a83c', '#34d399', '#38bdf8', '#f87171', '#a78bfa',
+        '#2dd4bf', '#fbbf24', '#fb923c', '#a3e635', '#f472b6',
     ],
 }
 
@@ -83,7 +86,7 @@ SIGNAL_COLORS = {
 
 SIGNAL_BG = {
     'STRONG BUY': '#10b98122',
-    'BUY':        '#22d3ee22',
+    'BUY':        '#e0a83c22',
     'HOLD':       '#f59e0b22',
     'AVOID':      '#ef444422',
 }
