@@ -79,6 +79,13 @@ DASHBOARD_CSS = """
         radial-gradient(ellipse 60% 45% at 100% 100%, rgba(16,185,129,0.045) 0%, transparent 55%);
     font-family: var(--font-body);
     position: relative;
+    z-index: 0; /* REQUIRED: position:relative alone does NOT create a stacking
+       context — only relative/absolute + a non-auto z-index does. Without this,
+       the .stApp::before/::after z-index:-1 below aren't actually scoped behind
+       .stApp's own children; they escape to the nearest real stacking context
+       (page root or a Streamlit wrapper), which can land them ABOVE the real
+       content depending on Streamlit's internal DOM — i.e. exactly the
+       "only the static is visible" bug. */
 }
 
 /* Faint CRT scanline texture — decorative, ~1.5% opacity, never fights content.
