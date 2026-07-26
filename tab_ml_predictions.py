@@ -1481,11 +1481,14 @@ def _render_performance_trends():
             fig.update_yaxes(**AXIS_STYLE, title_text="%")
             st.plotly_chart(fig, use_container_width=True)
 
+    # Recall uses COLORS['blue'] rather than COLORS['amber'] here — amber
+    # sits too close to Accuracy's brass (COLORS['primary']) tone to tell
+    # apart at a glance when the three panels are stacked together.
     st.markdown("##### Accuracy / Precision / Recall Over Time")
     full_col = st.container()
     _metric_panel(full_col, "accuracy_pct",  COLORS["primary"],   "Accuracy")
     _metric_panel(full_col, "precision_pct", COLORS["secondary"], "Precision")
-    _metric_panel(full_col, "recall_pct",    COLORS["amber"],     "Recall")
+    _metric_panel(full_col, "recall_pct",    COLORS["blue"],      "Recall")
 
     col1, col2 = st.columns(2)
 
