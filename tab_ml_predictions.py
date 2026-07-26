@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows
 from cache_ui import render_cache_buttons
 
 TAB_ID = "ml_predictions"
@@ -478,8 +478,9 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     def _badge(signal: str) -> str:
         fg, bg, border = _sig_colors.get(signal, ("var(--text-2)", "var(--bg-3)", "var(--border)"))
+        pulse_cls = " badge-pulse" if signal == "STRONG BUY" else ""
         return (
-            f'<span style="padding:3px 9px;border-radius:3px;background:{bg};'
+            f'<span class="{pulse_cls.strip()}" style="padding:3px 9px;border-radius:3px;background:{bg};'
             f'border:1px solid {border};color:{fg};font-family:var(--font-body);'
             f'font-size:0.65rem;font-weight:700;letter-spacing:0.08em;'
             f'text-transform:uppercase;white-space:nowrap;">{signal}</span>'
@@ -746,13 +747,15 @@ def _render_latest_predictions():
     render_section_header(1, "Today's Picks")
     st.caption("What the model is telling you to buy right now.")
 
-    with st.spinner("Loading predictions…"):
-        all_preds = _get_table_full("ml_explosion_predictions")
+    _picks_placeholder = st.empty()
+    with _picks_placeholder.container():
+        render_skeleton_rows(4, height=64)
+    all_preds = _get_table_full("ml_explosion_predictions")
+    _picks_placeholder.empty()
     _warn_if_truncated(all_preds, "ml_explosion_predictions")
 
     if all_preds.empty:
-        st.warning("No predictions available yet.")
-        st.info("Run the screening workflow or wait for the scheduled run.")
+        render_empty_state("No predictions available yet — run the screening workflow or wait for the scheduled run.")
         return
 
     dates = sorted(all_preds["prediction_date"].unique().tolist(), reverse=True)
@@ -791,7 +794,7 @@ def _render_latest_predictions():
     shown_picks = picks.head(_MAX_PICKS_SHOWN)
 
     if total_picks == 0:
-        st.info("No BUY / STRONG BUY signals for this date — the model isn't flagging anything actionable.")
+        render_empty_state("No BUY / STRONG BUY signals for this date — the model isn't flagging anything actionable.")
     else:
         st.markdown(
             f"##### 🎯 Buy these {min(total_picks, _MAX_PICKS_SHOWN)}"
@@ -820,7 +823,7 @@ def _render_latest_predictions():
     <div style="min-width:150px;">
         <span style="font-family:var(--font-display);font-weight:700;font-size:1.05rem;color:var(--text-0);">{row['symbol']}</span>
         <span style="color:var(--text-2);font-size:0.72rem;margin-left:6px;">{row.get('exchange','')}</span>
-        <div style="margin-top:4px;"><span class="badge {_badge_class.get(row['signal'],'badge-blue')}">{row['signal']}</span></div>
+        <div style="margin-top:4px;"><span class="badge {_badge_class.get(row['signal'],'badge-blue')}{' badge-pulse' if row['signal'] == 'STRONG BUY' else ''}">{row['signal']}</span></div>
     </div>
     <div style="flex:1;min-width:120px;">
         <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Confidence</div>
@@ -887,7 +890,7 @@ def _render_latest_predictions():
     st.caption(f"{len(fdf)} stocks match current filters")
 
     if fdf.empty:
-        st.warning("No stocks match the filters.")
+        render_empty_state("No stocks match the filters — try widening the signal, probability, or gain thresholds.")
         return
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -905,7 +908,7 @@ def _render_predictions_vs_actuals():
     all_acc = _get_table_full("ml_prediction_accuracy")
     _warn_if_truncated(all_acc, "ml_prediction_accuracy")
     if all_acc.empty:
-        st.warning("No accuracy data available yet.")
+        render_empty_state("No accuracy data available yet.")
         return
 
     dates = sorted(all_acc["prediction_date"].unique().tolist(), reverse=True)
@@ -918,7 +921,7 @@ def _render_predictions_vs_actuals():
 
     df = all_acc[all_acc["prediction_date"] == selected_date].copy()
     if df.empty:
-        st.warning(f"No accuracy data for {selected_date}")
+        render_empty_state(f"No accuracy data for {selected_date}.")
         return
 
     df["became_winner"]         = df["became_winner"].astype(bool)
@@ -1094,7 +1097,7 @@ def _render_missed_opportunities():
     )
     df = all_missed[all_missed["detection_date"] == selected_date].copy()
     if df.empty:
-        st.info("No missed opportunities for this date.")
+        render_empty_state("No missed opportunities for this date — nice.")
         return
 
     total_missed     = len(df)
@@ -1224,7 +1227,7 @@ def _render_performance_trends():
 
     all_acc = _get_table_all("ml_prediction_accuracy")
     if all_acc.empty:
-        st.warning("No accuracy data available yet.")
+        render_empty_state("No accuracy data available yet.")
         return
 
     all_acc = all_acc.copy()
