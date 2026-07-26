@@ -366,6 +366,25 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     border: 1px solid var(--border-mid) !important;
     display: inline-flex !important;
     width: auto !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: thin !important;
+}
+/* Narrow screens (phones): let the pill bar wrap onto multiple lines
+   instead of forcing a tiny horizontal scrollbar users may not notice —
+   5+ tabs on a ~375px viewport otherwise get clipped or unreadable. */
+@media (max-width: 640px) {
+    .stTabs [role="tablist"],
+    .stTabs [data-baseweb="tab-list"] {
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
+    }
+    .stTabs [role="tab"],
+    .stTabs [data-baseweb="tab"] {
+        padding: 8px 14px !important;
+        font-size: 0.72rem !important;
+    }
 }
 
 /* Base chip state — a real bordered/filled button look, not bare text,
@@ -593,8 +612,8 @@ div[data-testid="stExpander"] details > div { padding: 6px 16px 16px !important;
 }
 div[data-baseweb="notification"][kind="info"],
 div[data-testid="stAlert"] {
-    background: rgba(34,211,238,0.06) !important;
-    border: 1px solid rgba(34,211,238,0.22) !important;
+    background: rgba(224,168,60,0.06) !important;
+    border: 1px solid rgba(224,168,60,0.22) !important;
 }
 
 /* ── Text inputs ────────────────────────────────────────────────────────── */
@@ -619,7 +638,7 @@ div[data-testid="stAlert"] {
 }
 
 /* ── Sliders ────────────────────────────────────────────────────────────── */
-.stSlider > div > div > div { background: rgba(34,211,238,0.16) !important; }
+.stSlider > div > div > div { background: rgba(224,168,60,0.16) !important; }
 .stSlider > div > div > div > div { background: var(--cyan) !important; }
 .stSlider [role="slider"] {
     background: var(--bg-0) !important;
@@ -661,8 +680,8 @@ div[data-testid="stAlert"] {
 /* ── Scrollbar ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-0); }
-::-webkit-scrollbar-thumb { background: rgba(34,211,238,0.2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(34,211,238,0.35); }
+::-webkit-scrollbar-thumb { background: rgba(224,168,60,0.2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(224,168,60,0.35); }
 
 /* ── Skeleton ───────────────────────────────────────────────────────────── */
 .skeleton {
@@ -837,6 +856,15 @@ div[data-testid="stCaptionContainer"] p {
 /* ── Toast ──────────────────────────────────────────────────────────────── */
 div[data-testid="toastContainer"] {
     font-family: var(--font-body) !important; font-size: 0.82rem !important;
+}
+
+/* ── App footer ─────────────────────────────────────────────────────────── */
+.app-footer {
+    margin-top: 40px; padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-body); font-size: 0.7rem;
+    letter-spacing: 0.02em; line-height: 1.6;
+    color: var(--text-3); text-align: center;
 }
 
 /* Per-block entrance animations removed — same opacity:0-stuck risk as the
