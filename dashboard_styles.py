@@ -53,6 +53,12 @@ DASHBOARD_CSS = """
     --red-dim:     rgba(239, 68, 68, 0.12);
     --purple:      #8b5cf6;
     --purple-dim:  rgba(139, 92, 246, 0.12);
+    /* Genuine blue — used for the BUY signal specifically, since --cyan
+       above is brass/gold and was visually indistinguishable from HOLD's
+       amber wherever both appeared side by side (badges, live table). */
+    --blue-bright: #38bdf8;
+    --blue-dim:    rgba(56, 189, 248, 0.12);
+    --blue-border: rgba(56, 189, 248, 0.34);
 
     /* Text — real contrast at every step, checked against bg-2/bg-3 */
     --text-0:      #f8fafc;   /* headlines, values that matter */
@@ -959,7 +965,7 @@ div[data-testid="stAlert"] {
 .badge-green { background: var(--green-dim);  color: var(--green-bright); border: 1px solid rgba(16,185,129,0.3); }
 .badge-amber { background: var(--amber-dim);  color: var(--amber-bright); border: 1px solid rgba(245,158,11,0.3); }
 .badge-red   { background: var(--red-dim);    color: var(--red-bright);   border: 1px solid rgba(239,68,68,0.3); }
-.badge-blue  { background: var(--cyan-dim);   color: var(--cyan);         border: 1px solid var(--cyan-border); }
+.badge-blue  { background: var(--blue-dim);   color: var(--blue-bright);  border: 1px solid var(--blue-border); }
 
 /* Subtle "this one matters" cue for the top-tier signal only — reuses the
    same slow pulse already driving the market-status dot, just on the
