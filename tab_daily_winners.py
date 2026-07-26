@@ -342,7 +342,7 @@ def render_price_journey(symbol: str, open_df, close_df, prior_open_df, prior_cl
             fig.add_shape(
                 type="line",
                 x0=lbl, x1=lbl, y0=l, y1=h,
-                line=dict(color='rgba(0,212,255,0.25)', width=8),
+                line=dict(color='rgba(224,168,60,0.25)', width=8),
                 layer='below',
             )
 
@@ -407,7 +407,7 @@ def render_price_journey(symbol: str, open_df, close_df, prior_open_df, prior_cl
     fig.update_layout(
         title=dict(
             text=f"<b>Price Journey — {symbol}</b>{title_suffix}",
-            font=dict(size=14, color='#e2ecf8'),
+            font=dict(size=14, color='#f8fafc'),
         ),
         yaxis_title="Price ($)",
         height=360,
@@ -610,7 +610,7 @@ def render_indicator_timeline(symbol: str, open_df, close_df, prior_open_df, pri
                     fig.update_layout(
                         title=dict(
                             text=f"<b>{ind}</b>   <span style='font-size:11px;color:{title_color}'>{delta_str}</span>",
-                            font=dict(size=13, color='#e2ecf8'),
+                            font=dict(size=13, color='#f8fafc'),
                         ),
                         height=250,
                         showlegend=False,
@@ -748,7 +748,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
         elif 'Bearish' in str(val): return 'color: #ef4444; font-weight: 600'
         elif 'Rising' in str(val):  return 'color: #8b5cf6; font-weight: 600'
         elif 'Falling' in str(val): return 'color: #f59e0b; font-weight: 600'
-        return 'color: #b8bcc8'
+        return 'color: #cbd5e1'
 
     def _style_delta_pct(val):
         if pd.isna(val): return ''
@@ -758,7 +758,7 @@ def render_prediction_table(symbol: str, open_df, close_df, prior_open_df, prior
         if 'Accel' in str(val) and '↑' in str(val): return 'color: #10b981'
         elif 'Accel' in str(val):                    return 'color: #ef4444'
         elif 'Revers' in str(val):                   return 'color: #f59e0b'
-        return 'color: #b8bcc8'
+        return 'color: #cbd5e1'
 
     show_cols = available_timepoints + ['Δ Abs', 'Δ %', 'Signal', 'Momentum', 'Range']
     fmt = {**{c: '{:.4f}' for c in available_timepoints}, 'Δ Abs': '{:+.4f}', 'Δ %': '{:+.2f}%', 'Range': '{:.4f}'}
@@ -943,9 +943,9 @@ def render_symbol_search(available_dates: list[str]):
     <div class="search-result-card">
         <span class="ticker">{target}</span>
         &nbsp;
-        <span style="color:#6e8aaa;font-size:0.75rem;">appeared on <strong style="color:#e2ecf8">{n}</strong> winner day(s)
-        &nbsp;·&nbsp; avg change <strong style="color:{'#00ff88' if avg_chg>0 else '#ff3860'}">{avg_chg:+.2f}%</strong>
-        &nbsp;·&nbsp; best <strong style="color:#00ff88">{best:+.2f}%</strong></span>
+        <span style="color:var(--text-2);font-size:0.75rem;">appeared on <strong style="color:var(--text-0)">{n}</strong> winner day(s)
+        &nbsp;·&nbsp; avg change <strong style="color:{'var(--green-bright)' if avg_chg>0 else 'var(--red-bright)'}">{avg_chg:+.2f}%</strong>
+        &nbsp;·&nbsp; best <strong style="color:var(--green-bright)">{best:+.2f}%</strong></span>
     </div>
     """, unsafe_allow_html=True)
 
