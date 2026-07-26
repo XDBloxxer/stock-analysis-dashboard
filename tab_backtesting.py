@@ -32,6 +32,12 @@ _SELECT = (
 _ALL_SIGNALS = ["STRONG BUY", "BUY", "HOLD", "AVOID"]
 
 
+def _info_card(text: str, muted: bool = False) -> None:
+    """Render a note/caption inside a bordered card instead of bare floating text."""
+    cls = "info-card muted" if muted else "info-card"
+    st.markdown(f'<div class="{cls}">{text}</div>', unsafe_allow_html=True)
+
+
 # ── Cached DB fetcher (paginates the full table — used for full-history sim) ──
 @st.cache_data(show_spinner=False)
 def _get_table_all() -> pd.DataFrame:
@@ -247,7 +253,7 @@ def render_backtesting_tab():
 
     # ── Cumulative Gain Simulator ──────────────────────────────────────────
     st.markdown("#### Cumulative Gain Simulator")
-    st.caption(
+    _info_card(
         "Simulates trading each individual signal as its own position — capital "
         "is split equally across every signal that fires on a given day, each "
         "position resolves on its own resolved gain, and commission is charged "
@@ -256,29 +262,31 @@ def render_backtesting_tab():
         "avoids inflating results by averaging gains before compounding, but "
         "still simplifies real trading (no slippage, no partial fills, "
         "equal-weight sizing only, and outcomes are based on this system's own "
-        "historical gain data, not independently verified fills)."
+        "historical gain data, not independently verified fills).",
+        muted=True,
     )
 
     min_date = pos_signals["prediction_date"].min().date()
     max_date = pos_signals["prediction_date"].max().date()
 
-    top_c1, top_c2, top_c3 = st.columns(3)
-    with top_c1:
-        start_capital = st.number_input(
-            "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
-            key="sim_start_capital",
-        )
-    with top_c2:
-        commission_fee = st.number_input(
-            "Commission per trade ($)", min_value=0.0, value=0.0, step=0.5,
-            key="sim_commission_fee",
-        )
-    with top_c3:
-        date_range = st.date_input(
-            "Date range", value=(min_date, max_date),
-            min_value=min_date, max_value=max_date,
-            key="sim_date_range",
-        )
+    with st.container(border=True):
+        top_c1, top_c2, top_c3 = st.columns(3)
+        with top_c1:
+            start_capital = st.number_input(
+                "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
+                key="sim_start_capital",
+            )
+        with top_c2:
+            commission_fee = st.number_input(
+                "Commission per trade ($)", min_value=0.0, value=0.0, step=0.5,
+                key="sim_commission_fee",
+            )
+        with top_c3:
+            date_range = st.date_input(
+                "Date range", value=(min_date, max_date),
+                min_value=min_date, max_value=max_date,
+                key="sim_date_range",
+            )
 
     if isinstance(date_range, tuple) and len(date_range) == 2:
         sim_start, sim_end = date_range
@@ -292,9 +300,10 @@ def render_backtesting_tab():
     )
 
     if not compare_mode:
-        sim_signals, use_take_profit, max_positions = _config_controls(
-            "Configuration", "sim", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
-        )
+        with st.container(border=True):
+            sim_signals, use_take_profit, max_positions = _config_controls(
+                "Configuration", "sim", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
+            )
 
         if not sim_signals:
             st.info("Select at least one signal to run the simulation.")
@@ -331,24 +340,27 @@ def render_backtesting_tab():
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.caption(
+        _info_card(
             "Note: results still assume every simulated trade could actually "
             "be filled at the resolved gain, with no slippage, no "
             "market-impact cost, and unlimited liquidity — treat this as a "
             "best-case illustration of the model's signal quality, not a "
-            "guarantee of real-world tradeable returns."
+            "guarantee of real-world tradeable returns.",
+            muted=True,
         )
 
     else:
         col_a, col_b = st.columns(2)
         with col_a:
-            signals_a, take_profit_a, max_pos_a = _config_controls(
-                "Configuration A", "sim_a", min_date, max_date, default_signals=["STRONG BUY"],
-            )
+            with st.container(border=True):
+                signals_a, take_profit_a, max_pos_a = _config_controls(
+                    "Configuration A", "sim_a", min_date, max_date, default_signals=["STRONG BUY"],
+                )
         with col_b:
-            signals_b, take_profit_b, max_pos_b = _config_controls(
-                "Configuration B", "sim_b", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
-            )
+            with st.container(border=True):
+                signals_b, take_profit_b, max_pos_b = _config_controls(
+                    "Configuration B", "sim_b", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
+                )
 
         if not signals_a or not signals_b:
             st.info("Select at least one signal for both configurations to run the comparison.")
@@ -402,9 +414,10 @@ def render_backtesting_tab():
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.caption(
+        _info_card(
             "Note: both runs share the same starting capital, commission, and "
             "date range so the comparison isolates the effect of signal "
             "selection, position cap, and exit strategy. Same best-case "
-            "caveats apply as the single-configuration view above."
+            "caveats apply as the single-configuration view above.",
+            muted=True,
         )
