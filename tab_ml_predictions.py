@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
 
@@ -503,9 +503,12 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     symbols = tuple(fdf["symbol"].tolist())
 
-    with st.spinner(f"Fetching live quotes for {len(symbols)} stocks… (cached 60 s)"):
-        quotes = _get_bulk_live_quotes(symbols)
+    _quotes_placeholder = st.empty()
+    with _quotes_placeholder.container():
+        render_skeleton_rows(4, height=64)
+    quotes = _get_bulk_live_quotes(symbols)
     sparklines = _get_bulk_sparklines(symbols)
+    _quotes_placeholder.empty()
 
     yf_available = bool(quotes)
 
@@ -880,6 +883,19 @@ def _render_latest_predictions():
     if total_picks == 0:
         render_empty_state("No BUY / STRONG BUY signals for this date — the model isn't flagging anything actionable.")
     else:
+        _top = shown_picks.iloc[0]
+        _top_gain = _top.get("target_gain_pct")
+        render_hero_metric(
+            "Top Pick Today",
+            f"{_top['symbol']}",
+            sub=(
+                f"{_top['explosion_probability']*100:.1f}% confidence · {_top['signal']}"
+                + (f" · target +{_top_gain:.1f}%" if pd.notna(_top_gain) else "")
+            ),
+            accent="green" if _top["signal"] == "STRONG BUY" else "cyan",
+            glyph="★",
+        )
+
         st.markdown(
             f"##### Top 10 picks for today"
             + (f" (of {total_picks} flagged)" if total_picks > _MAX_PICKS_SHOWN else "")
