@@ -1477,6 +1477,245 @@ def inject_mouse_glow_script():
     components.html(_MOUSE_GLOW_JS, height=0, width=0)
 
 
+# Live ET clock + session countdown. Deliberately NOT based on the visitor's
+# local clock/timezone — everything here is computed against a fixed
+# "America/New_York" wall clock via Intl, ticking every second client-side
+# (Streamlit only re-runs Python on interaction, so a per-second Python
+# re-render isn't an option). Ports the same NYSE holiday math as the Python
+# `_nyse_holidays()` above, plus the same hand-maintained EARLY_CLOSE_DATES
+# half-day table as dashboard.py, so the countdown target skips
+# weekends/holidays and uses the right close time on early-close days too.
+# Same iframe -> window.parent.document pattern as the other injected
+# scripts.
+#
+# State machine: whichever session is currently active is never counted
+# down to (that would be counting down to something already happening) —
+# instead the countdown always targets the *next* transition:
+#   Market Open       -> counts down to today's close (16:00, or the
+#                         early-close time on a half day)
+#   Pre-Market         -> counts down to today's 09:30 open
+#   After-Hours        -> counts down to today's 20:00 after-hours end
+#   Closed/weekend/holiday -> counts down to the next trading day's 04:00
+#                             pre-market open
+_LIVE_CLOCK_JS = """
+<script>
+(function() {
+  try {
+    var doc = window.parent.document;
+    var TZ = 'America/New_York';
+    var holidayCache = {};
+
+    // Mirrors Python's EARLY_CLOSE_DATES / EARLY_CLOSE_TABLE_THROUGH in
+    // dashboard.py — keep these two in sync when the table is updated.
+    // Values are [hour, minute] of the early close, in ET, keyed 'YYYY-MM-DD'.
+    var EARLY_CLOSE_DATES = {
+      '2025-07-03':  [13, 0],
+      '2025-11-28':  [13, 0],
+      '2025-12-24':  [13, 0],
+      '2026-11-27':  [13, 0],
+      '2026-12-24':  [13, 0],
+      '2027-11-26':  [13, 0]
+    };
+    var EARLY_CLOSE_TABLE_THROUGH = Date.UTC(2027, 11, 31); // pseudo-UTC, ET wall-clock space
+    var EARLY_CLOSE_WARN_WINDOW_MS = 90 * 86400000;
+
+    function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+    function ymdUTC(d) {
+      return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate());
+    }
+    function earlyCloseFor(d) {
+      return EARLY_CLOSE_DATES[ymdUTC(d)] || null;
+    }
+
+    // weekday: JS convention, Sunday=0 ... Saturday=6.
+    function nthWeekday(year, month, weekday, n) {
+      var d = new Date(Date.UTC(year, month - 1, 1));
+      var offset = (weekday - d.getUTCDay() + 7) % 7;
+      return new Date(Date.UTC(year, month - 1, 1 + offset + 7 * (n - 1)));
+    }
+    function lastWeekday(year, month, weekday) {
+      var d = new Date(Date.UTC(year, month, 0)); // last day of `month`
+      var offset = (d.getUTCDay() - weekday + 7) % 7;
+      d.setUTCDate(d.getUTCDate() - offset);
+      return d;
+    }
+    function easterSunday(year) {
+      var a = year % 19, b = Math.floor(year / 100), c = year % 100;
+      var d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+      var g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+      var i = Math.floor(c / 4), k = c % 4;
+      var l = (32 + 2 * e + 2 * i - h - k) % 7;
+      var m = Math.floor((a + 11 * h + 22 * l) / 451);
+      var month = Math.floor((h + l - 7 * m + 114) / 31);
+      var day = ((h + l - 7 * m + 114) % 31) + 1;
+      return new Date(Date.UTC(year, month - 1, day));
+    }
+    function observed(d) {
+      var wd = d.getUTCDay(), r = new Date(d);
+      if (wd === 6) r.setUTCDate(r.getUTCDate() - 1); // Sat -> preceding Fri
+      if (wd === 0) r.setUTCDate(r.getUTCDate() + 1); // Sun -> following Mon
+      return r;
+    }
+    function nyseHolidays(year) {
+      if (holidayCache[year]) return holidayCache[year];
+      var goodFriday = easterSunday(year);
+      goodFriday.setUTCDate(goodFriday.getUTCDate() - 2);
+      var list = [
+        observed(new Date(Date.UTC(year, 0, 1))),   // New Year's Day
+        nthWeekday(year, 1, 1, 3),                  // MLK Day
+        nthWeekday(year, 2, 1, 3),                  // Presidents' Day
+        goodFriday,                                 // Good Friday
+        lastWeekday(year, 5, 1),                    // Memorial Day
+        observed(new Date(Date.UTC(year, 5, 19))),  // Juneteenth
+        observed(new Date(Date.UTC(year, 6, 4))),   // Independence Day
+        nthWeekday(year, 9, 1, 1),                  // Labor Day
+        nthWeekday(year, 11, 4, 4),                 // Thanksgiving
+        observed(new Date(Date.UTC(year, 11, 25))), // Christmas
+      ];
+      var set = {};
+      list.forEach(function(d) { set[ymdUTC(d)] = true; });
+      holidayCache[year] = set;
+      return set;
+    }
+    function isTradingDay(d) {
+      var dow = d.getUTCDay();
+      if (dow === 0 || dow === 6) return false;
+      return !nyseHolidays(d.getUTCFullYear())[ymdUTC(d)];
+    }
+
+    // Reads the current wall-clock time in America/New_York and returns it
+    // as a Date object constructed via Date.UTC from those fields. It is
+    // NOT a real UTC instant — it's a "pretend UTC" stand-in so we can do
+    // plain date arithmetic entirely in ET wall-clock space (weekday
+    // checks, adding days, HH:MM comparisons, ms diffs for the countdown).
+    var etFmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: TZ, hour12: false, year: 'numeric', month: '2-digit',
+      day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    function nowET() {
+      var parts = {};
+      etFmt.formatToParts(new Date()).forEach(function(p) {
+        if (p.type !== 'literal') parts[p.type] = parseInt(p.value, 10);
+      });
+      if (parts.hour === 24) parts.hour = 0; // midnight edge case in some engines
+      return new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second));
+    }
+
+    // Next trading-day 04:00 ET at/after `fromMs` (strictly after `fromMs`
+    // if `fromMs` itself lands exactly on a candidate).
+    function nextPreMarketOpen(fromMs) {
+      var d = new Date(fromMs);
+      var candidate = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 4, 0, 0);
+      if (candidate <= fromMs) {
+        var nd = new Date(candidate);
+        nd.setUTCDate(nd.getUTCDate() + 1);
+        candidate = Date.UTC(nd.getUTCFullYear(), nd.getUTCMonth(), nd.getUTCDate(), 4, 0, 0);
+      }
+      while (!isTradingDay(new Date(candidate))) {
+        var nd2 = new Date(candidate);
+        nd2.setUTCDate(nd2.getUTCDate() + 1);
+        candidate = Date.UTC(nd2.getUTCFullYear(), nd2.getUTCMonth(), nd2.getUTCDate(), 4, 0, 0);
+      }
+      return candidate;
+    }
+
+    function fmtCountdown(ms) {
+      if (ms < 0) ms = 0;
+      var totalSec = Math.floor(ms / 1000);
+      var days = Math.floor(totalSec / 86400);
+      var hours = Math.floor((totalSec % 86400) / 3600);
+      var mins = Math.floor((totalSec % 3600) / 60);
+      var secs = totalSec % 60;
+      if (days > 0) return days + 'd ' + pad2(hours) + ':' + pad2(mins) + ':' + pad2(secs);
+      return pad2(hours) + ':' + pad2(mins) + ':' + pad2(secs);
+    }
+
+    var WEEKDAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    function update() {
+      var dotEl = doc.getElementById('mit-status-dot');
+      var labelEl = doc.getElementById('mit-status-label');
+      var dateEl = doc.getElementById('mit-date');
+      var timeEl = doc.getElementById('mit-time');
+      var cdEl = doc.getElementById('mit-countdown');
+      var warnEl = doc.getElementById('mit-stale-warning');
+      if (!dotEl || !labelEl || !dateEl || !timeEl) return; // not rendered (yet)
+
+      var et = nowET();
+      var etMs = et.getTime();
+      var dow = et.getUTCDay();
+      var hour = et.getUTCHours(), minute = et.getUTCMinutes();
+      var tradingDay = isTradingDay(et);
+      var earlyClose = tradingDay ? earlyCloseFor(et) : null;
+      var closeHour = earlyClose ? earlyClose[0] : 16;
+      var closeMinute = earlyClose ? earlyClose[1] : 0;
+
+      var afterOpen = (hour > 9) || (hour === 9 && minute >= 30);
+      var beforeClose = (hour < closeHour) || (hour === closeHour && minute < closeMinute);
+      var marketOpen = tradingDay && afterOpen && beforeClose;
+      var preMarket = tradingDay && ((hour >= 4 && hour < 9) || (hour === 9 && minute < 30));
+      var afterHoursStartMin = closeHour * 60 + closeMinute;
+      var nowMin = hour * 60 + minute;
+      var afterHours = tradingDay && (nowMin >= afterHoursStartMin && nowMin < 20 * 60);
+      var isHoliday = (dow !== 0 && dow !== 6) && !tradingDay;
+
+      var dotCls, label, color, nextMs, nextLabel;
+      if (marketOpen) {
+        dotCls = 'live'; label = earlyClose ? 'Open (Early Close)' : 'Open'; color = 'var(--green-bright)';
+        nextMs = Date.UTC(et.getUTCFullYear(), et.getUTCMonth(), et.getUTCDate(), closeHour, closeMinute, 0);
+        nextLabel = 'Closes in';
+      } else if (preMarket) {
+        dotCls = 'warning'; label = 'Pre-Market'; color = 'var(--amber-bright)';
+        nextMs = Date.UTC(et.getUTCFullYear(), et.getUTCMonth(), et.getUTCDate(), 9, 30, 0);
+        nextLabel = 'Opens in';
+      } else if (afterHours) {
+        dotCls = 'warning'; label = 'After Hours'; color = 'var(--amber-bright)';
+        nextMs = Date.UTC(et.getUTCFullYear(), et.getUTCMonth(), et.getUTCDate(), 20, 0, 0);
+        nextLabel = 'Ends in';
+      } else if (isHoliday) {
+        dotCls = 'idle'; label = 'Holiday'; color = 'var(--text-2)';
+        nextMs = nextPreMarketOpen(etMs);
+        nextLabel = 'Pre-market in';
+      } else {
+        dotCls = 'idle'; label = 'Closed'; color = 'var(--text-2)';
+        nextMs = nextPreMarketOpen(etMs);
+        nextLabel = 'Pre-market in';
+      }
+
+      dotEl.className = 'status-dot ' + dotCls;
+      labelEl.textContent = label;
+      labelEl.style.color = color;
+      dateEl.textContent = WEEKDAY_ABBR[dow] + ' ' + pad2(et.getUTCDate()) + ' ' + MONTH_ABBR[et.getUTCMonth()] + ' ' + et.getUTCFullYear();
+      timeEl.innerHTML = pad2(hour) + ':' + pad2(minute) + ':' + pad2(et.getUTCSeconds()) +
+        ' <span style="font-size:0.6rem;color:var(--text-2);">ET</span>';
+      if (cdEl) {
+        cdEl.textContent = nextLabel + ' ' + fmtCountdown(nextMs - etMs);
+      }
+      if (warnEl) {
+        warnEl.style.display = (EARLY_CLOSE_TABLE_THROUGH - etMs) <= EARLY_CLOSE_WARN_WINDOW_MS ? 'flex' : 'none';
+      }
+    }
+
+    update();
+    setInterval(update, 1000);
+  } catch (e) { /* cross-origin or DOM not ready — clock just stays static */ }
+})();
+</script>
+"""
+
+
+def inject_live_clock_script():
+    """Call once per page render to drive the header's ET clock: ticks the
+    displayed time every second, and keeps the market-status pill + session
+    countdown (see #mit-date / #mit-time / #mit-status-dot /
+    #mit-status-label / #mit-countdown in dashboard.py) live without
+    requiring a Streamlit rerun. Always shows America/New_York time
+    regardless of the visitor's own timezone."""
+    import streamlit.components.v1 as components
+    components.html(_LIVE_CLOCK_JS, height=0, width=0)
+
+
 def render_empty_state(message, glyph="◇"):
     """Styled "no data" placeholder — pairs with `.empty-state` CSS above.
 
