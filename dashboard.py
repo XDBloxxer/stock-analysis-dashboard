@@ -85,6 +85,40 @@ def _nyse_holidays(year: int) -> set[date]:
 def _is_market_holiday(d: date) -> bool:
     return d in _nyse_holidays(d.year)
 
+
+# ── NYSE early-close (half-day) calendar ──────────────────────────────────────
+# Unlike full holidays, early closes (day-after-Thanksgiving, Christmas Eve,
+# the occasional pre-July-4th half day) are NOT on a fixed formula — NYSE
+# announces them by press release a couple years out, so this has to be a
+# literal table that's manually re-verified/extended periodically. Sourced
+# from NYSE Group's official 2025/2026/2027 holiday & early-closing calendar
+# (nyse.com/trade/hours-calendars). All times ET.
+EARLY_CLOSE_DATES = {
+    date(2025, 7, 3):  (13, 0),   # day before observed Independence Day
+    date(2025, 11, 28): (13, 0),  # day after Thanksgiving
+    date(2025, 12, 24): (13, 0),  # Christmas Eve
+    date(2026, 11, 27): (13, 0),  # day after Thanksgiving
+    date(2026, 12, 24): (13, 0),  # Christmas Eve
+    date(2027, 11, 26): (13, 0),  # day after Thanksgiving
+}
+# The table above is only verified through this date. NYSE typically
+# announces the next year's calendar in the back half of the prior year, so
+# start warning a few months before we run off the end of known coverage.
+EARLY_CLOSE_TABLE_THROUGH = date(2027, 12, 31)
+EARLY_CLOSE_WARN_WINDOW_DAYS = 90
+
+
+def _early_close_time(d: date):
+    """Returns (hour, minute) of an early close on `d`, or None for a normal
+    session day."""
+    return EARLY_CLOSE_DATES.get(d)
+
+
+def _early_close_table_stale(d: date) -> bool:
+    """True once we're within the warning window of (or past) the last date
+    the early-close table is verified for."""
+    return (EARLY_CLOSE_TABLE_THROUGH - d).days <= EARLY_CLOSE_WARN_WINDOW_DAYS
+
 _FAVICON = (
     "data:image/svg+xml,"
     "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
@@ -101,27 +135,34 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
     inject_count_up_script()
     inject_mouse_glow_script()
+    inject_live_clock_script()
     now    = _now_et()
     hour   = now.hour
     minute = now.minute
     is_weekday    = now.weekday() < 5
     is_holiday    = _is_market_holiday(now.date())
     is_trading_day = is_weekday and not is_holiday
+    early_close   = _early_close_time(now.date()) if is_trading_day else None
+    close_hour, close_minute = early_close if early_close else (16, 0)
     after_open   = (hour > 9) or (hour == 9 and minute >= 30)
-    before_close = hour < 16
+    before_close = (hour < close_hour) or (hour == close_hour and minute < close_minute)
     market_open  = is_trading_day and after_open and before_close
     pre_market   = is_trading_day and ((4 <= hour < 9) or (hour == 9 and minute < 30))
-    after_hours  = is_trading_day and (16 <= hour < 20)
+    after_hours_start_min = close_hour * 60 + close_minute
+    now_min = hour * 60 + minute
+    after_hours  = is_trading_day and (after_hours_start_min <= now_min < 20 * 60)
 
     if market_open:
         dot_cls, label, color = "live",    "Open",        "var(--green-bright)"
+        if early_close:
+            label = "Open (Early Close)"
     elif pre_market:
         dot_cls, label, color = "warning", "Pre-Market",  "var(--amber-bright)"
     elif after_hours:
@@ -132,7 +173,34 @@ def main():
         dot_cls, label, color = "idle",    "Closed",      "var(--text-2)"
 
     date_str = now.strftime("%a %d %b %Y")
-    time_str = now.strftime("%H:%M")
+    time_str = now.strftime("%H:%M:%S")
+
+    stale_table = _early_close_table_stale(now.date())
+
+    # Next-session countdown label + target, mirrored client-side in JS
+    # (see inject_live_clock_script) so this is just the first-paint value
+    # before the per-second script takes over.
+    if market_open:
+        _next_dt = now.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0)
+        countdown_label = "Closes in"
+    elif pre_market:
+        _next_dt = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        countdown_label = "Opens in"
+    elif after_hours:
+        _next_dt = now.replace(hour=20, minute=0, second=0, microsecond=0)
+        countdown_label = "Ends in"
+    else:
+        _next_dt = now.replace(hour=4, minute=0, second=0, microsecond=0)
+        if _next_dt <= now:
+            _next_dt += timedelta(days=1)
+        while not (_next_dt.weekday() < 5 and not _is_market_holiday(_next_dt.date())):
+            _next_dt += timedelta(days=1)
+        countdown_label = "Pre-market in"
+    _remaining = max(_next_dt - now, timedelta(0))
+    _h, _rem_s = divmod(int(_remaining.total_seconds()), 3600)
+    _m, _s = divmod(_rem_s, 60)
+    _d = _remaining.days
+    countdown_str = f"{_d}d {_h:02d}:{_m:02d}:{_s:02d}" if _d else f"{_h:02d}:{_m:02d}:{_s:02d}"
 
     # ── Header — use columns to avoid Streamlit's nested-div rendering bug ────
     col_left, col_right = st.columns([3, 2])
@@ -150,17 +218,36 @@ def main():
         st.markdown(
             '<div style="display:flex;align-items:center;justify-content:flex-end;gap:16px;padding-top:6px;">'
             '<div style="text-align:right;">'
-            f'<div style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.12em;color:var(--text-2);text-transform:uppercase;">{date_str}</div>'
-            f'<div style="font-family:\'DM Mono\',monospace;font-size:1.05rem;font-weight:300;color:var(--text-1);">{time_str} <span style="font-size:0.6rem;color:var(--text-2);">ET</span></div>'
+            f'<div id="mit-date" style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.12em;color:var(--text-2);text-transform:uppercase;">{date_str}</div>'
+            f'<div id="mit-time" style="font-family:\'DM Mono\',monospace;font-size:1.05rem;font-weight:300;color:var(--text-1);">{time_str} <span style="font-size:0.6rem;color:var(--text-2);">ET</span></div>'
+            f'<div id="mit-countdown" style="font-family:\'DM Mono\',monospace;font-size:0.56rem;letter-spacing:0.05em;color:var(--text-2);margin-top:2px;">{countdown_label} {countdown_str}</div>'
             '</div>'
             '<div style="width:1px;height:32px;background:var(--border-mid);flex-shrink:0;"></div>'
             f'<div style="display:flex;align-items:center;gap:8px;padding:7px 14px;background:var(--bg-2);border:1px solid var(--border-mid);border-radius:var(--radius-sm);white-space:nowrap;">'
-            f'<span class="status-dot {dot_cls}"></span>'
-            f'<span style="font-family:\'DM Mono\',monospace;font-size:0.62rem;letter-spacing:0.18em;text-transform:uppercase;color:{color};">{label}</span>'
+            f'<span id="mit-status-dot" class="status-dot {dot_cls}"></span>'
+            f'<span id="mit-status-label" style="font-family:\'DM Mono\',monospace;font-size:0.62rem;letter-spacing:0.18em;text-transform:uppercase;color:{color};">{label}</span>'
             '</div>'
             '</div>',
             unsafe_allow_html=True,
         )
+
+    # Early-close table staleness warning — only shown once we're inside the
+    # warning window of EARLY_CLOSE_TABLE_THROUGH (see dashboard.py's
+    # EARLY_CLOSE_DATES table). Kept in sync client-side too, via
+    # #mit-stale-warning, since inject_live_clock_script owns the ticking
+    # clock and could in principle cross midnight into the warning window
+    # without a Streamlit rerun.
+    st.markdown(
+        f'<div id="mit-stale-warning" style="display:{"flex" if stale_table else "none"};align-items:center;gap:8px;'
+        'margin:-10px 0 14px;padding:6px 12px;background:rgba(251,191,36,0.08);'
+        'border:1px solid rgba(251,191,36,0.28);border-radius:var(--radius-sm);width:fit-content;'
+        'margin-left:auto;">'
+        '<span style="font-size:0.75rem;color:var(--amber-bright);">⚠</span>'
+        f'<span style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.03em;color:var(--text-2);">'
+        f'Early-close calendar verified only through {EARLY_CLOSE_TABLE_THROUGH.strftime("%b %Y")} — update EARLY_CLOSE_DATES</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     col_hr, col_toggle = st.columns([6, 1])
     with col_hr:
