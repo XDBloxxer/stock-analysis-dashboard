@@ -897,7 +897,7 @@ def _render_latest_predictions():
         )
 
         st.markdown(
-            f"##### Top 10 picks for today"
+            f"##### Top picks for today"
             + (f" (of {total_picks} flagged)" if total_picks > _MAX_PICKS_SHOWN else "")
         )
 
