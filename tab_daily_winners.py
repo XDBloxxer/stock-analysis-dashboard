@@ -1120,13 +1120,13 @@ def render_daily_winners_tab():
     # ── Stock detail metrics ──────────────────────────────────────────────────
     st.markdown('<div class="metrics-sm">', unsafe_allow_html=True)
     col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-    col1.metric("Symbol", selected_symbol, key=f"dw_metric_symbol_{selected_symbol}")
-    col2.metric("Open",   f"${winner_info['open']:.2f}", key=f"dw_metric_open_{selected_symbol}")
-    col3.metric("Close",  f"${winner_info['price']:.2f}", key=f"dw_metric_close_{selected_symbol}")
-    col4.metric("Change", f"{winner_info['change_pct']:+.2f}%", key=f"dw_metric_change_{selected_symbol}")
-    col5.metric("Volume", fmt_compact(winner_info['volume']), key=f"dw_metric_volume_{selected_symbol}")
-    col6.metric("High",   f"${winner_info['high']:.2f}"  if 'high' in winner_info.index and pd.notna(winner_info.get('high'))  else "—", key=f"dw_metric_high_{selected_symbol}")
-    col7.metric("Low",    f"${winner_info['low']:.2f}"   if 'low'  in winner_info.index and pd.notna(winner_info.get('low'))   else "—", key=f"dw_metric_low_{selected_symbol}")
+    col1.metric("Symbol", selected_symbol)
+    col2.metric("Open",   f"${winner_info['open']:.2f}")
+    col3.metric("Close",  f"${winner_info['price']:.2f}")
+    col4.metric("Change", f"{winner_info['change_pct']:+.2f}%")
+    col5.metric("Volume", fmt_compact(winner_info['volume']))
+    col6.metric("High",   f"${winner_info['high']:.2f}"  if 'high' in winner_info.index and pd.notna(winner_info.get('high'))  else "—")
+    col7.metric("Low",    f"${winner_info['low']:.2f}"   if 'low'  in winner_info.index and pd.notna(winner_info.get('low'))   else "—")
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Price Journey ─────────────────────────────────────────────────────────
