@@ -1688,7 +1688,7 @@ _LIVE_CLOCK_JS = """
       labelEl.style.color = color;
       dateEl.textContent = WEEKDAY_ABBR[dow] + ' ' + pad2(et.getUTCDate()) + ' ' + MONTH_ABBR[et.getUTCMonth()] + ' ' + et.getUTCFullYear();
       timeEl.innerHTML = pad2(hour) + ':' + pad2(minute) + ':' + pad2(et.getUTCSeconds()) +
-        ' <span style="font-size:0.6rem;color:var(--text-2);">ET</span>';
+        ' <span style="font-size:0.75rem;color:var(--text-2);">ET</span>';
       if (cdEl) {
         cdEl.textContent = nextLabel + ' ' + fmtCountdown(nextMs - etMs);
       }
