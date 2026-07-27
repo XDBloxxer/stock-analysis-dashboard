@@ -306,6 +306,13 @@ div[data-testid="stMetric"] {
     background-repeat: no-repeat !important;
     background-position: top left !important;
     background-size: 0% 2px !important;
+
+    /* Container-query sizing base — lets stMetricValue below scale its
+       font-size off THIS element's actual rendered width (via `cqw` units)
+       instead of a fixed rem value, so values that would otherwise get
+       ellipsis-truncated (e.g. "+24.35%" in a narrow 7-up column row)
+       shrink to fit instead of getting cut off. */
+    container-type: inline-size !important;
 }
 div[data-testid="stMetric"]:hover {
     background-size: 100% 2px !important;
@@ -353,27 +360,41 @@ div[data-testid="stMetricLabel"] div {
     text-transform: uppercase !important;
     color: var(--text-2) !important;
     margin-bottom: 8px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
 }
 
-/* Big, legible numbers — heavier weight for at-a-glance reading */
+/* Big, legible numbers — heavier weight for at-a-glance reading.
+   font-size is a clamp() driven by `cqw` (container-query width) units so
+   it scales with the ACTUAL rendered width of the stMetric card (set via
+   `container-type: inline-size` above) rather than a fixed rem value —
+   a value in a cramped 7-column row shrinks automatically instead of
+   getting clipped with "…". `overflow-wrap: anywhere` is a last-resort
+   fallback if a value is still too wide even at the clamp floor. */
 div[data-testid="stMetricValue"],
 div[data-testid="stMetricValue"] > div,
 div[data-testid="stMetricValue"] div {
     font-family: var(--font-body) !important;
-    font-size: 2rem !important;
+    font-size: clamp(1.05rem, 15cqw, 2rem) !important;
     font-weight: 500 !important;
     color: var(--text-0) !important;
     letter-spacing: -0.02em !important;
-    line-height: 1 !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    overflow-wrap: anywhere !important;
 }
 
 div[data-testid="stMetricDelta"],
 div[data-testid="stMetricDelta"] > div,
 div[data-testid="stMetricDelta"] div {
     font-family: var(--font-body) !important;
-    font-size: 0.78rem !important;
+    font-size: clamp(0.62rem, 8cqw, 0.78rem) !important;
     font-weight: 500 !important;
     margin-top: 7px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
 }
 
 /* Color the delta icons properly */
@@ -407,7 +428,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     padding: 13px 16px 11px !important;
 }
 .metrics-sm div[data-testid="stMetricValue"] > div {
-    font-size: 1.45rem !important;
+    font-size: clamp(0.85rem, 15cqw, 1.45rem) !important;
 }
 .metrics-sm div[data-testid="stMetricLabel"] > div {
     font-size: 0.65rem !important;
@@ -433,6 +454,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     transition: transform 0.22s ease, border-color 0.22s ease,
                 box-shadow 0.22s ease, background 0.22s ease;
     cursor: default;
+    container-type: inline-size;
 }
 .hero-metric:hover {
     transform: translateY(-2px);
@@ -478,11 +500,12 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     position: relative;
 }
 .hero-metric-value {
-    font-family: var(--font-display); font-size: 2.6rem; font-weight: 800;
+    font-family: var(--font-display); font-size: clamp(1.6rem, 8cqw, 2.6rem); font-weight: 800;
     line-height: 1.05; color: var(--hero-color, var(--cyan)); letter-spacing: -0.01em;
     margin-top: 4px; position: relative;
     text-shadow: 0 0 28px var(--hero-glow, var(--cyan-glow));
     transition: text-shadow 0.22s ease;
+    overflow-wrap: anywhere;
 }
 .hero-metric-glyph { font-size: 0.55em; opacity: 0.7; margin-right: 8px; vertical-align: middle; }
 .hero-metric-sub {
@@ -1250,7 +1273,7 @@ COMPACT_CSS = """
 div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
 hr { margin: 8px 0 !important; }
 div[data-testid="stMetric"] { padding: 6px 10px !important; }
-div[data-testid="stMetricValue"] { font-size: 1.15rem !important; }
+div[data-testid="stMetricValue"] { font-size: clamp(0.8rem, 15cqw, 1.15rem) !important; white-space: normal !important; overflow-wrap: anywhere !important; }
 .stTabs [role="tablist"], .stTabs [data-baseweb="tab-list"] { gap: 4px !important; }
 .stTabs [role="tab"], .stTabs [data-baseweb="tab"] { padding: 6px 12px !important; }
 div[data-testid="stExpander"] { margin-bottom: 6px !important; }
