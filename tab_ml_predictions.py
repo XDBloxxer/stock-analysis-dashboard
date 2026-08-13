@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric, exchange_chip_html
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
 
@@ -513,6 +513,11 @@ def _render_live_market_table(fdf: pd.DataFrame):
     sparklines = _get_bulk_sparklines(symbols)
     _quotes_placeholder.empty()
 
+    # Previous-render live prices, kept in session_state, so a tick can be
+    # flashed green/red on the render where it actually changes rather than
+    # just silently showing a different number than a moment ago.
+    _prev_prices = st.session_state.setdefault("_live_price_flash_prev", {})
+
     yf_available = bool(quotes)
 
     # ── Header strip ───────────────────────────────────────────────────────────
@@ -712,8 +717,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
             st.markdown(
                 f'<div style="padding:7px 0 5px;border-left:2px solid {left_color};padding-left:10px;">'
                 f'{sym_html}'
-                f'<span style="font-family:var(--font-body);font-size:0.66rem;'
-                f'color:var(--text-1);margin-left:7px;">{exchange}</span>'
+                f'<span style="margin-left:7px;">{exchange_chip_html(exchange)}</span>'
                 f'<div style="font-family:var(--font-body);font-size:0.68rem;'
                 f'color:var(--text-1);margin-top:2px;">Vol {vol_str}</div>'
                 f'</div>',
@@ -763,11 +767,21 @@ def _render_live_market_table(fdf: pd.DataFrame):
             live_str  = _val(live, "$.2f")
             spark_vals = sparklines.get(sym) if sparklines else None
             spark_svg  = _sparkline_svg(spark_vals, chg_color) if spark_vals else ""
+
+            # One-shot flash if the live price moved since the last render
+            # of this symbol (see _live_price_flash_prev above).
+            prev_live  = _prev_prices.get(sym)
+            flash_cls  = ""
+            if live is not None and prev_live is not None and live != prev_live:
+                flash_cls = " price-flash-up" if live > prev_live else " price-flash-down"
+            if live is not None:
+                _prev_prices[sym] = live
+
             st.markdown(
                 f'<div style="padding:7px 0 5px;">'
                 f'<div style="display:flex;align-items:center;gap:8px;">'
-                f'<span style="font-family:var(--font-body);font-size:0.9rem;'
-                f'font-weight:700;color:var(--text-0);white-space:nowrap;">{live_str}</span>'
+                f'<span class="{flash_cls.strip()}" style="font-family:var(--font-body);font-size:0.9rem;'
+                f'font-weight:700;color:var(--text-0);white-space:nowrap;padding:1px 4px;">{live_str}</span>'
                 f'{spark_svg}'
                 f'</div>'
                 f'<div style="font-family:var(--font-body);font-size:0.72rem;'
