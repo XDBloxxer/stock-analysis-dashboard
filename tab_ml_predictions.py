@@ -217,7 +217,15 @@ def _get_bulk_sparklines(symbols: tuple) -> dict:
 
 
 def _sparkline_svg(values: list, color: str, width: int = 64, height: int = 22) -> str:
-    """Tiny inline SVG polyline — no axes/labels, just the day's shape."""
+    """Tiny inline SVG polyline — no axes/labels, just the day's shape.
+
+    Draws itself in on mount (see `.spark-draw` in dashboard_styles.py) via
+    the SVG `pathLength` attribute, which normalizes the line's reported
+    length to exactly 100 regardless of how many points it has or how far
+    it spans — that lets one fixed `stroke-dasharray:100` CSS animation
+    handle every sparkline without computing each polyline's real length in
+    Python.
+    """
     if not values or len(values) < 2:
         return ""
     lo, hi = min(values), max(values)
@@ -230,7 +238,7 @@ def _sparkline_svg(values: list, color: str, width: int = 64, height: int = 22) 
     return (
         f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
         f'style="display:block;overflow:visible;">'
-        f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" '
+        f'<polyline class="spark-draw" pathLength="100" points="{" ".join(pts)}" fill="none" stroke="{color}" '
         f'stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>'
         f'</svg>'
     )
@@ -851,6 +859,62 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
 
 # ── Sub-tab 1 — Latest Predictions ────────────────────────────────────────────
+def _render_market_map(df: pd.DataFrame):
+    """
+    Treemap of the *entire* day's screened universe (not just the BUY/STRONG
+    BUY picks shown below) — box size by model confidence, color by signal.
+    The picks list answers "what should I look at"; this answers "what does
+    today look like as a whole" at a glance, which a table of 50-200 rows
+    can't do without scrolling.
+
+    Sized by `explosion_probability` rather than volume/market-cap since
+    this dataset doesn't carry either at the per-day universe level (volume
+    is only fetched live for the shown picks, not the full screened set) —
+    confidence is the one magnitude every row already has.
+    """
+    plot_df = df.copy()
+    plot_df["explosion_probability"] = pd.to_numeric(plot_df["explosion_probability"], errors="coerce")
+    plot_df = plot_df.dropna(subset=["explosion_probability", "signal", "symbol"])
+    plot_df = plot_df[plot_df["explosion_probability"] > 0]
+    if plot_df.empty or len(plot_df) < 2:
+        return  # not enough rows for a treemap to say anything a table doesn't
+
+    signals_present = [s for s in ["STRONG BUY", "BUY", "HOLD", "AVOID"] if s in plot_df["signal"].unique()]
+
+    # Single treemap trace: the four signal names are their own top-level
+    # nodes (parent=""), every symbol is a leaf under its signal. Group
+    # nodes carry value=0 (branchvalues="remainder" means a parent's box
+    # size comes purely from its children's sum, not its own value), so
+    # group box size is entirely "how many + how confident" the symbols
+    # under it are.
+    labels  = signals_present + list(plot_df["symbol"])
+    parents = [""] * len(signals_present) + list(plot_df["signal"])
+    values  = [0] * len(signals_present) + list(plot_df["explosion_probability"])
+    texts   = [""] * len(signals_present) + [f"{p*100:.0f}%" for p in plot_df["explosion_probability"]]
+    colors  = [SIGNAL_BG.get(s, "rgba(134,149,171,0.13)") for s in signals_present] \
+              + [SIGNAL_COLORS.get(s, "#8695ab") for s in plot_df["signal"]]
+
+    fig = go.Figure(go.Treemap(
+        labels=labels,
+        parents=parents,
+        values=values,
+        branchvalues="remainder",
+        text=texts,
+        texttemplate="<b>%{label}</b><br>%{text}",
+        textfont=dict(family="DM Mono, monospace", size=12, color="#f8fafc"),
+        marker=dict(colors=colors, line=dict(width=1.5, color="rgba(5,7,10,0.9)")),
+        hovertemplate="<b>%{label}</b><br>Confidence: %{text}<br>Signal: %{parent}<extra></extra>",
+        root_color="rgba(0,0,0,0)",
+    ))
+
+    fig.update_layout(
+        margin=dict(t=8, b=8, l=8, r=8), height=340,
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#cbd5e1", family="DM Mono, monospace"),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
 def _render_latest_predictions():
     render_section_header(1, "Today's Picks")
     st.caption("What the model is telling you to buy right now.")
@@ -936,6 +1000,14 @@ def _render_latest_predictions():
             accent="green" if _top["signal"] == "STRONG BUY" else "cyan",
             glyph="★",
         )
+
+        with st.expander("Market map — today's full screened universe", expanded=False):
+            st.caption(
+                "Every symbol screened today, grouped by signal and sized by "
+                "model confidence — the shape of the whole day at a glance, "
+                "not just the picks below."
+            )
+            _render_market_map(df)
 
         st.markdown(
             f"##### Top picks for today"
