@@ -1033,7 +1033,120 @@ div[data-testid="stAlert"] {
 /* ── Sparkline ──────────────────────────────────────────────────────────── */
 .spark-wrap { display: inline-block; vertical-align: middle; line-height: 0; }
 
-/* ── Ticker ─────────────────────────────────────────────────────────────── */
+/* ── Market-table row hover ─────────────────────────────────────────────────
+   Scoped via the .mkt-live-table-scope marker (see _render_live_market_table
+   in tab_ml_predictions.py) using a general-sibling selector, so only the
+   per-symbol data rows get the hover affordance — not the header row above
+   them (rendered before the marker) or unrelated st.columns() layouts
+   elsewhere on the page (outside this marker's sibling scope). */
+.mkt-live-table-scope ~ div[data-testid="stHorizontalBlock"] {
+    border-radius: var(--radius-sm);
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.mkt-live-table-scope ~ div[data-testid="stHorizontalBlock"]:hover {
+    background: var(--bg-2);
+    box-shadow: inset 3px 0 0 0 var(--cyan-border);
+}
+
+/* ── Ticker tape ────────────────────────────────────────────────────────────
+   Continuously scrolling strip of symbols/changes — ambient "trading floor"
+   texture. Pure CSS keyframe translate, duplicated content so the loop is
+   seamless (second copy picks up exactly where the first's translate ends). */
+.ticker-tape-outer {
+    overflow: hidden; width: 100%; white-space: nowrap;
+    background: var(--bg-1); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 7px 0;
+    mask-image: linear-gradient(90deg, transparent 0%, black 4%, black 96%, transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 4%, black 96%, transparent 100%);
+}
+.ticker-tape-track {
+    display: inline-flex; align-items: center;
+    animation: tickerScroll linear infinite;
+    animation-duration: var(--ticker-duration, 30s);
+}
+.ticker-tape-item {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-body); font-size: 0.72rem; letter-spacing: 0.03em;
+    padding: 0 20px; flex-shrink: 0;
+}
+.ticker-tape-item .tt-sym  { color: var(--text-0); font-weight: 700; }
+.ticker-tape-item .tt-sep  { color: var(--border-mid); }
+@keyframes tickerScroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+/* ── Radial gauge ───────────────────────────────────────────────────────────
+   Lightweight SVG arc gauge (no Plotly figure overhead) for a single
+   percentage value shown at "instrument panel" prominence — see
+   radial_gauge_svg() below. Track + fill are both plain <circle> elements
+   with a dash-offset trick, animated in on first paint like .bar-fill. */
+.gauge-wrap { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.gauge-fill {
+    transform-origin: center; transform: rotate(-90deg);
+    animation: gaugeGrow 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes gaugeGrow {
+    from { stroke-dashoffset: var(--gauge-start); }
+    to   { stroke-dashoffset: var(--gauge-end); }
+}
+.gauge-label {
+    position: absolute; text-align: center;
+    font-family: var(--font-body); font-weight: 700; color: var(--text-0);
+}
+
+/* ── Boot sequence ──────────────────────────────────────────────────────────
+   One-shot "connecting to feed" flicker shown before the header on a
+   session's first render only (gated in Python via session_state — see
+   render_boot_sequence()). Collapses itself via max-height/opacity so it
+   never leaves a permanent gap once the animation finishes. */
+.boot-sequence {
+    overflow: hidden; font-family: 'DM Mono', monospace; font-size: 0.68rem;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--cyan);
+    opacity: 0; max-height: 22px; margin-bottom: 8px;
+    animation: bootReveal 1.9s ease-in-out forwards;
+}
+.boot-sequence::before { content: '> '; opacity: 0.6; }
+.boot-cursor {
+    display: inline-block; width: 6px; height: 11px; background: var(--cyan);
+    margin-left: 2px; vertical-align: -1px;
+    animation: bootBlink 0.5s steps(1) 4;
+}
+@keyframes bootReveal {
+    0%   { opacity: 0; max-height: 22px; }
+    10%  { opacity: 1; }
+    70%  { opacity: 1; max-height: 22px; }
+    100% { opacity: 0; max-height: 0; margin-bottom: 0; }
+}
+@keyframes bootBlink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0; }
+}
+
+/* ── Leaderboard rank medals ────────────────────────────────────────────────
+   Used by the Daily Winners leaderboard rows in place of the old plain
+   pandas-styled dataframe (its default `.background_gradient` colormap
+   rendered light-green cells that broke the dark terminal look). */
+.rank-medal {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%; font-size: 0.85rem;
+    font-family: var(--font-display); font-weight: 700; flex-shrink: 0;
+}
+.rank-medal.gold   { background: rgba(224,168,60,0.18); border: 1px solid rgba(224,168,60,0.5); }
+.rank-medal.silver { background: rgba(203,213,225,0.14); border: 1px solid rgba(203,213,225,0.4); }
+.rank-medal.bronze { background: rgba(217,119,6,0.16);  border: 1px solid rgba(217,119,6,0.42); }
+.rank-medal.plain  { background: var(--bg-3); border: 1px solid var(--border-mid); color: var(--text-2); font-size: 0.72rem; }
+
+.leaderboard-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 14px; margin-bottom: 6px;
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); transition: border-color 0.15s, transform 0.15s;
+}
+.leaderboard-row:hover { border-color: var(--cyan-border); transform: translateX(2px); }
+.leaderboard-row.lb-top1 { border-color: rgba(224,168,60,0.4); background: linear-gradient(90deg, rgba(224,168,60,0.06), transparent 60%); }
+
+
 .ticker {
     display: inline-block; padding: 3px 9px;
     background: var(--cyan-dim); border: 1px solid var(--cyan-border); border-radius: 4px;
@@ -1382,6 +1495,103 @@ def exchange_chip_html(exchange: str) -> str:
         f'<span class="exch-chip">'
         f'<span class="exch-dot" style="background:{color};"></span>{ex or "—"}'
         f'</span>'
+    )
+
+
+def ticker_tape_html(items, duration_s=30):
+    """Continuously scrolling ticker-tape strip of (symbol, change_pct)
+    tuples — ambient "trading floor" texture, pairs with `.ticker-tape-*`
+    CSS above. Purely decorative; not a data table, so no sort/filter.
+
+    items: list of (symbol, change_pct) — change_pct may be None.
+    duration_s: full loop duration; longer = slower scroll.
+
+        st.markdown(
+            ticker_tape_html([("AAPL", 1.24), ("TSLA", -2.1)]),
+            unsafe_allow_html=True,
+        )
+    """
+    if not items:
+        return ""
+
+    def _cell(sym, chg):
+        if chg is None:
+            chg_html = '<span style="color:var(--text-2);">—</span>'
+        else:
+            color = "var(--green-bright)" if chg >= 0 else "var(--red-bright)"
+            arrow = "▲" if chg >= 0 else "▼"
+            chg_html = f'<span style="color:{color};">{arrow} {abs(chg):.2f}%</span>'
+        return (
+            f'<span class="ticker-tape-item">'
+            f'<span class="tt-sym">{sym}</span>{chg_html}'
+            f'<span class="tt-sep">/</span></span>'
+        )
+
+    cells = "".join(_cell(s, c) for s, c in items)
+    # Duplicated once so the -50% translateX loop is seamless.
+    return (
+        f'<div class="ticker-tape-outer">'
+        f'<div class="ticker-tape-track" style="--ticker-duration:{duration_s}s;">'
+        f'{cells}{cells}'
+        f'</div></div>'
+    )
+
+
+def radial_gauge_svg(percent, size=76, stroke=7, color=None, label=None) -> str:
+    """Lightweight SVG arc gauge for a single 0-100 value — an
+    "instrument panel" alternative to `.bar-fill` for the one number a
+    section most wants to emphasize (e.g. model confidence on a top pick).
+    No Plotly figure overhead, so it's cheap to render many of in a list.
+
+        st.markdown(radial_gauge_svg(82.4), unsafe_allow_html=True)
+    """
+    import math
+    pct = max(0.0, min(100.0, float(percent)))
+    if color is None:
+        color = (
+            "var(--green-bright)" if pct >= 70
+            else "var(--cyan)" if pct >= 50
+            else "var(--amber-bright)"
+        )
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circumference = 2 * math.pi * r
+    filled = circumference * (pct / 100.0)
+    gap = circumference - filled
+    label_text = label if label is not None else f"{pct:.0f}%"
+
+    return (
+        f'<div class="gauge-wrap" style="width:{size}px;height:{size}px;">'
+        f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" '
+        f'stroke="var(--bg-4)" stroke-width="{stroke}"/>'
+        f'<circle class="gauge-fill" cx="{cx}" cy="{cy}" r="{r}" fill="none" '
+        f'stroke="{color}" stroke-width="{stroke}" stroke-linecap="round" '
+        f'stroke-dasharray="{circumference:.2f}" '
+        f'style="--gauge-start:{circumference:.2f};--gauge-end:{gap:.2f};" '
+        f'stroke-dashoffset="{gap:.2f}"/>'
+        f'</svg>'
+        f'<div class="gauge-label" style="font-size:{size*0.2:.0f}px;">{label_text}</div>'
+        f'</div>'
+    )
+
+
+def render_boot_sequence(key="_boot_shown", lines=None):
+    """One-shot "connecting to market data feed" flicker, shown only on a
+    session's very first render (gated via st.session_state[key]) — pure
+    cosmetic flavor for the "Market Intelligence Terminal" conceit. Safe to
+    call on every rerun; it's a no-op after the first.
+
+        render_boot_sequence()   # call once, near the very top of main()
+    """
+    import streamlit as st
+    if st.session_state.get(key):
+        return
+    st.session_state[key] = True
+    text = lines or "Connecting to market data feed"
+    st.markdown(
+        f'<div class="boot-sequence">{text}<span class="boot-cursor"></span></div>',
+        unsafe_allow_html=True,
     )
 
 
