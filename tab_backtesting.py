@@ -16,6 +16,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from db import get_supabase_client, run_with_retry, log_debug_error
+from datetime import date as _date
 from chart_utils import LAYOUT, AXIS_STYLE, COLORS
 from cache_ui import render_cache_buttons
 from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider
@@ -80,6 +81,68 @@ def refresh_cache():
     _get_table_all.clear()
     _get_table_all()
     st.toast("✅ Cache refreshed.")
+
+
+# ── SPY buy-and-hold benchmark ───────────────────────────────────────────────
+# Answers the question every backtest viewer actually has: "does this beat
+# just buying the index and doing nothing?" Fetched via yfinance (already a
+# project dependency for live quotes elsewhere) rather than sourced from
+# Supabase, since the accuracy table only carries the screened universe's own
+# symbols, never a benchmark. Cached for an hour — this is history, not a
+# live quote, so it doesn't need the 60s live-quote cadence used elsewhere.
+@st.cache_data(show_spinner=False, ttl=3600)
+def _get_spy_benchmark(start: _date, end: _date) -> pd.Series | None:
+    """Daily SPY close prices from `start` to `end` inclusive, normalized to
+    a growth-of-$1 series (first value = 1.0), or None if the fetch failed
+    (offline environment, yfinance hiccup, etc.) — callers should treat that
+    as "benchmark unavailable" and just skip the overlay rather than error."""
+    try:
+        import yfinance as yf
+        hist = yf.download(
+            "SPY", start=start, end=end + pd.Timedelta(days=1),
+            progress=False, auto_adjust=True,
+        )
+        if hist is None or hist.empty:
+            return None
+        closes = hist["Close"]
+        if hasattr(closes, "columns"):  # yfinance sometimes returns a 1-col DataFrame
+            closes = closes.iloc[:, 0]
+        closes = closes.dropna()
+        if closes.empty:
+            return None
+        return closes / closes.iloc[0]
+    except Exception as e:
+        log_debug_error("_get_spy_benchmark", e)
+        return None
+
+
+def _add_benchmark_trace(fig: go.Figure, sim_result: pd.DataFrame, start_capital: float):
+    """Overlays a 'SPY buy & hold' line on `fig`, normalized to the same
+    starting capital and date range as `sim_result` — no-op (with a small
+    caption, handled by the caller) if the benchmark can't be fetched."""
+    bench_start = sim_result["prediction_date"].min().date()
+    bench_end   = sim_result["prediction_date"].max().date()
+    growth = _get_spy_benchmark(bench_start, bench_end)
+    if growth is None or growth.empty:
+        return False
+    bench_df = pd.DataFrame({
+        "date": pd.to_datetime(growth.index),
+        "value": growth.values * start_capital,
+    })
+    # Reindex the benchmark onto the sim's own trade dates (forward-filled)
+    # so the two lines are directly comparable point-for-point in the hover
+    # tooltip, rather than SPY's full daily calendar vs. the sim's
+    # trade-day-only calendar.
+    bench_df = bench_df.set_index("date").reindex(
+        pd.to_datetime(sim_result["prediction_date"]), method="ffill"
+    )
+    fig.add_trace(go.Scatter(
+        x=sim_result["prediction_date"], y=bench_df["value"],
+        mode="lines", name="SPY Buy & Hold",
+        line=dict(color="rgba(148,163,184,0.85)", width=1.6, dash="dot"),
+        hovertemplate="SPY Buy & Hold<br>%{x|%b %d, %Y}<br>$%{y:,.2f}<extra></extra>",
+    ))
+    return True
 
 
 # ── Simulation core (shared by single-run and comparison modes) ─────────────
@@ -445,6 +508,11 @@ def render_backtesting_tab():
 
         _render_stats(stats)
 
+        show_benchmark = st.checkbox(
+            "Show SPY buy & hold benchmark", value=True, key="sim_show_benchmark",
+            help="Overlays what the same starting capital would be worth just buy-and-holding SPY over the same date range — fetched live via yfinance.",
+        )
+
         fig = go.Figure()
         _add_drawdown_shading(
             fig, sim_result["prediction_date"], sim_result["portfolio_value"],
@@ -453,6 +521,9 @@ def render_backtesting_tab():
             fig, sim_result["prediction_date"], sim_result["portfolio_value"],
             threshold=start_capital, name="Portfolio Value",
         )
+        benchmark_shown = False
+        if show_benchmark:
+            benchmark_shown = _add_benchmark_trace(fig, sim_result, start_capital)
         fig.add_hline(
             y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
             annotation_text="Starting capital", annotation_font_size=10,
@@ -465,6 +536,8 @@ def render_backtesting_tab():
         fig.update_xaxes(**AXIS_STYLE)
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
+        if show_benchmark and not benchmark_shown:
+            st.caption("⚠️ SPY benchmark unavailable right now (data fetch failed) — showing strategy only.")
 
         _info_card(
             "Note: results still assume every simulated trade could actually "
@@ -514,6 +587,11 @@ def render_backtesting_tab():
             st.markdown(f"**Configuration B** — {', '.join(signals_b)}")
             _render_stats(stats_b)
 
+        show_benchmark_cmp = st.checkbox(
+            "Show SPY buy & hold benchmark", value=True, key="sim_cmp_show_benchmark",
+            help="Overlays what the same starting capital would be worth just buy-and-holding SPY over the same date range — fetched live via yfinance.",
+        )
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=result_a["prediction_date"], y=result_a["portfolio_value"],
@@ -527,6 +605,12 @@ def render_backtesting_tab():
             line=dict(color=COLORS["secondary"], width=2),
             marker=dict(size=5),
         ))
+        benchmark_shown_cmp = False
+        if show_benchmark_cmp:
+            # Widest shared window of the two runs, so the benchmark line
+            # doesn't stop short of whichever config's curve runs longer.
+            longer_result = result_a if len(result_a) >= len(result_b) else result_b
+            benchmark_shown_cmp = _add_benchmark_trace(fig, longer_result, start_capital)
         fig.add_hline(
             y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
             annotation_text="Starting capital", annotation_font_size=10,
@@ -539,6 +623,8 @@ def render_backtesting_tab():
         fig.update_xaxes(**AXIS_STYLE)
         fig.update_yaxes(**AXIS_STYLE)
         st.plotly_chart(fig, use_container_width=True)
+        if show_benchmark_cmp and not benchmark_shown_cmp:
+            st.caption("⚠️ SPY benchmark unavailable right now (data fetch failed) — showing strategies only.")
 
         _info_card(
             "Note: both runs share the same starting capital, commission, and "
