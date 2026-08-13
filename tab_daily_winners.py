@@ -40,7 +40,7 @@ import os
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, AXIS_STYLE_SM, COLORS
 from cache_ui import render_cache_buttons
-from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_grid, render_hero_metric
+from dashboard_styles import render_section_header, render_labeled_divider, render_indicator_grid, render_hero_metric, ticker_copy_html, ticker_tape_html, exchange_chip_html
 from format_utils import fmt_compact
 
 TAB_ID = "daily_winners"
@@ -1091,21 +1091,61 @@ def render_daily_winners_tab():
     )
 
     st.markdown("### Winners List")
+
+    _tape_df = winners_df.sort_values('change_pct', ascending=False).head(20)
+    st.markdown(
+        ticker_tape_html(list(zip(_tape_df['symbol'], _tape_df['change_pct']))),
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
     display_df = (
         winners_df[['symbol', 'exchange', 'price', 'change_pct', 'volume']]
         .copy()
         .sort_values('change_pct', ascending=False)
         .reset_index(drop=True)
     )
-    display_df.index   = display_df.index + 1
-    display_df.columns = ['Symbol', 'Exchange', 'Price ($)', 'Change (%)', 'Volume']
 
-    st.dataframe(
-        display_df.style
-        .format({'Price ($)': '${:.2f}', 'Change (%)': '{:+.2f}%', 'Volume': '{:,.0f}'})
-        .background_gradient(subset=['Change (%)'], cmap='Greens'),
-        width='stretch', height=400,
-    )
+    _medal_cls = {0: "gold", 1: "silver", 2: "bronze"}
+    _MAX_LB_ROWS = 25
+    for i, r in display_df.head(_MAX_LB_ROWS).iterrows():
+        rank = i + 1
+        medal_cls = _medal_cls.get(i, "plain")
+        medal_txt = {"gold": "🥇", "silver": "🥈", "bronze": "🥉"}.get(medal_cls, str(rank))
+        chg = r['change_pct']
+        chg_color = "var(--green-bright)" if chg >= 0 else "var(--red-bright)"
+        chg_bar_pct = min(100, abs(chg) / max(abs(display_df['change_pct']).max(), 1e-6) * 100)
+        sym_html = ticker_copy_html(
+            r['symbol'], style="font-family:var(--font-display);font-weight:700;font-size:0.98rem;color:var(--text-0);"
+        )
+        st.markdown(
+            f"""
+<div class="leaderboard-row{' lb-top1' if i == 0 else ''}">
+    <div class="rank-medal {medal_cls}">{medal_txt if medal_cls != 'plain' else rank}</div>
+    <div style="min-width:170px;">
+        {sym_html}
+        <span style="margin-left:8px;">{exchange_chip_html(r['exchange'])}</span>
+    </div>
+    <div style="min-width:100px;font-family:var(--font-body);font-size:0.9rem;color:var(--text-1);">${r['price']:.2f}</div>
+    <div style="flex:1;min-width:160px;">
+        <div style="font-family:var(--font-body);font-size:1rem;font-weight:700;color:{chg_color};">{chg:+.2f}%</div>
+        <div class="bar-track" style="margin-top:4px;"><div class="bar-fill" style="width:{chg_bar_pct:.0f}%;background:{chg_color};"></div></div>
+    </div>
+    <div style="min-width:100px;text-align:right;font-family:var(--font-body);font-size:0.82rem;color:var(--text-2);">Vol {fmt_compact(r['volume'])}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    if len(display_df) > _MAX_LB_ROWS:
+        with st.expander(f"Show remaining {len(display_df) - _MAX_LB_ROWS} winners"):
+            _rest = display_df.iloc[_MAX_LB_ROWS:].copy()
+            _rest.index = _rest.index + 1
+            _rest.columns = ['Symbol', 'Exchange', 'Price ($)', 'Change (%)', 'Volume']
+            st.dataframe(
+                _rest.style.format({'Price ($)': '${:.2f}', 'Change (%)': '{:+.2f}%', 'Volume': '{:,.0f}'}),
+                width='stretch', height=min(400, 40 + 35 * len(_rest)),
+            )
 
     render_section_header(2, "Detailed Stock Analysis")
 
