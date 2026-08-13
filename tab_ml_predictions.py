@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric, exchange_chip_html
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric, exchange_chip_html, radial_gauge_svg
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
 
@@ -649,6 +649,10 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
+    # Scopes the row-hover CSS (see .mkt-live-table-scope in dashboard_styles.py)
+    # to just the data rows below, not the header row above.
+    st.markdown('<div class="mkt-live-table-scope"></div>', unsafe_allow_html=True)
+
     # ── One row per stock ──────────────────────────────────────────────────────
     for _, row in fdf.iterrows():
         sym        = row["symbol"]
@@ -900,6 +904,26 @@ def _render_latest_predictions():
     if total_picks == 0:
         render_empty_state("No BUY / STRONG BUY signals for this date — the model isn't flagging anything actionable.")
     else:
+        # ── Toast on newly-appeared STRONG BUY signals ──────────────────────
+        # Tracked per prediction_date in session_state so a toast only fires
+        # once per symbol/date combo (e.g. the first time this page renders
+        # after a fresh screening run adds a new STRONG BUY), not on every
+        # Streamlit rerun caused by an unrelated widget interaction.
+        _seen_key = f"{TAB_ID}_seen_strong_buys"
+        _seen = st.session_state.setdefault(_seen_key, set())
+        _strong_buys_now = set(
+            f"{selected_date}:{s}" for s in picks.loc[picks["signal"] == "STRONG BUY", "symbol"]
+        )
+        _new_strong_buys = _strong_buys_now - _seen
+        if _new_strong_buys and _seen:  # skip the toast storm on first-ever load
+            _new_syms = sorted(s.split(":", 1)[1] for s in _new_strong_buys)
+            st.toast(
+                f"New STRONG BUY: {', '.join(_new_syms[:3])}"
+                + (f" +{len(_new_syms) - 3} more" if len(_new_syms) > 3 else ""),
+                icon="🚀",
+            )
+        st.session_state[_seen_key] = _seen | _strong_buys_now
+
         _top = shown_picks.iloc[0]
         _top_gain = _top.get("target_gain_pct")
         render_hero_metric(
@@ -928,16 +952,12 @@ def _render_latest_predictions():
             gain_str   = f"+{gain:.1f}%" if pd.notna(gain) else "—"
             price_str  = f"${price:.2f}" if pd.notna(price) else "—"
             target_str = f"${target:.2f}" if pd.notna(target) else "—"
-            prob_color = (
-                "var(--green-bright)" if prob >= 70
-                else "var(--cyan)" if prob >= 50
-                else "var(--amber-bright)"
-            )
 
             sym_html = ticker_copy_html(
                 row['symbol'],
                 style="font-family:var(--font-display);font-weight:700;font-size:1.05rem;color:var(--text-0);"
             )
+            gauge_html = radial_gauge_svg(prob, size=56, stroke=5)
             st.markdown(
                 f"""
 <div class="data-card{' card-strong-buy' if row['signal'] == 'STRONG BUY' else ''}" style="display:flex;align-items:center;gap:18px;margin-bottom:8px;padding:14px 18px;">
@@ -946,10 +966,12 @@ def _render_latest_predictions():
         <span style="color:var(--text-2);font-size:0.72rem;margin-left:6px;">{row.get('exchange','')}</span>
         <div style="margin-top:4px;"><span class="badge {_badge_class.get(row['signal'],'badge-blue')}{' badge-pulse' if row['signal'] == 'STRONG BUY' else ''}">{row['signal']}</span></div>
     </div>
-    <div style="flex:1;min-width:120px;">
-        <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Confidence</div>
-        <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-0);font-weight:500;">{prob:.1f}%</div>
-        <div class="bar-track"><div class="bar-fill" style="width:{prob:.0f}%;background:{prob_color};"></div></div>
+    <div style="display:flex;align-items:center;gap:10px;min-width:150px;">
+        {gauge_html}
+        <div>
+            <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Confidence</div>
+            <div style="font-family:var(--font-body);font-size:1.1rem;color:var(--text-0);font-weight:500;">{prob:.1f}%</div>
+        </div>
     </div>
     <div style="flex:1;min-width:120px;">
         <div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-2);">Entry Price</div>
