@@ -135,7 +135,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script, render_boot_sequence
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script, inject_price_scramble_script, render_boot_sequence
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
@@ -144,6 +144,7 @@ def main():
     inject_count_up_script()
     inject_mouse_glow_script()
     inject_live_clock_script()
+    inject_price_scramble_script()
     now    = _now_et()
     hour   = now.hour
     minute = now.minute
@@ -203,6 +204,19 @@ def main():
     _d = _remaining.days
     countdown_str = f"{_d}d {_h:02d}:{_m:02d}:{_s:02d}" if _d else f"{_h:02d}:{_m:02d}:{_s:02d}"
 
+    # First-paint urgency class — mirrors the thresholds inject_live_clock_script
+    # applies client-side every second, so there's no color flash/jump the
+    # moment the JS ticker takes over from this initial server render.
+    _remaining_s = _remaining.total_seconds()
+    if countdown_label == "Pre-market in":
+        countdown_cls = ""
+    elif _remaining_s <= 5 * 60:
+        countdown_cls = " cd-critical"
+    elif _remaining_s <= 15 * 60:
+        countdown_cls = " cd-warn"
+    else:
+        countdown_cls = ""
+
     # ── Header — use columns to avoid Streamlit's nested-div rendering bug ────
     col_left, col_right = st.columns([3, 2])
 
@@ -221,7 +235,7 @@ def main():
             '<div style="text-align:right;">'
             f'<div id="mit-date" style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.12em;color:var(--text-2);text-transform:uppercase;">{date_str}</div>'
             f'<div id="mit-time" style="font-family:\'DM Mono\',monospace;font-size:1.6rem;font-weight:300;color:var(--text-1);letter-spacing:0.02em;">{time_str} <span style="font-size:0.75rem;color:var(--text-2);">ET</span></div>'
-            f'<div id="mit-countdown" style="font-family:\'DM Mono\',monospace;font-size:0.78rem;letter-spacing:0.04em;color:var(--text-2);margin-top:4px;">{countdown_label} {countdown_str}</div>'
+            f'<div id="mit-countdown" class="{countdown_cls.strip()}" style="font-family:\'DM Mono\',monospace;font-size:0.78rem;letter-spacing:0.04em;color:var(--text-2);margin-top:4px;">{countdown_label} {countdown_str}</div>'
             '</div>'
             '<div style="width:1px;height:32px;background:var(--border-mid);flex-shrink:0;"></div>'
             f'<div style="display:flex;align-items:center;gap:8px;padding:7px 14px;background:var(--bg-2);border:1px solid var(--border-mid);border-radius:var(--radius-sm);white-space:nowrap;">'
