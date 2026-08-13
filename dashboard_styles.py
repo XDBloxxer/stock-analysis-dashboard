@@ -1002,6 +1002,37 @@ div[data-testid="stAlert"] {
     50%      { box-shadow: 0 0 0 4px rgba(16,185,129,0); }
 }
 
+/* ── Live price flash ───────────────────────────────────────────────────────
+   Fires once (not looping) when a live quote's price actually changes
+   between reruns, so a tick reads as motion rather than just a number
+   silently being different than it was a second ago. Direction picked in
+   Python (price up vs down since last render) and passed in as a class. */
+.price-flash-up   { animation: priceFlashUp 0.7s ease-out; border-radius: 4px; }
+.price-flash-down { animation: priceFlashDown 0.7s ease-out; border-radius: 4px; }
+@keyframes priceFlashUp {
+    0%   { background: rgba(16,185,129,0.28); }
+    100% { background: transparent; }
+}
+@keyframes priceFlashDown {
+    0%   { background: rgba(239,68,68,0.28); }
+    100% { background: transparent; }
+}
+
+/* ── Exchange chip ──────────────────────────────────────────────────────────
+   Small colored dot + short code so the listing venue is scannable at a
+   glance across a table, instead of only readable as plain text — also
+   makes it visually obvious when a symbol resolves to a less-common venue
+   (e.g. CBOE/BATS) rather than the NASDAQ default. */
+.exch-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-body); font-size: 0.62rem; letter-spacing: 0.05em;
+    color: var(--text-1); text-transform: uppercase;
+}
+.exch-chip .exch-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Sparkline ──────────────────────────────────────────────────────────── */
+.spark-wrap { display: inline-block; vertical-align: middle; line-height: 0; }
+
 /* ── Ticker ─────────────────────────────────────────────────────────────── */
 .ticker {
     display: inline-block; padding: 3px 9px;
@@ -1322,6 +1353,35 @@ def ticker_copy_html(symbol, style=""):
     return (
         f'<span class="ticker-copy" style="{style}" '
         f'title="Click to copy {symbol}" onclick="{js}">{symbol}</span>'
+    )
+
+
+# Per-venue dot color for exchange_chip_html — deliberately distinct hues
+# so NASDAQ/NYSE/AMEX/BATS-CBOE/OTC are each recognizable at a glance
+# rather than reading as the same gray text everywhere.
+_EXCHANGE_DOT_COLORS = {
+    "NASDAQ":   "#38bdf8",
+    "NYSE":     "#e0a83c",
+    "AMEX":     "#2dd4bf",
+    "BATS":     "#a78bfa",
+    "CBOE":     "#a78bfa",
+    "OTC":      "#8695ab",
+}
+
+
+def exchange_chip_html(exchange: str) -> str:
+    """Small colored-dot + code chip for a listing venue, e.g. for the
+    "Stock" column of a live table. Falls back to a neutral gray dot for
+    any venue not in _EXCHANGE_DOT_COLORS rather than guessing a color.
+
+        st.markdown(exchange_chip_html("CBOE"), unsafe_allow_html=True)
+    """
+    ex = str(exchange or "").strip().upper()
+    color = _EXCHANGE_DOT_COLORS.get(ex, "var(--text-3)")
+    return (
+        f'<span class="exch-chip">'
+        f'<span class="exch-dot" style="background:{color};"></span>{ex or "—"}'
+        f'</span>'
     )
 
 
