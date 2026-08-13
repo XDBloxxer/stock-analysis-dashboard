@@ -226,6 +226,37 @@ def _threshold_segments(x, y, threshold: float):
     return segments
 
 
+def _add_drawdown_shading(fig: go.Figure, x, y):
+    """
+    Shades the underwater/drawdown periods — the gap between the running
+    peak (high-water mark) and the current value — in dim red beneath the
+    portfolio line. A classic quant-terminal touch: makes it visually
+    obvious at a glance how deep and how long each drawdown ran, rather
+    than only reading it off the "Max Drawdown" stat as a single number.
+    """
+    y_arr  = np.asarray(y, dtype=float)
+    peak   = np.maximum.accumulate(y_arr)
+
+    fig.add_trace(go.Scatter(
+        x=x, y=peak,
+        mode="lines",
+        line=dict(color="rgba(255,255,255,0.14)", width=1, dash="dot"),
+        name="Running Peak",
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=y_arr,
+        mode="lines",
+        line=dict(width=0),
+        fill="tonexty",
+        fillcolor="rgba(239,68,68,0.09)",
+        name="Drawdown",
+        hoverinfo="skip",
+        showlegend=True,
+    ))
+
+
 def _add_threshold_colored_trace(fig: go.Figure, x, y, threshold: float, name: str):
     """
     Adds a portfolio-value line to `fig` that is green where it's at/above
@@ -415,6 +446,9 @@ def render_backtesting_tab():
         _render_stats(stats)
 
         fig = go.Figure()
+        _add_drawdown_shading(
+            fig, sim_result["prediction_date"], sim_result["portfolio_value"],
+        )
         _add_threshold_colored_trace(
             fig, sim_result["prediction_date"], sim_result["portfolio_value"],
             threshold=start_capital, name="Portfolio Value",
