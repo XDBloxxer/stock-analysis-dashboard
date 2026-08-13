@@ -135,11 +135,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script, render_boot_sequence
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
+    render_boot_sequence()
     inject_count_up_script()
     inject_mouse_glow_script()
     inject_live_clock_script()
