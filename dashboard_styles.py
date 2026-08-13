@@ -1033,6 +1033,26 @@ div[data-testid="stAlert"] {
 /* ── Sparkline ──────────────────────────────────────────────────────────── */
 .spark-wrap { display: inline-block; vertical-align: middle; line-height: 0; }
 
+/* Draw-in reveal for sparkline polylines — pairs with the `pathLength="100"`
+   attribute _sparkline_svg() now sets on every polyline, which normalizes
+   the line's total length to 100 regardless of its actual point count/span.
+   That lets a single fixed dasharray/keyframe work for every sparkline
+   without computing each polyline's real pixel length in Python. Runs once
+   on mount (new DOM node each Streamlit rerun), not looping — a live table
+   that kept re-drawing itself every render would be more distracting than
+   informative. */
+.spark-draw {
+    stroke-dasharray: 100;
+    animation: sparkDraw 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes sparkDraw {
+    from { stroke-dashoffset: 100; }
+    to   { stroke-dashoffset: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .spark-draw { animation: none; stroke-dashoffset: 0; }
+}
+
 /* ── Market-table row hover ─────────────────────────────────────────────────
    Scoped via the .mkt-live-table-scope marker (see _render_live_market_table
    in tab_ml_predictions.py) using a general-sibling selector, so only the
@@ -1178,6 +1198,30 @@ div[data-testid="stAlert"] {
     50%      { opacity:0.6; transform:scale(0.85); }
 }
 
+/* ── Countdown urgency ──────────────────────────────────────────────────────
+   #mit-countdown is styled identically whether it reads "3h 58m" or "0:45" —
+   these two states make the last stretch before a session transition
+   (market open/close, after-hours end) actually read as urgent instead of
+   being just another quiet monospace label. Thresholds are applied in JS
+   (inject_live_clock_script) against the same countdown target it's already
+   computing; Python's first-paint value gets the matching class too, set in
+   dashboard.py, so there's no flash of the wrong color before the JS ticker
+   takes over a moment later. */
+#mit-countdown.cd-warn {
+    color: var(--amber-bright) !important;
+}
+#mit-countdown.cd-critical {
+    color: var(--red-bright) !important;
+    animation: countdownCritical 1s ease-in-out infinite;
+}
+@keyframes countdownCritical {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #mit-countdown.cd-critical { animation: none; }
+}
+
 /* ── Animated fill bar ──────────────────────────────────────────────────────
    For any place a percentage was previously shown as plain text only
    (confidence, precision/recall, etc.) — the bar makes relative magnitude
@@ -1238,14 +1282,26 @@ div[data-testid="stAlert"] {
 .data-card {
     background: var(--bg-2); border: 1px solid var(--border-mid);
     border-radius: var(--radius); padding: 16px 18px;
-    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.15s ease-out;
     box-shadow: 0 1px 3px rgba(0,0,0,0.28);
     position: relative;
+    transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+    transform-style: preserve-3d;
 }
 .data-card:hover {
     border-color: var(--cyan-border);
     background: var(--bg-3);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.32);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.38);
+}
+/* Cursor-driven tilt — --rx/--ry are set (in deg, per-card) by the same
+   mousemove handler that already drives the --cx/--cy glow position below.
+   Capped to ±1.6deg: enough to read as "physically present" without numbers
+   swimming or text becoming hard to parse in a data-dense finance UI — a
+   full game-UI tilt (5-10deg) was tried and reads as gimmicky here, so this
+   stays deliberately subtle. Disabled outright for touch/no-hover and
+   reduced-motion, same as the glow. */
+@media (hover: none), (prefers-reduced-motion: reduce) {
+    .data-card { transform: none !important; }
 }
 .data-card::after {
     content: ''; position: absolute; top: -1px; right: -1px; width: 9px; height: 9px;
@@ -1258,9 +1314,9 @@ div[data-testid="stAlert"] {
 /* Cursor-proximity glow — a soft brass light that tracks the pointer
    *inside* the card while hovered, via the --cx/--cy custom properties
    set (per-card, in local %) by the same mousemove handler that drives
-   the page-level cursor glow above. This is a border/wash brighten, not
-   a 3D tilt: a tilt effect reads as playful/gamey and would clash with a
-   data-dense finance UI where numbers need to stay flat and legible. */
+   the page-level cursor glow above and (see .data-card --rx/--ry) the
+   card's tilt. Kept as a separate layer from the tilt itself since the
+   glow position is in local %, while the tilt is in deg. */
 .data-card::before {
     content: ''; position: absolute; inset: 0; border-radius: inherit;
     background: radial-gradient(
@@ -1576,19 +1632,40 @@ def radial_gauge_svg(percent, size=76, stroke=7, color=None, label=None) -> str:
     )
 
 
+# Pool of boot-flavor lines — one is picked at random per session so a
+# partner reloading the app across days sees some variety instead of the
+# exact same string every single time. All phrased in the same
+# "connecting to X" register so none of them reads as more/less important
+# than the others; this is flavor text, not a real status log.
+_BOOT_LINES = [
+    "Connecting to market data feed",
+    "Syncing order book",
+    "Calibrating model weights",
+    "Establishing terminal uplink",
+    "Reconciling overnight signals",
+    "Warming up the screening engine",
+]
+
+
 def render_boot_sequence(key="_boot_shown", lines=None):
-    """One-shot "connecting to market data feed" flicker, shown only on a
-    session's very first render (gated via st.session_state[key]) — pure
-    cosmetic flavor for the "Market Intelligence Terminal" conceit. Safe to
-    call on every rerun; it's a no-op after the first.
+    """One-shot "connecting to market data feed"-style flicker, shown only
+    on a session's very first render (gated via st.session_state[key]) —
+    pure cosmetic flavor for the "Market Intelligence Terminal" conceit.
+    Safe to call on every rerun; it's a no-op after the first.
+
+    `lines`, if given, pins the exact text shown instead of picking one at
+    random from `_BOOT_LINES` — the random pick itself is also frozen into
+    session_state once made, so a mid-session rerun never shows a second,
+    different line.
 
         render_boot_sequence()   # call once, near the very top of main()
     """
+    import random
     import streamlit as st
     if st.session_state.get(key):
         return
     st.session_state[key] = True
-    text = lines or "Connecting to market data feed"
+    text = lines or random.choice(_BOOT_LINES)
     st.markdown(
         f'<div class="boot-sequence">{text}<span class="boot-cursor"></span></div>',
         unsafe_allow_html=True,
@@ -1718,7 +1795,7 @@ _MOUSE_GLOW_JS = """
     var reduced = window.parent.matchMedia('(prefers-reduced-motion: reduce)').matches
                || window.parent.matchMedia('(hover: none)').matches;
     if (reduced) return;
-    var pending = false, lastX = null, lastY = null, hoveredCard = null;
+    var pending = false, lastX = null, lastY = null, hoveredCard = null, lastTiltedCard = null;
     // Parallax divisor: larger = more subtle. 40px of mouse travel from
     // center yields ~1px of blob shift at PARALLAX_DIV=40.
     var PARALLAX_DIV = 40, PARALLAX_MAX = 14;
@@ -1739,13 +1816,38 @@ _MOUSE_GLOW_JS = """
       root.style.setProperty('--px', px.toFixed(1) + 'px');
       root.style.setProperty('--py', py.toFixed(1) + 'px');
 
-      // Per-card local glow position, only while a card is hovered.
+      // Per-card local glow position + tilt, only while a card is hovered.
+      // Tilt is capped at TILT_MAX_DEG (see .data-card CSS comment for why
+      // this stays small) and inverted on the Y axis so the card leans
+      // *toward* the cursor rather than away from it, matching the glow's
+      // "light source follows pointer" logic.
       if (hoveredCard) {
         var rect = hoveredCard.getBoundingClientRect();
         var cx = ((lastX - rect.left) / rect.width) * 100;
         var cy = ((lastY - rect.top) / rect.height) * 100;
         hoveredCard.style.setProperty('--cx', cx.toFixed(1) + '%');
         hoveredCard.style.setProperty('--cy', cy.toFixed(1) + '%');
+
+        var TILT_MAX_DEG = 1.6;
+        var nx = (cx - 50) / 50; // -1 .. 1 across card width
+        var ny = (cy - 50) / 50; // -1 .. 1 down card height
+        var rx = clamp(-ny * TILT_MAX_DEG, -TILT_MAX_DEG, TILT_MAX_DEG);
+        var ry = clamp(nx * TILT_MAX_DEG, -TILT_MAX_DEG, TILT_MAX_DEG);
+        hoveredCard.style.setProperty('--rx', rx.toFixed(2) + 'deg');
+        hoveredCard.style.setProperty('--ry', ry.toFixed(2) + 'deg');
+        if (hoveredCard !== lastTiltedCard) {
+          if (lastTiltedCard) {
+            lastTiltedCard.style.setProperty('--rx', '0deg');
+            lastTiltedCard.style.setProperty('--ry', '0deg');
+          }
+          lastTiltedCard = hoveredCard;
+        }
+      } else if (lastTiltedCard) {
+        // Cursor left every card this frame — relax the last one back flat
+        // instead of leaving it frozen at its final tilt angle.
+        lastTiltedCard.style.setProperty('--rx', '0deg');
+        lastTiltedCard.style.setProperty('--ry', '0deg');
+        lastTiltedCard = null;
       }
     }
     doc.addEventListener('mousemove', function(e) {
@@ -1761,11 +1863,11 @@ _MOUSE_GLOW_JS = """
 
 def inject_mouse_glow_script():
     """Call once per page render to wire up all cursor-driven effects:
-    the page-level background glow, the ambient-blob parallax lean, and
-    the per-card proximity glow (see DASHBOARD_CSS: the
+    the page-level background glow, the ambient-blob parallax lean, the
+    per-card proximity glow, and the per-card tilt (see DASHBOARD_CSS: the
     `[data-testid="stAppViewContainer"]::after/::before` rules and
-    `.data-card::before`). No-op for reduced-motion or touch/no-hover
-    users."""
+    `.data-card::before` / `.data-card` transform). No-op for
+    reduced-motion or touch/no-hover users."""
     import streamlit.components.v1 as components
     components.html(_MOUSE_GLOW_JS, height=0, width=0)
 
@@ -1983,7 +2085,17 @@ _LIVE_CLOCK_JS = """
       timeEl.innerHTML = pad2(hour) + ':' + pad2(minute) + ':' + pad2(et.getUTCSeconds()) +
         ' <span style="font-size:0.75rem;color:var(--text-2);">ET</span>';
       if (cdEl) {
-        cdEl.textContent = nextLabel + ' ' + fmtCountdown(nextMs - etMs);
+        var remainMs = nextMs - etMs;
+        cdEl.textContent = nextLabel + ' ' + fmtCountdown(remainMs);
+        // Urgency only makes sense counting down to something imminent
+        // (open/close/after-hours-end) — not the "next trading day" case,
+        // which can legitimately span a whole weekend and shouldn't glow
+        // red for 60 hours straight.
+        cdEl.classList.remove('cd-warn', 'cd-critical');
+        if (nextLabel !== 'Pre-market in') {
+          if (remainMs <= 5 * 60 * 1000)       cdEl.classList.add('cd-critical');
+          else if (remainMs <= 15 * 60 * 1000) cdEl.classList.add('cd-warn');
+        }
       }
       if (warnEl) {
         warnEl.style.display = (EARLY_CLOSE_TABLE_THROUGH - etMs) <= EARLY_CLOSE_WARN_WINDOW_MS ? 'flex' : 'none';
@@ -2007,6 +2119,70 @@ def inject_live_clock_script():
     regardless of the visitor's own timezone."""
     import streamlit.components.v1 as components
     components.html(_LIVE_CLOCK_JS, height=0, width=0)
+
+
+# Digit-scramble reveal for live price cells. Fires on any element carrying
+# `.price-flash-up` or `.price-flash-down` (see chart_utils/tab_ml_predictions
+# — those classes are only ever applied by Python when a symbol's live price
+# actually changed since the previous render, so this never fires on an
+# unrelated rerun). Streamlit re-renders the cell with its *final* text
+# already in place — there's no earlier value to animate from client-side —
+# so this fakes the "settling" motion by holding on random digits for a few
+# short frames before revealing the real (already-correct) text, rather than
+# trying to interpolate between two known numbers like the count-up script
+# does for st.metric.
+_PRICE_SCRAMBLE_JS = """
+<script>
+(function() {
+  var SCRAMBLE_FRAMES = 5, SCRAMBLE_MS = 45;
+  function scramble(el) {
+    if (el._scrDone) return;
+    el._scrDone = true;
+    var final = el.textContent;
+    if (!/[0-9]/.test(final)) return;
+    var i = 0;
+    var iv = setInterval(function() {
+      i++;
+      if (i >= SCRAMBLE_FRAMES) {
+        el.textContent = final;
+        clearInterval(iv);
+        return;
+      }
+      el.textContent = final.replace(/[0-9]/g, function() {
+        return Math.floor(Math.random() * 10);
+      });
+    }, SCRAMBLE_MS);
+  }
+  function scan(root) {
+    try {
+      root.querySelectorAll('.price-flash-up, .price-flash-down').forEach(scramble);
+    } catch (e) {}
+  }
+  try {
+    var doc = window.parent.document;
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        m.addedNodes && m.addedNodes.forEach(function(n) {
+          if (n.nodeType !== 1) return;
+          if (n.matches && (n.matches('.price-flash-up') || n.matches('.price-flash-down'))) scramble(n);
+          if (n.querySelectorAll) scan(n);
+        });
+      });
+    }).observe(doc.body, { childList: true, subtree: true });
+    scan(doc);
+  } catch (e) { /* cross-origin or DOM not ready — cells just show final value */ }
+})();
+</script>
+"""
+
+
+def inject_price_scramble_script():
+    """Call once per page render to make live price cells that just ticked
+    (`.price-flash-up` / `.price-flash-down`, set in
+    _render_live_market_table) settle in through a brief digit-scramble
+    instead of just silently being a different number than a moment ago."""
+    import streamlit.components.v1 as components
+    components.html(_PRICE_SCRAMBLE_JS, height=0, width=0)
 
 
 def render_empty_state(message, glyph="◇"):
