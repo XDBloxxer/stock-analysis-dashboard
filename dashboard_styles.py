@@ -709,15 +709,17 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 .stTabs [data-baseweb="tab-border"] { display: none !important; background: transparent !important; }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 24px !important; }
 
-/* Suppress .arrow_right leak */
+/* Suppress .arrow_right leak — same failure mode as the expander toggle
+   icon above (a ligature-text `[data-testid="stIconMaterial"]` span
+   winning a specificity fight against text-styling rules and rendering
+   its raw name on top of the tab label). Using the same `display: none`
+   fix here too, since the font-size/width trick previously used is the
+   one that turned out not to hold up. */
+.stTabs [role="tab"] svg,
 .stTabs [role="tab"] [data-testid="stIconMaterial"],
-.stTabs [role="tab"] svg ~ span,
-.stTabs [role="tab"] > span:last-child:not(:first-child),
-.stTabs [data-baseweb="tab"] [data-testid="stIconMaterial"],
-.stTabs [data-baseweb="tab"] svg ~ span,
-.stTabs [data-baseweb="tab"] > span:last-child:not(:first-child) {
-    font-size: 0 !important; color: transparent !important;
-    width: 0 !important; overflow: hidden !important;
+.stTabs [data-baseweb="tab"] svg,
+.stTabs [data-baseweb="tab"] [data-testid="stIconMaterial"] {
+    display: none !important;
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
@@ -863,29 +865,47 @@ div[data-testid="stExpander"] details summary {
 div[data-testid="stExpander"] details summary::-webkit-details-marker { display:none !important; }
 div[data-testid="stExpander"] details summary::marker { display:none !important; content:'' !important; }
 div[data-testid="stExpanderDetails"],
-div[data-testid="stExpander"] details summary > div:not([data-testid="stExpanderToggleIcon"]),
+div[data-testid="stExpander"] details summary > div,
 div[data-testid="stExpander"] details summary p,
 div[data-testid="stExpander"] details summary span {
     font-family: var(--font-body) !important; font-size: 0.8rem !important;
     font-weight: 500 !important; color: var(--text-1) !important;
     letter-spacing: 0.02em !important; margin: 0 !important; padding: 0 !important;
 }
-div[data-testid="stExpanderToggleIcon"] {
-    font-size:0 !important; color:transparent !important;
-    display:flex !important; align-items:center !important;
-    width:16px !important; height:16px !important; overflow:hidden !important;
+
+/* Streamlit's own toggle icon has been fought here twice now — first as an
+   <svg>, then as a `[data-testid="stIconMaterial"]` ligature-text span that
+   kept winning a CSS-specificity fight against the label-text rule above
+   and rendering its raw text ("keyboard_arrow_right") on top of the title.
+   Chasing its exact current markup/testid is a losing game since it keeps
+   changing between Streamlit versions. Instead: remove whatever Streamlit
+   renders for it from layout entirely with `display: none` (which — unlike
+   font-size/color tricks — can't lose a specificity fight, since there's
+   nothing left to compete over), and draw our own chevron from scratch as
+   a `summary::before` pseudo-element that we fully control. This is
+   version-proof: it no longer matters what Streamlit's icon looks like
+   internally, because it's never in the DOM's rendered output at all. */
+div[data-testid="stExpander"] details summary svg,
+div[data-testid="stExpander"] details summary [data-testid="stExpanderToggleIcon"],
+div[data-testid="stExpander"] details summary [data-testid="stIconMaterial"] {
+    display: none !important;
 }
-div[data-testid="stExpanderToggleIcon"] * { font-size:0 !important; color:transparent !important; }
-div[data-testid="stExpanderToggleIcon"] svg {
-    color: var(--text-2) !important;
-    width:13px !important; height:13px !important; display:block !important;
-    visibility:visible !important; transition: transform 0.2s, color 0.15s !important;
+div[data-testid="stExpander"] details summary::before {
+    content: '❯';
+    order: -1;
+    flex-shrink: 0;
+    display: inline-block;
+    font-family: var(--font-body) !important;
+    font-size: 0.68rem !important;
+    color: var(--text-2);
+    transition: transform 0.2s ease, color 0.15s ease;
 }
-div[data-testid="stExpander"] details[open] div[data-testid="stExpanderToggleIcon"] svg {
-    transform: rotate(90deg) !important; color: var(--cyan) !important;
+div[data-testid="stExpander"] details[open] summary::before {
+    transform: rotate(90deg);
+    color: var(--cyan);
 }
-div[data-testid="stExpander"] details summary:hover div[data-testid="stExpanderToggleIcon"] svg {
-    color: var(--text-1) !important;
+div[data-testid="stExpander"] details summary:hover::before {
+    color: var(--text-1);
 }
 div[data-testid="stExpander"] details > div { padding: 6px 16px 16px !important; }
 
