@@ -1113,17 +1113,18 @@ def _render_latest_predictions():
         with fc3:
             min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
 
-    # NOTE: target_gain_pct can be NaN for rows where a target price hasn't
-    # been computed yet (e.g. HOLD/AVOID signals, or a fresh screening run).
-    # `NaN >= min_tgt` is always False in pandas, so those rows were being
-    # silently dropped from the live view even at the default "Min Target
-    # Gain % = 0" filter — while the picks list above never applies this
-    # filter at all, which is why the same stocks were visible there but not
-    # here. Treat a missing target gain as 0% so it's only excluded once the
-    # user actually raises the threshold above zero.
+    # NOTE: both explosion_probability and target_gain_pct can be NaN for
+    # some rows (e.g. HOLD/AVOID signals, or a fresh screening run that
+    # hasn't back-filled every field yet). `NaN >= threshold` is always
+    # False in pandas, so at the default 0% thresholds those rows were
+    # being silently dropped from the live view — while the picks list
+    # above never applies either filter, which is why the same stocks were
+    # visible there but not here. Treat a missing value as 0 so a row is
+    # only excluded once the user actually raises that threshold above
+    # zero, not just because the value is unknown.
     fdf = df[
         df["signal"].isin(sig_filter) &
-        (df["explosion_probability"] >= min_prob / 100) &
+        (df["explosion_probability"].fillna(0) >= min_prob / 100) &
         (df["target_gain_pct"].fillna(0) >= min_tgt)
     ].copy()
 
