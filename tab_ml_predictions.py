@@ -514,12 +514,26 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     symbols = tuple(fdf["symbol"].tolist())
 
-    _quotes_placeholder = st.empty()
-    with _quotes_placeholder.container():
-        render_skeleton_rows(4, height=64)
-    quotes = _get_bulk_live_quotes(symbols)
-    sparklines = _get_bulk_sparklines(symbols)
-    _quotes_placeholder.empty()
+    # Skeleton rows are only shown the first time this tab renders in a
+    # session. Showing/hiding them on *every* rerun (including reruns
+    # triggered by a widget in a completely different tab, since Streamlit
+    # re-executes the whole script top to bottom regardless of which tab is
+    # visually active) repeatedly resizes this tab's content height, which
+    # is a known Streamlit bug: it makes the page jump to this tab/section
+    # (streamlit/streamlit#5069). Gating it behind session_state avoids that
+    # height churn on steady-state reruns.
+    _quotes_seen_key = f"{TAB_ID}_quotes_first_paint_done"
+    if not st.session_state.get(_quotes_seen_key):
+        _quotes_placeholder = st.empty()
+        with _quotes_placeholder.container():
+            render_skeleton_rows(4, height=64)
+        quotes = _get_bulk_live_quotes(symbols)
+        sparklines = _get_bulk_sparklines(symbols)
+        _quotes_placeholder.empty()
+        st.session_state[_quotes_seen_key] = True
+    else:
+        quotes = _get_bulk_live_quotes(symbols)
+        sparklines = _get_bulk_sparklines(symbols)
 
     # Previous-render live prices, kept in session_state, so a tick can be
     # flashed green/red on the render where it actually changes rather than
@@ -919,11 +933,19 @@ def _render_latest_predictions():
     render_section_header(1, "Today's Picks")
     st.caption("What the model is telling you to buy right now.")
 
-    _picks_placeholder = st.empty()
-    with _picks_placeholder.container():
-        render_skeleton_rows(4, height=64)
-    all_preds = _get_table_full("ml_explosion_predictions")
-    _picks_placeholder.empty()
+    # Same reasoning as the live-quotes skeleton below: only paint it once
+    # per session so hidden/other-tab reruns don't keep resizing this tab
+    # and dragging the page's scroll position along with it.
+    _picks_seen_key = f"{TAB_ID}_picks_first_paint_done"
+    if not st.session_state.get(_picks_seen_key):
+        _picks_placeholder = st.empty()
+        with _picks_placeholder.container():
+            render_skeleton_rows(4, height=64)
+        all_preds = _get_table_full("ml_explosion_predictions")
+        _picks_placeholder.empty()
+        st.session_state[_picks_seen_key] = True
+    else:
+        all_preds = _get_table_full("ml_explosion_predictions")
     _warn_if_truncated(all_preds, "ml_explosion_predictions")
 
     if all_preds.empty:
@@ -1091,10 +1113,18 @@ def _render_latest_predictions():
         with fc3:
             min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
 
+    # NOTE: target_gain_pct can be NaN for rows where a target price hasn't
+    # been computed yet (e.g. HOLD/AVOID signals, or a fresh screening run).
+    # `NaN >= min_tgt` is always False in pandas, so those rows were being
+    # silently dropped from the live view even at the default "Min Target
+    # Gain % = 0" filter — while the picks list above never applies this
+    # filter at all, which is why the same stocks were visible there but not
+    # here. Treat a missing target gain as 0% so it's only excluded once the
+    # user actually raises the threshold above zero.
     fdf = df[
         df["signal"].isin(sig_filter) &
         (df["explosion_probability"] >= min_prob / 100) &
-        (df["target_gain_pct"] >= min_tgt)
+        (df["target_gain_pct"].fillna(0) >= min_tgt)
     ].copy()
 
     # Sort by signal strength then probability
