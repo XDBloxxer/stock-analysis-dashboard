@@ -1111,7 +1111,7 @@ def _render_latest_predictions():
         with fc2:
             min_prob = st.slider("Min Probability %", 0, 100, 0, key=f"{TAB_ID}_prob_f")
         with fc3:
-            min_tgt  = st.slider("Min Target Gain %", 0, 50, 0, key=f"{TAB_ID}_tgt_f")
+            min_tgt  = st.slider("Min Target Gain %", -50, 50, 0, key=f"{TAB_ID}_tgt_f")
 
     # NOTE: both explosion_probability and target_gain_pct can be NaN for
     # some rows (e.g. HOLD/AVOID signals, or a fresh screening run that
@@ -1128,22 +1128,25 @@ def _render_latest_predictions():
         (df["target_gain_pct"].fillna(0) >= min_tgt)
     ].copy()
 
-    # ── TEMPORARY DIAGNOSTIC ────────────────────────────────────────────────
-    # Shows exactly which clause is zeroing out the live view. Safe to
-    # delete once the underlying issue is confirmed.
-    with st.expander("🔧 Debug: filter breakdown", expanded=True):
-        st.write("Total rows for this date:", len(df))
-        st.write("Signal filter selected:", sig_filter)
-        st.write("Unique signal values in data:", sorted(df["signal"].dropna().unique().tolist()))
-        st.write("Rows passing signal filter:", int(df["signal"].isin(sig_filter).sum()))
-        st.write("explosion_probability dtype:", df["explosion_probability"].dtype)
-        st.write("explosion_probability sample:", df["explosion_probability"].head(5).tolist())
-        st.write("Rows passing probability filter:", int((df["explosion_probability"].fillna(0) >= min_prob / 100).sum()))
-        st.write("target_gain_pct dtype:", df["target_gain_pct"].dtype)
-        st.write("target_gain_pct sample:", df["target_gain_pct"].head(5).tolist())
-        st.write("Rows passing target filter:", int((df["target_gain_pct"].fillna(0) >= min_tgt).sum()))
-        st.write("min_prob:", min_prob, " min_tgt:", min_tgt)
-    # ── END TEMPORARY DIAGNOSTIC ────────────────────────────────────────────
+    # A negative target_gain_pct on a BUY/STRONG BUY row means the model's
+    # target_price came out below current_price for that symbol — a data
+    # problem upstream in the prediction pipeline (not something this
+    # filter should silently hide). Surface it instead of just showing
+    # "no stocks match the filters", which looks like a dashboard bug when
+    # it's actually bad upstream data.
+    _neg_gain_mask = df["target_gain_pct"] < 0
+    if _neg_gain_mask.any():
+        _neg_syms = df.loc[_neg_gain_mask, "symbol"].tolist()
+        st.warning(
+            f"⚠️ {len(_neg_syms)} of {len(df)} predictions today have a "
+            f"**negative** target gain (target price below current price) — "
+            f"e.g. {', '.join(_neg_syms[:5])}"
+            + (f" +{len(_neg_syms) - 5} more" if len(_neg_syms) > 5 else "")
+            + ". These are hidden by the Min Target Gain filter below at its "
+            "default of 0%. This usually means the prediction pipeline that "
+            "writes `ml_explosion_predictions` computed a bad target price "
+            "for these symbols — worth checking that job, not this dashboard."
+        )
 
 
     # Sort by signal strength then probability
