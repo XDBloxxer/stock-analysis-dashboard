@@ -1128,6 +1128,24 @@ def _render_latest_predictions():
         (df["target_gain_pct"].fillna(0) >= min_tgt)
     ].copy()
 
+    # ── TEMPORARY DIAGNOSTIC ────────────────────────────────────────────────
+    # Shows exactly which clause is zeroing out the live view. Safe to
+    # delete once the underlying issue is confirmed.
+    with st.expander("🔧 Debug: filter breakdown", expanded=True):
+        st.write("Total rows for this date:", len(df))
+        st.write("Signal filter selected:", sig_filter)
+        st.write("Unique signal values in data:", sorted(df["signal"].dropna().unique().tolist()))
+        st.write("Rows passing signal filter:", int(df["signal"].isin(sig_filter).sum()))
+        st.write("explosion_probability dtype:", df["explosion_probability"].dtype)
+        st.write("explosion_probability sample:", df["explosion_probability"].head(5).tolist())
+        st.write("Rows passing probability filter:", int((df["explosion_probability"].fillna(0) >= min_prob / 100).sum()))
+        st.write("target_gain_pct dtype:", df["target_gain_pct"].dtype)
+        st.write("target_gain_pct sample:", df["target_gain_pct"].head(5).tolist())
+        st.write("Rows passing target filter:", int((df["target_gain_pct"].fillna(0) >= min_tgt).sum()))
+        st.write("min_prob:", min_prob, " min_tgt:", min_tgt)
+    # ── END TEMPORARY DIAGNOSTIC ────────────────────────────────────────────
+
+
     # Sort by signal strength then probability
     signal_order = {"STRONG BUY": 0, "BUY": 1, "HOLD": 2, "AVOID": 3}
     fdf["_sig_rank"] = fdf["signal"].map(signal_order).fillna(9)
