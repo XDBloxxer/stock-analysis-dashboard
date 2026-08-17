@@ -417,11 +417,21 @@ def render_backtesting_tab():
         refresh_cache()
         st.rerun()
 
-    _bt_placeholder = st.empty()
-    with _bt_placeholder.container():
-        render_skeleton_rows(4, height=64)
-    all_acc = _get_table_all()
-    _bt_placeholder.empty()
+    # Only paint the skeleton once per session — see the matching comment in
+    # tab_ml_predictions.py. Re-showing/hiding it on every rerun (including
+    # ones triggered by widgets in other tabs) resizes this tab's content on
+    # every interaction, which triggers Streamlit's known st.tabs
+    # scroll-jump bug (streamlit/streamlit#5069).
+    _bt_seen_key = f"{TAB_ID}_first_paint_done"
+    if not st.session_state.get(_bt_seen_key):
+        _bt_placeholder = st.empty()
+        with _bt_placeholder.container():
+            render_skeleton_rows(4, height=64)
+        all_acc = _get_table_all()
+        _bt_placeholder.empty()
+        st.session_state[_bt_seen_key] = True
+    else:
+        all_acc = _get_table_all()
     if all_acc.empty:
         render_empty_state("No accuracy data available yet — check back once the model has a track record.")
         return
