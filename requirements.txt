@@ -35,3 +35,6 @@ pytz>=2024.1
 
 # Stock data fetching
 yfinance>=0.2.40
+
+# Auto-refreshing the Live Market Table without a manual page reload
+streamlit-autorefresh>=1.0.1
