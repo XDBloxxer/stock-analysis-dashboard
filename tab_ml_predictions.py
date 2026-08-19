@@ -476,15 +476,6 @@ def refresh_cache():
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 def render_ml_predictions_tab():
-    refresh_clicked, clear_confirmed = render_cache_buttons(TAB_ID)
-
-    if clear_confirmed:
-        clear_all_cache()
-        st.rerun()
-    if refresh_clicked:
-        refresh_cache()
-        st.rerun()
-
     subtab1, subtab2, subtab3, subtab4, subtab5 = st.tabs([
         "Today's Picks",
         "Predictions vs Actuals",
@@ -498,6 +489,20 @@ def render_ml_predictions_tab():
     with subtab3: _render_missed_opportunities()
     with subtab4: _render_performance_trends()
     with subtab5: _render_system_info()
+
+    # Cache controls live below all sub-tab content, not between the
+    # top-level tab bar and this tab's own sub-tab bar — that in-between
+    # spot reads as if it belongs to whichever sub-tab is active, when it
+    # actually applies to the whole tab regardless of which sub-tab is
+    # showing.
+    refresh_clicked, clear_confirmed = render_cache_buttons(TAB_ID)
+
+    if clear_confirmed:
+        clear_all_cache()
+        st.rerun()
+    if refresh_clicked:
+        refresh_cache()
+        st.rerun()
 
 
 # ── Live Market Table — renders all stocks inline ─────────────────────────────
