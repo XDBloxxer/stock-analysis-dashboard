@@ -34,8 +34,12 @@ def render_cache_buttons(tab_id: str, warning_message: str = None):
 
     confirm_key = f"{tab_id}_confirm_clear"
 
+    # Keep the expander open across the rerun that follows clicking "Clear
+    # cache" — otherwise it snaps back to collapsed (expanded=False) on
+    # every rerun and hides the Confirm/Cancel prompt right after the user
+    # triggers it, making the button look like it doesn't do anything.
     st.markdown('<div class="cache-controls-expander">', unsafe_allow_html=True)
-    with st.expander("Data controls", expanded=False):
+    with st.expander("Data controls", expanded=st.session_state.get(confirm_key, False)):
         col_r, col_c, _ = st.columns([1, 1, 5])
         with col_r:
             st.markdown('<div class="btn-utility util-refresh">', unsafe_allow_html=True)
