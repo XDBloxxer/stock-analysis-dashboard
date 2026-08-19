@@ -571,11 +571,12 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
    a harmless no-op fallback for older builds. */
 .stTabs [role="tablist"],
 .stTabs [data-baseweb="tab-list"] {
-    background: var(--bg-1) !important;
-    border-radius: var(--radius) !important;
-    padding: 5px !important;
-    gap: 6px !important;
-    border: 1px solid var(--border-mid) !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 0 2px 0 !important;
+    gap: 2px !important;
+    border: none !important;
+    border-bottom: 1px solid var(--border-mid) !important;
     display: inline-flex !important;
     width: auto !important;
     max-width: 100% !important;
@@ -613,36 +614,82 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     }
     .stTabs [role="tab"],
     .stTabs [data-baseweb="tab"] {
-        padding: 8px 14px !important;
-        font-size: 0.72rem !important;
+        padding: 8px 12px 8px 24px !important;
+        font-size: 0.68rem !important;
+    }
+    .stTabs [role="tab"]::before,
+    .stTabs [data-baseweb="tab"]::before {
+        left: 8px !important;
+        font-size: 0.56rem !important;
     }
 }
 
-/* Base chip state — a real bordered/filled button look, not bare text,
-   so it reads as clickable even before any interaction. Uses a slight
-   gradient (lighter top edge) plus a crisp drop shadow and inset top
-   highlight to read as a physically raised key, not a text label. */
+/* Base tab state — deliberately NOT the glossy gold-gradient pill-with-glow
+   look (that "raised chip + drop shadow + saturated glow" combo is the
+   single most recognizable AI-dashboard tell). Instead: flat ghost buttons
+   that sit on the track almost invisibly until touched, each carrying its
+   own tiny index tick (a numbered dash, not a generic dot) that only
+   colors in once the tab is hovered/active — a small hand-placed detail
+   a template wouldn't bother with. Counter-driven, so it needs zero markup
+   changes and stays in sync if tabs are added/removed. */
+.stTabs [role="tablist"],
+.stTabs [data-baseweb="tab-list"] {
+    counter-reset: dashtab !important;
+}
 .stTabs [role="tab"],
 .stTabs [data-baseweb="tab"] {
-    background: linear-gradient(180deg, var(--bg-4) 0%, #171d27 100%) !important;
+    counter-increment: dashtab;
+    position: relative !important;
+    background: transparent !important;
     border-radius: var(--radius-sm) !important;
-    border: 1px solid var(--border-mid) !important;
+    border: 1px solid transparent !important;
     font-family: var(--font-display) !important;
-    font-size: 0.8rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.06em !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em !important;
     text-transform: uppercase !important;
-    padding: 10px 20px !important;
+    padding: 9px 18px 9px 30px !important;
     margin-bottom: 0 !important;
     cursor: pointer !important;
-    box-shadow:
-        0 1px 0 rgba(255,255,255,0.05) inset,
-        0 2px 5px rgba(0,0,0,0.45) !important; /* inset top highlight + real
-        drop shadow so it reads as a pressable, physically raised chip
-        rather than plain text sitting on the track */
-    transform: translateY(0) !important;
-    transition: color 0.15s, background 0.15s, border-color 0.15s,
-        box-shadow 0.15s, transform 0.15s !important;
+    box-shadow: none !important;
+    transform: translateY(0) scale(1) !important;
+    transition: color 0.18s ease, background 0.18s ease,
+        border-color 0.18s ease, transform 0.15s ease !important;
+}
+/* The index tick — "01", "02"... — sits left of the label, dim by default,
+   ignites amber on hover/active. Reads as an editorial nav rail, not a
+   button factory. */
+.stTabs [role="tab"]::before,
+.stTabs [data-baseweb="tab"]::before {
+    content: counter(dashtab, decimal-leading-zero) !important;
+    position: absolute !important;
+    left: 10px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+    font-size: 0.6rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0 !important;
+    color: var(--text-3, #64748b) !important;
+    opacity: 0.55 !important;
+    transition: color 0.18s ease, opacity 0.18s ease !important;
+}
+/* Underline indicator — grows from the center outward instead of a flat
+   static bar, so selection reads as a deliberate motion cue rather than
+   a CSS default. */
+.stTabs [role="tab"]::after,
+.stTabs [data-baseweb="tab"]::after {
+    content: "" !important;
+    position: absolute !important;
+    left: 14px !important;
+    right: 14px !important;
+    bottom: 4px !important;
+    height: 2px !important;
+    border-radius: 2px !important;
+    background: var(--cyan) !important;
+    transform: scaleX(0) !important;
+    transform-origin: center !important;
+    transition: transform 0.22s cubic-bezier(.4,0,.2,1) !important;
 }
 /* Browser's default blue focus ring (tabs are real <button> elements)
    showed through uncontrolled on click — replaced with a themed outline. */
@@ -667,7 +714,7 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 .stTabs [data-baseweb="tab"] p,
 .stTabs [data-baseweb="tab"] div,
 .stTabs [data-baseweb="tab"] span {
-    color: var(--text-1) !important;
+    color: var(--text-2, #94a3b8) !important;
 }
 .stTabs [role="tab"]:hover,
 .stTabs [role="tab"]:hover p,
@@ -681,30 +728,45 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
 }
 .stTabs [role="tab"]:hover,
 .stTabs [data-baseweb="tab"]:hover {
-    background: linear-gradient(180deg, #232a36 0%, var(--bg-4) 100%) !important;
-    border-color: rgba(255,255,255,0.24) !important;
+    background: rgba(255,255,255,0.035) !important;
+    border-color: rgba(255,255,255,0.08) !important;
     transform: translateY(-1px) !important;
-    box-shadow:
-        0 1px 0 rgba(255,255,255,0.06) inset,
-        0 4px 10px rgba(0,0,0,0.5) !important;
+}
+.stTabs [role="tab"]:hover::before,
+.stTabs [data-baseweb="tab"]:hover::before {
+    color: var(--cyan) !important;
+    opacity: 0.9 !important;
+}
+.stTabs [role="tab"]:hover::after,
+.stTabs [data-baseweb="tab"]:hover::after {
+    transform: scaleX(0.4) !important;
+    background: rgba(224,168,60,0.5) !important;
 }
 
 .stTabs [aria-selected="true"] {
-    background: linear-gradient(180deg, var(--cyan-bright, #f0b94e) 0%, var(--cyan) 100%) !important;
-    border-color: var(--cyan) !important;
-    box-shadow:
-        0 1px 0 rgba(255,255,255,0.35) inset,
-        0 3px 14px rgba(224,168,60,0.38) !important;
+    background: var(--cyan-dim) !important;
+    border-color: var(--cyan-border) !important;
 }
 .stTabs [aria-selected="true"],
 .stTabs [aria-selected="true"] p,
 .stTabs [aria-selected="true"] div,
 .stTabs [aria-selected="true"] span {
-    color: #14100a !important;   /* near-black — guaranteed contrast on the gold fill */
+    color: var(--cyan) !important;
+    font-weight: 700 !important;
 }
-.stTabs [aria-selected="true"]:hover { background: var(--cyan) !important; }
+.stTabs [aria-selected="true"]::before {
+    color: var(--cyan) !important;
+    opacity: 1 !important;
+}
+.stTabs [aria-selected="true"]::after {
+    transform: scaleX(1) !important;
+    background: var(--cyan) !important;
+    box-shadow: 0 0 8px rgba(224,168,60,0.55) !important;
+}
+.stTabs [aria-selected="true"]:hover { background: var(--cyan-dim) !important; }
 
-/* Remove baseweb's own underline/highlight bar — the chip fill is the signal now */
+/* Remove baseweb's own underline/highlight bar — the ::after tick is the
+   signal now, and letting both run at once double-draws the indicator. */
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display: none !important; background: transparent !important; }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 24px !important; }
@@ -1494,8 +1556,8 @@ div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
 hr { margin: 8px 0 !important; }
 div[data-testid="stMetric"] { padding: 6px 10px !important; }
 div[data-testid="stMetricValue"] { font-size: clamp(0.8rem, 15cqw, 1.15rem) !important; white-space: normal !important; overflow-wrap: anywhere !important; }
-.stTabs [role="tablist"], .stTabs [data-baseweb="tab-list"] { gap: 4px !important; }
-.stTabs [role="tab"], .stTabs [data-baseweb="tab"] { padding: 6px 12px !important; }
+.stTabs [role="tablist"], .stTabs [data-baseweb="tab-list"] { gap: 2px !important; }
+.stTabs [role="tab"], .stTabs [data-baseweb="tab"] { padding: 8px 14px 8px 26px !important; }
 div[data-testid="stExpander"] { margin-bottom: 6px !important; }
 .stMarkdown h4 { margin-top: 6px !important; margin-bottom: 6px !important; }
 </style>
