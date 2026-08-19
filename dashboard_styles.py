@@ -809,6 +809,61 @@ div[data-testid="stMetric"]:has([data-testid="stMetricDeltaIcon-Down"]):hover::b
     display: none !important;
 }
 
+/* ── Utility buttons (Refresh / Clear Cache) ───────────────────────────────
+   Deliberately the quietest buttons in the app — plain text, no fill, no
+   accent border by default. These are maintenance actions a user reaches
+   for occasionally, not something that should visually compete with the
+   data above it. Color only shows up on hover, as a hint rather than a
+   standing claim on the user's attention. */
+.btn-utility .stButton > button {
+    background: transparent !important;
+    color: var(--text-3) !important;
+    border: 1px solid transparent !important;
+    font-size: 0.7rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.04em !important;
+    text-transform: none !important;
+    padding: 4px 10px !important;
+    box-shadow: none !important;
+}
+.btn-utility.util-refresh .stButton > button:hover {
+    color: var(--cyan) !important;
+    border-color: var(--cyan-border) !important;
+    background: var(--cyan-dim) !important;
+}
+.btn-utility.util-danger .stButton > button:hover {
+    color: var(--red-bright) !important;
+    border-color: rgba(239,68,68,0.35) !important;
+    background: var(--red-dim) !important;
+}
+.btn-utility.util-confirm .stButton > button {
+    color: var(--red-bright) !important;
+    border-color: rgba(239,68,68,0.3) !important;
+}
+.btn-utility.util-confirm .stButton > button:hover { background: var(--red-dim) !important; }
+.btn-utility.util-cancel .stButton > button:hover {
+    color: var(--text-0) !important;
+    border-color: rgba(255,255,255,0.2) !important;
+}
+/* The expander that tucks the whole control strip away — a plain small
+   caption-style trigger instead of the app's usual bordered-card expander,
+   so it reads as "there's a small utility drawer here" rather than another
+   content section. */
+.cache-controls-expander div[data-testid="stExpander"] {
+    border: none !important;
+    background: transparent !important;
+}
+.cache-controls-expander div[data-testid="stExpander"]:hover { border: none !important; }
+.cache-controls-expander details summary {
+    font-size: 0.68rem !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    color: var(--text-3) !important;
+    padding: 2px 0 !important;
+}
+.cache-controls-expander details summary:hover { color: var(--text-2) !important; }
+.cache-controls-expander div[data-testid="stExpanderDetails"] { padding: 8px 0 0 !important; }
+
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .stButton > button {
     background: transparent !important;
