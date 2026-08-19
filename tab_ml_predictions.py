@@ -30,11 +30,6 @@ from dashboard_styles import render_section_header, render_empty_state, render_s
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
 
-try:
-    from streamlit_autorefresh import st_autorefresh
-except ImportError:
-    st_autorefresh = None
-
 TAB_ID = "ml_predictions"
 
 # How often the Live Market Table pulls fresh quotes, in seconds. True 1s
@@ -520,6 +515,7 @@ def render_ml_predictions_tab():
 
 
 # ── Live Market Table — renders all stocks inline ─────────────────────────────
+@st.fragment(run_every=f"{_LIVE_REFRESH_SECS}s")
 def _render_live_market_table(fdf: pd.DataFrame):
     """
     Dense two-line card layout per stock. Shows:
@@ -527,16 +523,17 @@ def _render_live_market_table(fdf: pd.DataFrame):
              | Signal price → Live price | Day change | Day high
       Row 2: Progress bar (day high vs target price) with target % and $ labels
              | Low / prev close sub-labels | Volume
+
+    Decorated as an @st.fragment with run_every so ONLY this block reruns
+    on the refresh timer — not the whole script. Without this, an
+    st_autorefresh-style whole-page rerun would reset scroll position,
+    collapse open expanders, and clobber in-progress interactions
+    anywhere else on the page every 15 seconds, which makes the rest of
+    the tab unusable. A fragment reruns and re-renders in place, in
+    isolation, leaving everything outside it untouched.
     """
     if fdf.empty:
         return
-
-    # Auto-refresh: reruns just this script (not a browser page reload) on
-    # a timer, so the table keeps ticking without the user lifting a
-    # finger. Falls back to manual-refresh-only if the component isn't
-    # installed, with a one-time hint below instead of a hard crash.
-    if st_autorefresh is not None:
-        st_autorefresh(interval=_LIVE_REFRESH_SECS * 1000, key=f"{TAB_ID}_live_autorefresh")
 
     symbols = tuple(fdf["symbol"].tolist())
 
@@ -589,8 +586,6 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     if not yf_available:
         st.warning("⚠️ Live quotes unavailable — install `yfinance` or check network.")
-    elif st_autorefresh is None:
-        st.caption("Auto-refresh needs the `streamlit-autorefresh` package (now in requirements.txt) — install it and restart the app to stop needing manual reloads.")
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
