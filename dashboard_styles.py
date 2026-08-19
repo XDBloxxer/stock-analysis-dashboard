@@ -163,6 +163,54 @@ body[data-market-session="idle"] .stApp {
     [data-testid="stAppViewContainer"]::before { animation: none; transform: none; }
 }
 
+/* ── Idle drift ─────────────────────────────────────────────────────────────
+   Set by the `mit-idle` class the mouse-glow script (below) toggles onto
+   <body> after ~20s of no mouse/key activity, cleared on the next
+   interaction. Purely a "still awake, just waiting" tell: the ambient wash
+   drifts a little faster and the ticker tape picks up pace, then both
+   settle back to normal the instant you touch the page again. */
+body.mit-idle [data-testid="stAppViewContainer"]::before {
+    animation-duration: 14s !important;
+}
+body.mit-idle .ticker-tape-track {
+    animation-duration: calc(var(--ticker-duration, 30s) * 0.55) !important;
+}
+
+/* ── Matrix mode (Konami code easter egg) ────────────────────────────────
+   Toggled for 10s by the Konami-code listener in _MOUSE_GLOW_JS. Full
+   green-on-black swap — purely novelty, reverts itself, doesn't touch any
+   real data or layout, just palette + a flicker. */
+body.mit-matrix-mode {
+    animation: matrixFlickerIn 0.15s steps(2, end);
+}
+body.mit-matrix-mode .stApp {
+    background-color: #000502 !important;
+}
+body.mit-matrix-mode [data-testid="stAppViewContainer"]::before,
+body.mit-matrix-mode [data-testid="stAppViewContainer"]::after {
+    opacity: 0 !important;
+}
+body.mit-matrix-mode * {
+    border-color: rgba(34,255,120,0.35) !important;
+}
+body.mit-matrix-mode .stTabs [aria-selected="true"]::after,
+body.mit-matrix-mode .gauge-fill,
+body.mit-matrix-mode .bar-fill {
+    background: #22ff78 !important;
+    box-shadow: 0 0 8px rgba(34,255,120,0.6) !important;
+}
+body.mit-matrix-mode h1, body.mit-matrix-mode h2, body.mit-matrix-mode h3,
+body.mit-matrix-mode p, body.mit-matrix-mode span, body.mit-matrix-mode div,
+body.mit-matrix-mode label {
+    color: #22ff78 !important;
+    text-shadow: 0 0 3px rgba(34,255,120,0.35) !important;
+}
+@keyframes matrixFlickerIn {
+    0%   { filter: brightness(2) saturate(0); }
+    50%  { filter: brightness(0.6) saturate(0.5); }
+    100% { filter: brightness(1) saturate(1); }
+}
+
 /* ── Cursor glow — a soft brass light that follows the mouse ────────────────
    Position comes from --mx/--my custom properties on <html>, updated by
    inject_mouse_glow_script() below via requestAnimationFrame — the DOM
@@ -1405,6 +1453,58 @@ div[data-testid="stAlert"] {
 @media (prefers-reduced-motion: reduce) {
     #mit-countdown.cd-critical { animation: none; }
 }
+/* One-shot pulse fired by _LIVE_CLOCK_JS the instant the countdown crosses
+   a round minute marker (5:00, 1:00) — a brief bigger flash on top of the
+   steady-state warn/critical color, so hitting those marks reads as an
+   event rather than just another ticking second. Self-removing (JS strips
+   the class after the animation completes), so it never lingers. */
+#mit-countdown.cd-tick-flash {
+    animation: countdownTickFlash 0.6s ease-out !important;
+}
+@keyframes countdownTickFlash {
+    0%   { text-shadow: 0 0 0 transparent; transform: scale(1); }
+    30%  { text-shadow: 0 0 10px currentColor; transform: scale(1.12); }
+    100% { text-shadow: 0 0 0 transparent; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    #mit-countdown.cd-tick-flash { animation: none !important; }
+}
+
+/* ── Glitch flash (rare, on live data refresh) ─────────────────────────────
+   Toggled briefly by the price-scramble script's MutationObserver whenever
+   a batch of prices actually updates — see GLITCH_CHANCE there for the odds.
+   A quick RGB-split + scanline flicker instead of a plain refresh, styled
+   to match the CRT/terminal conceit rather than looking like a rendering
+   bug. Purely decorative, self-removing after ~200ms. */
+.mit-glitch-flash {
+    animation: mitGlitch 0.22s steps(3, end);
+    position: relative;
+}
+.mit-glitch-flash::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+        0deg, rgba(224,168,60,0.05) 0px, rgba(224,168,60,0.05) 1px,
+        transparent 1px, transparent 3px
+    );
+    pointer-events: none;
+    animation: mitGlitchScan 0.22s steps(3, end);
+}
+@keyframes mitGlitch {
+    0%   { transform: translate(0, 0); filter: none; }
+    20%  { transform: translate(-2px, 0); filter: drop-shadow(2px 0 0 rgba(239,68,68,0.5)) drop-shadow(-2px 0 0 rgba(52,211,153,0.5)); }
+    40%  { transform: translate(2px, 0); }
+    60%  { transform: translate(-1px, 0); filter: drop-shadow(1px 0 0 rgba(239,68,68,0.4)) drop-shadow(-1px 0 0 rgba(52,211,153,0.4)); }
+    100% { transform: translate(0, 0); filter: none; }
+}
+@keyframes mitGlitchScan {
+    0%   { opacity: 0; }
+    30%  { opacity: 1; }
+    100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .mit-glitch-flash, .mit-glitch-flash::after { animation: none !important; }
+}
 
 /* ── Animated fill bar ──────────────────────────────────────────────────────
    For any place a percentage was previously shown as plain text only
@@ -1596,6 +1696,13 @@ div[data-testid="stPlotlyChart"] {
     border-radius: var(--radius) !important;
     overflow: hidden !important; border: 1px solid var(--border-mid) !important;
 }
+/* Thin crosshair cursor over the plot area only (not the modebar/legend) —
+   Plotly already draws its own hover spike lines on most of these charts,
+   so this just makes the cursor itself agree with that "instrument, not a
+   picture" framing instead of showing a generic pointer/arrow. */
+div[data-testid="stPlotlyChart"] .nsewdrag {
+    cursor: crosshair !important;
+}
 
 /* ── Number input ───────────────────────────────────────────────────────── */
 .stNumberInput button {
@@ -1639,6 +1746,19 @@ div[data-testid="toastContainer"] {
     letter-spacing: 0.02em; line-height: 1.6;
     color: var(--text-3); text-align: center;
 }
+
+/* Signature readout strip — the kind of throwaway build/session/uptime
+   line a real terminal app has that nobody asked for but that sells the
+   "instrument, not a webpage" conceit. Sits under .app-footer, smaller and
+   quieter still, monospace, wide-tracked, easy to skip past. */
+.mit-signature {
+    margin-top: 10px; text-align: center;
+    font-family: var(--font-body); font-size: 0.6rem;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-3); opacity: 0.55;
+}
+.mit-signature span { margin: 0 8px; }
+
 
 /* Per-block entrance animations removed — same opacity:0-stuck risk as the
    block-container animation above, for the same reason (frequent Streamlit
@@ -1907,6 +2027,17 @@ _BOOT_LINES = [
     "Warming up the screening engine",
 ]
 
+# Rare easter-egg lines — picked instead of the normal pool roughly 1 in 50
+# sessions. Deliberately break character slightly (the normal pool is all
+# straight "connecting to X" phrasing); a wink for anyone who reloads
+# enough times to notice, never so often it dilutes the terminal conceit.
+_BOOT_LINES_RARE = [
+    "Definitely not checking Reddit first",
+    "Bribing the RNG for a green day",
+    "Politely asking the market to cooperate",
+    "Recalling why we do this to ourselves",
+]
+
 
 def render_boot_sequence(key="_boot_shown", lines=None):
     """One-shot "connecting to market data feed"-style flicker, shown only
@@ -1915,9 +2046,9 @@ def render_boot_sequence(key="_boot_shown", lines=None):
     Safe to call on every rerun; it's a no-op after the first.
 
     `lines`, if given, pins the exact text shown instead of picking one at
-    random from `_BOOT_LINES` — the random pick itself is also frozen into
-    session_state once made, so a mid-session rerun never shows a second,
-    different line.
+    random from `_BOOT_LINES` (with a small chance of `_BOOT_LINES_RARE`
+    instead) — the random pick itself is also frozen into session_state
+    once made, so a mid-session rerun never shows a second, different line.
 
         render_boot_sequence()   # call once, near the very top of main()
     """
@@ -1926,7 +2057,12 @@ def render_boot_sequence(key="_boot_shown", lines=None):
     if st.session_state.get(key):
         return
     st.session_state[key] = True
-    text = lines or random.choice(_BOOT_LINES)
+    if lines:
+        text = lines
+    elif random.random() < 0.02:
+        text = random.choice(_BOOT_LINES_RARE)
+    else:
+        text = random.choice(_BOOT_LINES)
     st.markdown(
         f'<div class="boot-sequence">{text}<span class="boot-cursor"></span></div>',
         unsafe_allow_html=True,
@@ -2116,6 +2252,43 @@ _MOUSE_GLOW_JS = """
       hoveredCard = e.target.closest ? e.target.closest('.data-card') : null;
       if (!pending) { pending = true; window.parent.requestAnimationFrame(apply); }
     }, { passive: true });
+
+    // Idle drift — flips body.mit-idle on after IDLE_MS of no mouse/key
+    // activity (pairs with the `body.mit-idle` CSS above), clears it on
+    // the next interaction. A single shared timer rather than one per
+    // effect since nothing here needs sub-second precision.
+    var IDLE_MS = 20000;
+    var idleTimer = null;
+    function markActive() {
+      doc.body.classList.remove('mit-idle');
+      if (idleTimer) window.parent.clearTimeout(idleTimer);
+      idleTimer = window.parent.setTimeout(function() {
+        doc.body.classList.add('mit-idle');
+      }, IDLE_MS);
+    }
+    doc.addEventListener('mousemove', markActive, { passive: true });
+    doc.addEventListener('keydown', markActive, { passive: true });
+    doc.addEventListener('click', markActive, { passive: true });
+    markActive();
+
+    // Konami code easter egg — up up down down left right left right b a.
+    // Flips body.mit-matrix-mode on for 10s (CSS swap below), then reverts
+    // on its own. Pure novelty, no functional effect, resets progress on
+    // any wrong key so it can't trigger by accident.
+    var KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+    var konamiPos = 0, matrixTimer = null;
+    doc.addEventListener('keydown', function(e) {
+      var key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      konamiPos = (key === KONAMI[konamiPos]) ? konamiPos + 1 : (key === KONAMI[0] ? 1 : 0);
+      if (konamiPos === KONAMI.length) {
+        konamiPos = 0;
+        doc.body.classList.add('mit-matrix-mode');
+        if (matrixTimer) window.parent.clearTimeout(matrixTimer);
+        matrixTimer = window.parent.setTimeout(function() {
+          doc.body.classList.remove('mit-matrix-mode');
+        }, 10000);
+      }
+    });
   } catch (e) { /* cross-origin or DOM not ready — effects just stay static */ }
 })();
 </script>
@@ -2160,6 +2333,7 @@ _LIVE_CLOCK_JS = """
     var doc = window.parent.document;
     var TZ = 'America/New_York';
     var holidayCache = {};
+    var lastTickFlashSec = null; // last remaining-seconds value that fired the round-number flash
 
     // Mirrors Python's EARLY_CLOSE_DATES / EARLY_CLOSE_TABLE_THROUGH in
     // dashboard.py — keep these two in sync when the table is updated.
@@ -2361,6 +2535,18 @@ _LIVE_CLOCK_JS = """
         if (nextLabel !== 'Pre-market in') {
           if (remainMs <= 5 * 60 * 1000)       cdEl.classList.add('cd-critical');
           else if (remainMs <= 15 * 60 * 1000) cdEl.classList.add('cd-warn');
+
+          // Round-number tick flash — fires once, right as the countdown
+          // crosses 5:00 or 1:00, rather than on every render (checked
+          // against the previous tick's remaining-seconds so a re-render
+          // with the same second doesn't re-fire the animation).
+          var remainSec = Math.floor(remainMs / 1000);
+          if ((remainSec === 300 || remainSec === 60) && remainSec !== lastTickFlashSec) {
+            lastTickFlashSec = remainSec;
+            cdEl.classList.remove('cd-tick-flash');
+            void cdEl.offsetWidth; // restart animation if class is re-added
+            cdEl.classList.add('cd-tick-flash');
+          }
         }
       }
       if (warnEl) {
@@ -2426,14 +2612,35 @@ _PRICE_SCRAMBLE_JS = """
   }
   try {
     var doc = window.parent.document;
+    // Rare glitch flash — whenever a batch of price flashes lands (i.e. a
+    // real data refresh happened), there's a small chance the live-quotes
+    // table gets a brief RGB-split/scanline flicker instead of a plain
+    // settle. Deliberately rare (GLITCH_CHANCE) and short (GLITCH_MS) —
+    // this is meant to read as "ooh, neat" once in a while, not as
+    // something wrong with the page.
+    var GLITCH_CHANCE = 0.08, GLITCH_MS = 220;
+    function maybeGlitch() {
+      if (Math.random() > GLITCH_CHANCE) return;
+      var table = doc.querySelector('.mkt-live-table-scope');
+      var target = table ? table.parentElement : null;
+      if (!target || target._glitching) return;
+      target._glitching = true;
+      target.classList.add('mit-glitch-flash');
+      window.parent.setTimeout(function() {
+        target.classList.remove('mit-glitch-flash');
+        target._glitching = false;
+      }, GLITCH_MS);
+    }
     new MutationObserver(function(muts) {
+      var sawFlash = false;
       muts.forEach(function(m) {
         m.addedNodes && m.addedNodes.forEach(function(n) {
           if (n.nodeType !== 1) return;
-          if (n.matches && (n.matches('.price-flash-up') || n.matches('.price-flash-down'))) scramble(n);
+          if (n.matches && (n.matches('.price-flash-up') || n.matches('.price-flash-down'))) { scramble(n); sawFlash = true; }
           if (n.querySelectorAll) scan(n);
         });
       });
+      if (sawFlash) maybeGlitch();
     }).observe(doc.body, { childList: true, subtree: true });
     scan(doc);
   } catch (e) { /* cross-origin or DOM not ready — cells just show final value */ }
@@ -2449,6 +2656,48 @@ def inject_price_scramble_script():
     instead of just silently being a different number than a moment ago."""
     import streamlit.components.v1 as components
     components.html(_PRICE_SCRAMBLE_JS, height=0, width=0)
+
+
+def render_signature_footer():
+    """
+    Small monospace "build info" strip — a session id, a fake-but-stable
+    build revision derived from today's date, and a rough uptime clock.
+    None of it is real infrastructure data (there's no actual deploy
+    pipeline stamping a build number here); it's a hand-placed detail in
+    the same spirit as a terminal's version banner, purely to sell the
+    "instrument panel" conceit. Session id and boot time are frozen into
+    st.session_state on first render so they stay stable for the session
+    rather than changing on every rerun.
+
+        render_signature_footer()   # call once, near the very bottom of main()
+    """
+    import random
+    import string
+    import time
+    import streamlit as st
+
+    if "_mit_session_id" not in st.session_state:
+        st.session_state["_mit_session_id"] = "".join(
+            random.choices(string.ascii_lowercase + string.digits, k=6)
+        )
+    if "_mit_boot_time" not in st.session_state:
+        st.session_state["_mit_boot_time"] = time.time()
+
+    session_id = st.session_state["_mit_session_id"]
+    uptime_s = int(time.time() - st.session_state["_mit_boot_time"])
+    mins, secs = divmod(uptime_s, 60)
+    hrs, mins = divmod(mins, 60)
+    uptime_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+    build_str = "rev." + __import__("datetime").date.today().strftime("%Y.%m.%d") + "-a"
+
+    st.markdown(
+        f'<div class="mit-signature">'
+        f'<span>{build_str}</span>'
+        f'<span>session {session_id}</span>'
+        f'<span>up {uptime_str}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_empty_state(message, glyph="◇"):
