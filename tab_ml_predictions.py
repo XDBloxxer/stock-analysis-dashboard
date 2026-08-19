@@ -876,7 +876,52 @@ def _render_live_market_table(fdf: pd.DataFrame):
         f"Entry = price at time of prediction · Live data via Yahoo Finance · not financial advice"
     )
 
+    _render_flavor_line(fdf, quotes)
     _render_correlation_heatmap(sparklines)
+
+
+def _render_flavor_line(fdf: pd.DataFrame, quotes: dict):
+    """
+    A single small randomized one-liner about today's action, computed
+    from the same live quotes already fetched above — not a canned string,
+    it genuinely reads day-change% per symbol and picks whichever framing
+    fits what actually happened. Pure flavor, zero decision value, so it's
+    deliberately tiny/muted rather than competing with anything real above
+    it.
+    """
+    import random
+
+    changes = {}
+    for sym in fdf["symbol"]:
+        q = quotes.get(sym) if quotes else None
+        if not q or not q.get("last_price") or not q.get("prev_close"):
+            continue
+        changes[sym] = (q["last_price"] - q["prev_close"]) / q["prev_close"] * 100
+
+    if len(changes) < 2:
+        return
+
+    best_sym = max(changes, key=changes.get)
+    worst_sym = min(changes, key=changes.get)
+    spread = changes[best_sym] - changes[worst_sym]
+    avg_abs = sum(abs(v) for v in changes.values()) / len(changes)
+
+    candidates = [
+        f"{best_sym} is running hottest today at {changes[best_sym]:+.1f}%",
+        f"Widest spread of the group: {best_sym} vs {worst_sym}, {spread:.1f} pts apart",
+        f"Average move across the board sits around {avg_abs:.1f}% either way today",
+    ]
+    if avg_abs < 0.6:
+        candidates.append("Quiet session so far — nothing's moved much yet")
+    if spread > 8:
+        candidates.append(f"Unusually wide dispersion today — {spread:.1f} pts between best and worst")
+
+    line = random.choice(candidates)
+    st.markdown(
+        f'<div style="font-family:var(--font-body);font-size:0.7rem;color:var(--text-3);'
+        f'margin-top:-4px;margin-bottom:6px;">{line}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_correlation_heatmap(sparklines: dict, max_symbols: int = 8):
