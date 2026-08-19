@@ -99,12 +99,14 @@ def _tv_url(symbol: str, exchange: str) -> str:
 
 
 # ── Live price fetch (short TTL — totally separate from Supabase cache) ───────
-@st.cache_data(ttl=_LIVE_REFRESH_SECS, show_spinner=False)
+@st.cache_data(ttl=_LIVE_REFRESH_SECS, max_entries=64, show_spinner=False)
 def _get_live_quote(symbol: str) -> dict | None:
     """
     Fetch a lightweight live quote via yfinance.fast_info.
     TTL matches _LIVE_REFRESH_SECS so cached values expire right as the
-    next auto-refresh tick asks for them again.
+    next auto-refresh tick asks for them again. max_entries bounds this
+    to the ~64 most recently used symbols so memory doesn't grow forever
+    as different tickers get looked up across a long session.
     Returns None gracefully if yfinance is not installed or the call fails.
     """
     try:
@@ -143,7 +145,7 @@ def _fetch_one_quote(symbol: str) -> tuple[str, dict | None]:
         return symbol, None
 
 
-@st.cache_data(ttl=_LIVE_REFRESH_SECS, show_spinner=False)
+@st.cache_data(ttl=_LIVE_REFRESH_SECS, max_entries=16, show_spinner=False)
 def _get_bulk_live_quotes(symbols: tuple) -> dict:
     """
     Fetch live quotes for multiple symbols in parallel via a thread pool.
@@ -156,6 +158,14 @@ def _get_bulk_live_quotes(symbols: tuple) -> dict:
     Returns dict[symbol -> quote_dict]. TTL=_LIVE_REFRESH_SECS, same as
     single-symbol fetch. symbols must be a tuple (hashable) for
     st.cache_data to work.
+
+    Cache is keyed on the *whole* symbols tuple, so every distinct filter
+    combination the user selects produces its own cache entry. Left
+    unbounded, those pile up for the life of the session even after the
+    user moves on to different filters — max_entries caps it at the 16
+    most recently used filter combinations, which is far more headroom
+    than a typical session needs, and lets Streamlit evict the rest
+    instead of holding onto them forever.
     """
     result = {}
     if not symbols:
@@ -194,14 +204,21 @@ def _fetch_one_sparkline(symbol: str) -> tuple[str, list | None]:
         return symbol, None
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, max_entries=16, show_spinner=False)
 def _get_bulk_sparklines(symbols: tuple) -> dict:
     """
     Fetch today's intraday closes for multiple symbols in parallel, for the
     small inline sparkline next to Live price in the market table.
-    TTL=300s (vs 60s for live quotes) — the day's overall shape barely
-    changes minute to minute, so a slower refresh here avoids doubling the
+    TTL=300s (vs live-quote TTL) — the day's overall shape barely changes
+    minute to minute, so a slower refresh here avoids doubling the
     yfinance call volume of _get_bulk_live_quotes for little visual benefit.
+
+    This is the heaviest cache in the file — each entry holds a full list
+    of intraday closes per symbol, per distinct filter combination. Same
+    unbounded-growth risk as _get_bulk_live_quotes above, but with a
+    bigger memory footprint per entry, so it's the most important one to
+    cap. max_entries=16 keeps this from being the thing that quietly eats
+    RAM over a long session.
     """
     result = {}
     if not symbols:
@@ -560,8 +577,13 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
     # Previous-render live prices, kept in session_state, so a tick can be
     # flashed green/red on the render where it actually changes rather than
-    # just silently showing a different number than a moment ago.
+    # just silently showing a different number than a moment ago. Pruned to
+    # only the symbols currently on screen each run — otherwise this dict
+    # would keep one entry per symbol ever shown in the session (across
+    # every filter change) for the life of the browser tab.
     _prev_prices = st.session_state.setdefault("_live_price_flash_prev", {})
+    _prev_prices = {k: v for k, v in _prev_prices.items() if k in symbols}
+    st.session_state["_live_price_flash_prev"] = _prev_prices
 
     yf_available = bool(quotes)
 
