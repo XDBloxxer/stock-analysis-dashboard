@@ -1228,6 +1228,31 @@ div[data-testid="stAlert"] {
     100% { background: transparent; }
 }
 
+/* ── Live indicator dot ─────────────────────────────────────────────────────
+   Small breathing dot next to "Live Market View" so the auto-refresh is
+   visible at a glance, not just claimed in a caption. */
+.live-pulse-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green-bright);
+    box-shadow: 0 0 0 0 rgba(16,185,129,0.5);
+    animation: livePulseDot 2s ease-in-out infinite;
+    flex-shrink: 0;
+}
+@keyframes livePulseDot {
+    0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.5); }
+    70%  { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+    100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+}
+
+/* ── Live table row tint ────────────────────────────────────────────────────
+   A faint full-row green/red wash keyed to day change %, so scanning the
+   table for "what's moving" doesn't require reading every number — the
+   color alone sorts winners from losers at a glance. Intentionally subtle
+   (low alpha) so it reads as a background cue, not a colored block that
+   competes with the badges/text sitting on top of it. */
+.mkt-row-up   { background: rgba(16,185,129,0.05); border-radius: 6px; }
+.mkt-row-down { background: rgba(239,68,68,0.05);  border-radius: 6px; }
+
 /* ── Exchange chip ──────────────────────────────────────────────────────────
    Small colored dot + short code so the listing venue is scannable at a
    glance across a table, instead of only readable as plain text — also
