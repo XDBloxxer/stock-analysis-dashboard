@@ -26,7 +26,7 @@ import os
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, SIGNAL_BG, CONFUSION_COLORS
-from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric, exchange_chip_html, radial_gauge_svg
+from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric, exchange_chip_html, radial_gauge_svg, correlation_heatmap_svg
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
 
@@ -870,6 +870,57 @@ def _render_live_market_table(fdf: pd.DataFrame):
         f"Sparkline = today's price shape (15-min bars, refreshed every 5 min) · "
         f"Entry = price at time of prediction · Live data via Yahoo Finance · not financial advice"
     )
+
+    _render_correlation_heatmap(sparklines)
+
+
+def _render_correlation_heatmap(sparklines: dict, max_symbols: int = 8):
+    """
+    Pairwise correlation of today's intraday price shape across the
+    symbols already shown above — reuses the exact same `sparklines` dict
+    _render_live_market_table() just fetched (15-min bars via
+    _get_bulk_sparklines), so this costs zero extra API calls. Capped at
+    `max_symbols` (highest-volatility first, so the grid highlights names
+    that actually moved today rather than flat ones) since an NxN SVG grid
+    stops being scannable much past 8-10 symbols.
+
+    Correlation over ~15-min intraday bars is a same-day co-movement read,
+    not a statistically robust long-run correlation — framed as such in
+    the caption below the grid rather than presented as a finished metric.
+    """
+    series = {s: v for s, v in (sparklines or {}).items() if v and len(v) >= 5}
+    if len(series) < 2:
+        return
+
+    # Rank by intraday range (today's volatility) so the capped grid shows
+    # the names with an actual story to tell, not whichever happened to
+    # come back first from the thread pool.
+    ranked = sorted(
+        series.items(),
+        key=lambda kv: (max(kv[1]) - min(kv[1])) / (np.mean(kv[1]) or 1),
+        reverse=True,
+    )[:max_symbols]
+    symbols = [s for s, _ in ranked]
+
+    # Align to the shortest series length (bar counts can differ slightly
+    # symbol-to-symbol from the live fetch) before computing correlation.
+    min_len = min(len(v) for _, v in ranked)
+    if min_len < 5:
+        return
+    mat = np.array([v[-min_len:] for _, v in ranked], dtype=float)
+    corr = np.corrcoef(mat)
+    corr = np.nan_to_num(corr, nan=0.0)
+
+    with st.expander("Correlation — today's co-movement", expanded=False):
+        st.caption(
+            f"Pairwise correlation of today's intraday price shape across the "
+            f"{len(symbols)} most-active names above · same-day read, not a "
+            f"long-run statistic · green = moved together, red = moved opposite"
+        )
+        st.markdown(
+            correlation_heatmap_svg(symbols, corr.tolist()),
+            unsafe_allow_html=True,
+        )
 
 
 # ── Sub-tab 1 — Latest Predictions ────────────────────────────────────────────
