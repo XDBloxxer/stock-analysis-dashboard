@@ -77,6 +77,31 @@ DASHBOARD_CSS = """
     --radius-sm:   6px;
 }
 
+/* ── Session-aware ambient tint ────────────────────────────────────────────
+   Reads the `data-market-session` attribute the live-clock script now sets
+   on <body> (values mirror the status-dot classes: 'live' / 'warning' /
+   'idle' — see _LIVE_CLOCK_JS's `update()`). Nudges the ambient wash's
+   warmth to match what's actually happening: a touch brighter/greener
+   while the market is open, a warm amber lean pre/post-market, and a
+   slightly cooler, quieter wash once it's closed for the day. Deliberately
+   subtle — a mood shift you'd only consciously notice switching tabs at
+   different times of day, not a theme change. */
+body[data-market-session="live"] .stApp {
+    background-image:
+        radial-gradient(ellipse 80% 50% at 0% 0%,   rgba(16,185,129,0.06) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(224,168,60,0.05) 0%, transparent 55%) !important;
+}
+body[data-market-session="warning"] .stApp {
+    background-image:
+        radial-gradient(ellipse 80% 50% at 0% 0%,   rgba(224,168,60,0.07) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(224,168,60,0.04) 0%, transparent 55%) !important;
+}
+body[data-market-session="idle"] .stApp {
+    background-image:
+        radial-gradient(ellipse 80% 50% at 0% 0%,   rgba(134,149,171,0.04) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 45% at 100% 100%, rgba(134,149,171,0.03) 0%, transparent 55%) !important;
+}
+
 /* ── Base — quiet gradients + faint scanline texture + slow scan sweep ──── */
 .stApp {
     background-color: var(--bg-0) !important;
@@ -1197,6 +1222,28 @@ div[data-testid="stAlert"] {
     font-family: var(--font-body); font-weight: 700; color: var(--text-0);
 }
 
+/* ── Correlation heatmap ────────────────────────────────────────────────────
+   Pairs with correlation_heatmap_svg() below. Plain SVG grid, not a Plotly
+   heatmap — see that function's docstring for why. Cells fade in with a
+   quick stagger so a 10x10 grid doesn't just pop in as a flat block. */
+.corr-heatmap-wrap { display: inline-block; overflow-x: auto; max-width: 100%; }
+.corr-heatmap-label {
+    font-family: var(--font-body); font-size: 10px; fill: var(--text-2);
+}
+.corr-heatmap-value {
+    font-family: var(--font-body); font-size: 10px; font-weight: 600;
+    pointer-events: none;
+}
+.corr-heatmap-cell {
+    animation: corrCellIn 0.4s ease-out backwards;
+    transition: stroke 0.15s ease;
+}
+.corr-heatmap-cell:hover { stroke: var(--cyan-border); stroke-width: 1.5; }
+@keyframes corrCellIn {
+    from { opacity: 0; transform: scale(0.85); transform-origin: center; }
+    to   { opacity: 1; transform: scale(1); }
+}
+
 /* ── Boot sequence ──────────────────────────────────────────────────────────
    One-shot "connecting to feed" flicker shown before the header on a
    session's first render only (gated in Python via session_state — see
@@ -1714,7 +1761,84 @@ def radial_gauge_svg(percent, size=76, stroke=7, color=None, label=None) -> str:
     )
 
 
-# Pool of boot-flavor lines — one is picked at random per session so a
+def correlation_heatmap_svg(symbols, matrix, cell=40, label_col=56) -> str:
+    """
+    Symbol x symbol correlation grid — diverging brass/emerald scale so it
+    matches the accent palette instead of a generic red/blue heatmap. Takes
+    a plain list-of-lists / 2D array `matrix` of Pearson correlations in
+    [-1, 1] aligned to `symbols` (matrix[i][j] = corr(symbols[i], symbols[j])).
+    Deliberately NOT a Plotly heatmap: this is meant to sit inline next to
+    other small SVG widgets (the sparklines / radial gauges above) with the
+    same crisp, no-toolbar, no-hover-lag feel — a real Plotly figure here
+    would drag in its own font/hover chrome and look like a different app
+    bolted on next to the hand-drawn widgets.
+
+    Color logic: 0 correlation renders as the plain card background (no
+    signal), positive correlation ramps toward emerald, negative ramps
+    toward red — same convention already used for gain/loss everywhere
+    else, so a trader reads "green cell = moves together, red cell = moves
+    opposite" without a legend.
+
+        st.markdown(
+            correlation_heatmap_svg(["AAPL", "MSFT", "TSLA"], corr_matrix),
+            unsafe_allow_html=True,
+        )
+    """
+    n = len(symbols)
+    if n < 2 or not matrix or len(matrix) != n:
+        return ""
+
+    def _color(v):
+        v = max(-1.0, min(1.0, float(v)))
+        if v >= 0:
+            # 0 -> transparent bg-4, 1 -> full emerald
+            return f"rgba(52,211,153,{0.06 + 0.62 * v:.3f})"
+        return f"rgba(239,68,68,{0.06 + 0.62 * -v:.3f})"
+
+    w = label_col + cell * n
+    h = label_col + cell * n
+    parts = [f'<div class="corr-heatmap-wrap"><svg width="{w}" height="{h}" '
+             f'viewBox="0 0 {w} {h}" class="corr-heatmap-svg">']
+
+    # Column labels (rotated) and row labels
+    for j, sym in enumerate(symbols):
+        cx = label_col + cell * j + cell / 2
+        parts.append(
+            f'<text x="{cx}" y="{label_col - 8}" text-anchor="middle" '
+            f'transform="rotate(-40 {cx} {label_col - 8})" class="corr-heatmap-label">{sym}</text>'
+        )
+    for i, sym in enumerate(symbols):
+        cy = label_col + cell * i + cell / 2 + 4
+        parts.append(
+            f'<text x="{label_col - 8}" y="{cy}" text-anchor="end" class="corr-heatmap-label">{sym}</text>'
+        )
+
+    # Cells — only render below/on the diagonal (correlation matrices are
+    # symmetric; showing both triangles just doubles the visual noise for
+    # zero extra information).
+    for i in range(n):
+        for j in range(n):
+            if j > i:
+                continue
+            v = matrix[i][j]
+            x = label_col + cell * j
+            y = label_col + cell * i
+            is_diag = i == j
+            fill = "var(--bg-4)" if is_diag else _color(v)
+            txt = "1.00" if is_diag else f"{v:+.2f}"
+            txt_color = "var(--text-3)" if is_diag else ("var(--green-bright)" if v >= 0 else "var(--red-bright)")
+            parts.append(
+                f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" rx="3" '
+                f'fill="{fill}" stroke="var(--border)" stroke-width="1" class="corr-heatmap-cell"/>'
+                f'<text x="{x + cell/2}" y="{y + cell/2 + 4}" text-anchor="middle" '
+                f'class="corr-heatmap-value" fill="{txt_color}">{txt}</text>'
+            )
+
+    parts.append('</svg></div>')
+    return "".join(parts)
+
+
+
 # partner reloading the app across days sees some variety instead of the
 # exact same string every single time. All phrased in the same
 # "connecting to X" register so none of them reads as more/less important
@@ -2163,6 +2287,11 @@ _LIVE_CLOCK_JS = """
       dotEl.className = 'status-dot ' + dotCls;
       labelEl.textContent = label;
       labelEl.style.color = color;
+      // Session-aware palette hook — exposes the exact same state the
+      // status dot already uses as a body attribute, so CSS elsewhere can
+      // shift ambient tone (glow intensity, background warmth) between
+      // live/pre-post/closed without a second parallel state machine.
+      doc.body.setAttribute('data-market-session', dotCls);
       dateEl.textContent = WEEKDAY_ABBR[dow] + ' ' + pad2(et.getUTCDate()) + ' ' + MONTH_ABBR[et.getUTCMonth()] + ' ' + et.getUTCFullYear();
       timeEl.innerHTML = pad2(hour) + ':' + pad2(minute) + ':' + pad2(et.getUTCSeconds()) +
         ' <span style="font-size:0.75rem;color:var(--text-2);">ET</span>';
