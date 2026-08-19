@@ -135,7 +135,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script, inject_price_scramble_script, render_boot_sequence
+from dashboard_styles import DASHBOARD_CSS, COMPACT_CSS, inject_count_up_script, inject_mouse_glow_script, inject_live_clock_script, inject_price_scramble_script, render_boot_sequence, render_signature_footer
 st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
@@ -310,6 +310,7 @@ def main():
         '</div>',
         unsafe_allow_html=True,
     )
+    render_signature_footer()
 
 
 if __name__ == "__main__":
