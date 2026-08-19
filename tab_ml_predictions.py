@@ -30,7 +30,19 @@ from dashboard_styles import render_section_header, render_empty_state, render_s
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
 
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st_autorefresh = None
+
 TAB_ID = "ml_predictions"
+
+# How often the Live Market Table pulls fresh quotes, in seconds. True 1s
+# updates aren't sensible here — Yahoo Finance's free quote endpoint isn't
+# meant to be hammered at that rate, and yfinance itself doesn't move much
+# faster than this in practice. 15s is fast enough that the table feels
+# "live" without spamming requests or getting rate-limited mid-session.
+_LIVE_REFRESH_SECS = 15
 
 # Row cap used by _get_table_full — surfaced in the UI when a fetch hits it,
 # so a truncated view doesn't silently look like a complete one.
@@ -92,11 +104,12 @@ def _tv_url(symbol: str, exchange: str) -> str:
 
 
 # ── Live price fetch (short TTL — totally separate from Supabase cache) ───────
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=_LIVE_REFRESH_SECS, show_spinner=False)
 def _get_live_quote(symbol: str) -> dict | None:
     """
     Fetch a lightweight live quote via yfinance.fast_info.
-    TTL=60s so data refreshes every minute without hammering Yahoo.
+    TTL matches _LIVE_REFRESH_SECS so cached values expire right as the
+    next auto-refresh tick asks for them again.
     Returns None gracefully if yfinance is not installed or the call fails.
     """
     try:
@@ -135,7 +148,7 @@ def _fetch_one_quote(symbol: str) -> tuple[str, dict | None]:
         return symbol, None
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=_LIVE_REFRESH_SECS, show_spinner=False)
 def _get_bulk_live_quotes(symbols: tuple) -> dict:
     """
     Fetch live quotes for multiple symbols in parallel via a thread pool.
@@ -145,8 +158,9 @@ def _get_bulk_live_quotes(symbols: tuple) -> dict:
     table waits on N round-trips in series. Fanning them out across threads
     turns that into ~1 round-trip's worth of wall-clock time regardless of
     how many symbols are on screen.
-    Returns dict[symbol -> quote_dict]. TTL=60s, same as single-symbol fetch.
-    symbols must be a tuple (hashable) for st.cache_data to work.
+    Returns dict[symbol -> quote_dict]. TTL=_LIVE_REFRESH_SECS, same as
+    single-symbol fetch. symbols must be a tuple (hashable) for
+    st.cache_data to work.
     """
     result = {}
     if not symbols:
@@ -517,6 +531,13 @@ def _render_live_market_table(fdf: pd.DataFrame):
     if fdf.empty:
         return
 
+    # Auto-refresh: reruns just this script (not a browser page reload) on
+    # a timer, so the table keeps ticking without the user lifting a
+    # finger. Falls back to manual-refresh-only if the component isn't
+    # installed, with a one-time hint below instead of a hard crash.
+    if st_autorefresh is not None:
+        st_autorefresh(interval=_LIVE_REFRESH_SECS * 1000, key=f"{TAB_ID}_live_autorefresh")
+
     symbols = tuple(fdf["symbol"].tolist())
 
     # Skeleton rows are only shown the first time this tab renders in a
@@ -551,20 +572,25 @@ def _render_live_market_table(fdf: pd.DataFrame):
     col_hdr, col_ts = st.columns([5, 2])
     with col_hdr:
         st.markdown(
+            '<div style="display:flex;align-items:center;gap:7px;">'
+            '<span class="live-pulse-dot"></span>'
             '<span style="font-family:var(--font-body);font-size:0.58rem;font-weight:500;'
-            'letter-spacing:0.2em;text-transform:uppercase;color:var(--text-2);">Live Market View</span>',
+            'letter-spacing:0.2em;text-transform:uppercase;color:var(--text-2);">Live Market View</span>'
+            '</div>',
             unsafe_allow_html=True,
         )
     with col_ts:
         from datetime import datetime as _dt
         st.markdown(
             f'<div style="text-align:right;font-family:var(--font-body);font-size:0.58rem;'
-            f'color:var(--text-3);">quotes cached 60 s · {_dt.now().strftime("%H:%M:%S")}</div>',
+            f'color:var(--text-3);">auto-refresh every {_LIVE_REFRESH_SECS}s · last tick {_dt.now().strftime("%H:%M:%S")}</div>',
             unsafe_allow_html=True,
         )
 
     if not yf_available:
         st.warning("⚠️ Live quotes unavailable — install `yfinance` or check network.")
+    elif st_autorefresh is None:
+        st.caption("Auto-refresh needs the `streamlit-autorefresh` package (now in requirements.txt) — install it and restart the app to stop needing manual reloads.")
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -737,6 +763,11 @@ def _render_live_market_table(fdf: pd.DataFrame):
             f'color:var(--text-1);margin-top:2px;">L ${day_low:.2f}</div>'
         ) if day_low else ""
 
+        # Faint full-row tint by day change — lets you scan the whole table
+        # for winners/losers by color alone before reading a single number.
+        row_cls = "" if day_chg is None else ("mkt-row-up" if day_chg >= 0 else "mkt-row-down")
+        st.markdown(f'<div class="{row_cls}">', unsafe_allow_html=True)
+
         cols = st.columns([2.6, 1.4, 1.1, 1.1, 1.8, 1.3, 3.7, 0.7])
 
         # Col 0 — Ticker + exchange + volume
@@ -869,9 +900,12 @@ def _render_live_market_table(fdf: pd.DataFrame):
             '<div style="height:1px;background:var(--border-mid);margin:2px 0 4px;"></div>',
             unsafe_allow_html=True,
         )
+        st.markdown('</div>', unsafe_allow_html=True)  # close row-tint wrapper
 
     st.caption(
-        f"{len(fdf)} stocks · Bar = intraday high % of the way to target gain · "
+        f"{len(fdf)} stocks · updates automatically every {_LIVE_REFRESH_SECS}s · "
+        f"green/red row tint = up/down on the day · "
+        f"Bar = intraday high % of the way to target gain · "
         f"Sparkline = today's price shape (15-min bars, refreshed every 5 min) · "
         f"Entry = price at time of prediction · Live data via Yahoo Finance · not financial advice"
     )
