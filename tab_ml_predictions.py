@@ -102,7 +102,7 @@ def _tv_url(symbol: str, exchange: str) -> str:
 @st.cache_data(ttl=_LIVE_REFRESH_SECS, max_entries=64, show_spinner=False)
 def _get_live_quote(symbol: str) -> dict | None:
     """
-    Fetch a lightweight live quote via yfinance.fast_info.
+    Fetch a lightweight live quote via yfinance.
     TTL matches _LIVE_REFRESH_SECS so cached values expire right as the
     next auto-refresh tick asks for them again. max_entries bounds this
     to the ~64 most recently used symbols so memory doesn't grow forever
@@ -111,9 +111,13 @@ def _get_live_quote(symbol: str) -> dict | None:
     """
     try:
         import yfinance as yf
-        info = yf.Ticker(symbol).fast_info
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info
+        last_price = _prepost_last_price(ticker)
+        if last_price is None:
+            last_price = getattr(info, "last_price", None)
         return {
-            "last_price": getattr(info, "last_price",      None),
+            "last_price": last_price,
             "day_high":   getattr(info, "day_high",        None),
             "day_low":    getattr(info, "day_low",         None),
             "open":       getattr(info, "open",            None),
@@ -127,13 +131,49 @@ def _get_live_quote(symbol: str) -> dict | None:
         return None
 
 
+def _prepost_last_price(ticker) -> float | None:
+    """
+    Pull the most recent 1-minute bar, including pre/post-market data.
+
+    fast_info.last_price is backed by Yahoo's regularMarketPrice field,
+    which only updates during the 9:30-16:00 ET regular session — during
+    pre-market (4:00-9:30 ET) and after-hours it just sits on the prior
+    regular-session close, so a table driven purely by fast_info looks
+    "live" (it keeps refreshing) but actually shows a frozen price outside
+    market hours.
+
+    history(..., prepost=True) does carry pre/post-market ticks, and its
+    last close during the regular session is effectively the same live
+    price fast_info would give — so using this as the single source of
+    truth keeps behavior correct both during and outside regular hours,
+    rather than needing separate code paths gated on time-of-day.
+
+    Returns None (rather than raising) if the history call fails or comes
+    back empty, so callers can fall back to fast_info.
+    """
+    try:
+        hist = ticker.history(period="1d", interval="1m", prepost=True)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+        closes = hist["Close"].dropna()
+        if closes.empty:
+            return None
+        return float(closes.iloc[-1])
+    except Exception:
+        return None
+
+
 def _fetch_one_quote(symbol: str) -> tuple[str, dict | None]:
     """Worker for the thread pool in _get_bulk_live_quotes — one symbol in, one quote out."""
     try:
         import yfinance as yf
-        info = yf.Ticker(symbol).fast_info
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info
+        last_price = _prepost_last_price(ticker)
+        if last_price is None:
+            last_price = getattr(info, "last_price", None)
         return symbol, {
-            "last_price": getattr(info, "last_price",     None),
+            "last_price": last_price,
             "day_high":   getattr(info, "day_high",       None),
             "day_low":    getattr(info, "day_low",        None),
             "open":       getattr(info, "open",           None),
