@@ -113,13 +113,11 @@ def _get_live_quote(symbol: str) -> dict | None:
         import yfinance as yf
         ticker = yf.Ticker(symbol)
         info = ticker.fast_info
-        last_price = _prepost_last_price(ticker)
-        if last_price is None:
-            last_price = getattr(info, "last_price", None)
+        live = _prepost_intraday_quote(ticker)
         return {
-            "last_price": last_price,
-            "day_high":   getattr(info, "day_high",        None),
-            "day_low":    getattr(info, "day_low",         None),
+            "last_price": (live or {}).get("last_price", None) or getattr(info, "last_price", None),
+            "day_high":   (live or {}).get("day_high",   None) or getattr(info, "day_high",   None),
+            "day_low":    (live or {}).get("day_low",    None) or getattr(info, "day_low",    None),
             "open":       getattr(info, "open",            None),
             "prev_close": getattr(info, "previous_close",  None),
             "volume":     getattr(info, "last_volume",     None),
@@ -131,34 +129,45 @@ def _get_live_quote(symbol: str) -> dict | None:
         return None
 
 
-def _prepost_last_price(ticker) -> float | None:
+def _prepost_intraday_quote(ticker) -> dict | None:
     """
-    Pull the most recent 1-minute bar, including pre/post-market data.
+    Pull today's 1-minute bars, including pre/post-market data, and derive
+    last price / day high / day low from them.
 
-    fast_info.last_price is backed by Yahoo's regularMarketPrice field,
-    which only updates during the 9:30-16:00 ET regular session — during
-    pre-market (4:00-9:30 ET) and after-hours it just sits on the prior
-    regular-session close, so a table driven purely by fast_info looks
-    "live" (it keeps refreshing) but actually shows a frozen price outside
-    market hours.
+    fast_info's last_price, day_high, and day_low are all backed by Yahoo's
+    regularMarketPrice / regularMarketDayHigh / regularMarketDayLow fields.
+    Those only update during the 9:30-16:00 ET regular session — during
+    pre-market (4:00-9:30 ET) and after-hours they just sit on the prior
+    regular session's numbers. That means a "Day High" / target-reached
+    check driven purely by fast_info silently keeps comparing against
+    yesterday's high while pre-market trading is actually making new highs
+    or lows.
 
-    history(..., prepost=True) does carry pre/post-market ticks, and its
-    last close during the regular session is effectively the same live
-    price fast_info would give — so using this as the single source of
-    truth keeps behavior correct both during and outside regular hours,
-    rather than needing separate code paths gated on time-of-day.
+    history(period="1d", interval="1m", prepost=True) does carry pre/post
+    market ticks and is scoped to just the current trading day, so taking
+    max/min of its High/Low columns gives the true intraday range including
+    any pre-market move, and its last Close is the live price. During the
+    regular session this converges to the same numbers fast_info would give,
+    so no separate time-of-day branching is needed — this one code path is
+    correct at all times.
 
-    Returns None (rather than raising) if the history call fails or comes
-    back empty, so callers can fall back to fast_info.
+    Returns None (rather than raising) if the call fails or comes back
+    empty, so callers can fall back to fast_info entirely.
     """
     try:
         hist = ticker.history(period="1d", interval="1m", prepost=True)
-        if hist is None or hist.empty or "Close" not in hist.columns:
+        if hist is None or hist.empty:
             return None
-        closes = hist["Close"].dropna()
-        if closes.empty:
+        closes = hist["Close"].dropna() if "Close" in hist.columns else None
+        highs  = hist["High"].dropna()  if "High"  in hist.columns else None
+        lows   = hist["Low"].dropna()   if "Low"   in hist.columns else None
+        if closes is None or closes.empty:
             return None
-        return float(closes.iloc[-1])
+        return {
+            "last_price": float(closes.iloc[-1]),
+            "day_high":   float(highs.max()) if highs is not None and not highs.empty else None,
+            "day_low":    float(lows.min())  if lows  is not None and not lows.empty  else None,
+        }
     except Exception:
         return None
 
@@ -169,13 +178,11 @@ def _fetch_one_quote(symbol: str) -> tuple[str, dict | None]:
         import yfinance as yf
         ticker = yf.Ticker(symbol)
         info = ticker.fast_info
-        last_price = _prepost_last_price(ticker)
-        if last_price is None:
-            last_price = getattr(info, "last_price", None)
+        live = _prepost_intraday_quote(ticker)
         return symbol, {
-            "last_price": last_price,
-            "day_high":   getattr(info, "day_high",       None),
-            "day_low":    getattr(info, "day_low",        None),
+            "last_price": (live or {}).get("last_price", None) or getattr(info, "last_price", None),
+            "day_high":   (live or {}).get("day_high",   None) or getattr(info, "day_high",   None),
+            "day_low":    (live or {}).get("day_low",    None) or getattr(info, "day_low",    None),
             "open":       getattr(info, "open",           None),
             "prev_close": getattr(info, "previous_close", None),
             "volume":     getattr(info, "last_volume",    None),
