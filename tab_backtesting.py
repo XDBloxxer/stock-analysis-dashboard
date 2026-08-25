@@ -391,7 +391,7 @@ def _config_controls(label: str, key_prefix: str, min_date, max_date, default_si
     with c2:
         exit_mode = st.selectbox(
             "Exit strategy",
-            ["Close at end of day", "Take-profit at target (if hit intraday)"],
+            ["Close at end of day", "Take-profit at target if hit intraday, else close"],
             key=f"{key_prefix}_exit_mode",
         )
     max_positions = st.slider(
