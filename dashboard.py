@@ -297,18 +297,13 @@ def main():
         st.error(f"Error importing tab modules: {e}")
         st.stop()
 
-    # ── Command center — single at-a-glance read before drilling into a tab ──
-    # IMPORTANT: this block's structure must render identically (same number
-    # of elements, every run) regardless of data/errors — st.tabs() below
-    # loses track of which tab is active if the DOM structure preceding it
-    # shifts between reruns (streamlit/streamlit#5069), and since Streamlit
-    # reruns the whole script top-to-bottom for ANY widget interaction in
-    # ANY tab, an unstable block here was resetting users to the first tab
-    # every time they touched a control elsewhere. So: no conditional
-    # try/except that can skip rendering, and the strip itself always
-    # renders the same three columns every run.
-    from command_center import render_command_center
-    render_command_center(label, dot_cls)
+    # ── Global watchlist bar — kept even without the full command-center
+    # strip (dropped per feedback: it repeated info already visible in the
+    # tabs). Same structural-stability rule still applies: always renders
+    # the same wrapper element so st.tabs() below doesn't lose track of the
+    # active tab on reruns triggered from elsewhere (streamlit/streamlit#5069).
+    from command_center import render_watchlist_bar
+    render_watchlist_bar()
     st.markdown('<hr style="margin:18px 0 22px;">', unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs([
