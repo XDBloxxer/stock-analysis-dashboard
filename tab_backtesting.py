@@ -873,6 +873,25 @@ def render_backtesting_tab():
             st.warning("No trades match the selected signals and date range.")
             return
 
+        with st.expander("🔧 Debug: parameters used in this run", expanded=False):
+            st.caption(
+                f"signals={sim_signals} · date_range=({sim_start} → {sim_end}) · "
+                f"start_capital=${start_capital:,.2f} · commission_fee=${commission_fee:,.2f} · "
+                f"slippage_bps={slippage_bps:g} · max_deploy_pct={max_deploy_pct:g}% · "
+                f"max_positions={max_positions} · use_take_profit={use_take_profit} · "
+                f"use_stop_loss={use_stop_loss} · stop_loss_pct={stop_loss_pct:g}% · "
+                f"weight_by_confidence={weight_by_confidence} · "
+                f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')} · "
+                f"rows_in_sim_df={stats['n_trades']} trades over {stats['n_days']} day(s)"
+            )
+            st.caption(
+                "If you change a setting above and these values don't change here too, "
+                "the app isn't picking up your edit (check that the deployed "
+                "tab_backtesting.py is actually the updated file, then do a full restart "
+                "of the Streamlit process and a hard browser refresh — not just 'Refresh "
+                "Cache', which only clears the data fetch, not the app code)."
+            )
+
         _render_stats(stats)
         if use_stop_loss:
             if stats.get("stop_loss_uses_real_low"):
@@ -988,6 +1007,23 @@ def render_backtesting_tab():
         if result_a is None or result_b is None:
             st.warning("No trades match one or both configurations over the selected date range.")
             return
+
+        with st.expander("🔧 Debug: parameters used in this run", expanded=False):
+            st.caption(
+                f"shared: start_capital=${start_capital:,.2f} · commission_fee=${commission_fee:,.2f} · "
+                f"slippage_bps={slippage_bps:g} · max_deploy_pct={max_deploy_pct:g}% · "
+                f"date_range=({sim_start} → {sim_end})"
+            )
+            st.caption(
+                f"A: signals={signals_a} · max_positions={max_pos_a} · take_profit={take_profit_a} · "
+                f"stop_loss={sl_a} ({sl_pct_a:g}%) · weight_by_confidence={wbc_a} · "
+                f"{stats_a['n_trades']} trades over {stats_a['n_days']} day(s)"
+            )
+            st.caption(
+                f"B: signals={signals_b} · max_positions={max_pos_b} · take_profit={take_profit_b} · "
+                f"stop_loss={sl_b} ({sl_pct_b:g}%) · weight_by_confidence={wbc_b} · "
+                f"{stats_b['n_trades']} trades over {stats_b['n_days']} day(s)"
+            )
 
         render_labeled_divider("Results")
         stat_a_col, stat_b_col = st.columns(2)
