@@ -26,6 +26,8 @@ _DEFAULTS = {
     "compact_mode": False,
     "max_positions": 10,
     "commission_fee": 0.0,
+    "slippage_bps": 10.0,
+    "max_deploy_pct": 100,
     "default_exit_mode": "Close at end of day",
     "watchlist": [],
 }
