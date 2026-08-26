@@ -949,6 +949,9 @@ def render_symbol_search(available_dates: list[str]):
     avg_chg = res_df['Change (%)'].mean()
     best    = res_df['Change (%)'].max()
 
+    import user_state
+    user_state.star_button(target, key=f"daily_winners_search_star_{target}", size_label=True)
+
     st.markdown(f"""
     <div class="search-result-card">
         <span class="ticker">{target}</span>
