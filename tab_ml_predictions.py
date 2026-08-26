@@ -29,6 +29,7 @@ from chart_utils import CHART_THEME, LAYOUT, AXIS_STYLE, COLORS, SIGNAL_COLORS, 
 from dashboard_styles import render_section_header, render_empty_state, render_skeleton_rows, render_labeled_divider, ticker_copy_html, render_hero_metric, exchange_chip_html, radial_gauge_svg, correlation_heatmap_svg
 from cache_ui import render_cache_buttons
 from format_utils import fmt_compact
+import user_state
 
 TAB_ID = "ml_predictions"
 
@@ -834,7 +835,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
 
         cols = st.columns([2.6, 1.4, 1.1, 1.1, 1.8, 1.3, 3.7, 0.7])
 
-        # Col 0 — Ticker + exchange + volume
+        # Col 0 — Ticker + exchange + volume + global watchlist star
         with cols[0]:
             sym_html = ticker_copy_html(
                 sym, style="font-family:var(--font-body);font-size:0.95rem;"
@@ -849,6 +850,7 @@ def _render_live_market_table(fdf: pd.DataFrame):
                 f'</div>',
                 unsafe_allow_html=True,
             )
+            user_state.star_button(sym, key=f"{TAB_ID}_live_star_{sym}")
 
         # Col 1 — Signal badge
         with cols[1]:
@@ -1940,6 +1942,70 @@ def _render_performance_trends():
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _render_feature_importance():
+    """
+    'What's driving the model' — renders the ml_feature_importance table
+    (training_date, feature_name, importance, rank) that's already fetched
+    as an optional table elsewhere but was never shown anywhere in the UI.
+
+    Shows the top-N features from the most recent training run as a
+    horizontal bar chart, ranked by importance. Fails quietly (no warning
+    banner) if the table doesn't exist in this deployment yet — same
+    treatment as every other optional table.
+    """
+    fi_df = _get_table_optional("ml_feature_importance")
+    if fi_df.empty:
+        st.caption(
+            "No `ml_feature_importance` data available yet — this view lights up "
+            "automatically once that table has rows from a training run."
+        )
+        return
+
+    fi_df = fi_df.copy()
+    fi_df["training_date"] = pd.to_datetime(fi_df["training_date"], errors="coerce")
+    fi_df["importance"]    = pd.to_numeric(fi_df["importance"], errors="coerce")
+    latest_run = fi_df["training_date"].max()
+    latest = fi_df[fi_df["training_date"] == latest_run].dropna(subset=["importance"])
+    if latest.empty:
+        st.caption("Feature importance data present but couldn't be parsed for the latest run.")
+        return
+
+    if "rank" in latest.columns:
+        latest = latest.sort_values("rank", ascending=True)
+    else:
+        latest = latest.sort_values("importance", ascending=False)
+
+    top_n = st.slider(
+        "Top N features", min_value=5, max_value=min(40, len(latest)),
+        value=min(15, len(latest)), key=f"{TAB_ID}_fi_top_n",
+    )
+    plot_df = latest.head(top_n).iloc[::-1]  # reverse so #1 renders at the top of the barh
+
+    fig = go.Figure(go.Bar(
+        x=plot_df["importance"],
+        y=plot_df["feature_name"],
+        orientation="h",
+        marker=dict(color=COLORS["primary"]),
+        hovertemplate="%{y}<br>Importance: %{x:.4f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=f"Top {top_n} Features by Importance — trained {latest_run.strftime('%b %d, %Y') if pd.notna(latest_run) else '—'}",
+        height=max(320, 24 * top_n),
+        margin=dict(t=44, b=24, l=140, r=16),
+        **{k: v for k, v in LAYOUT.items() if k != "margin"},
+    )
+    fig.update_xaxes(title_text="Importance", **AXIS_STYLE)
+    fig.update_yaxes(**AXIS_STYLE)
+    st.plotly_chart(fig, use_container_width=True)
+
+    n_runs = fi_df["training_date"].nunique()
+    if n_runs > 1:
+        st.caption(
+            f"Showing the most recent of {n_runs} training runs on record. "
+            "Feature importances can drift between retrains as market regime changes."
+        )
+
+
 # ── Sub-tab 5 — System Info ────────────────────────────────────────────────────
 def _render_system_info():
     render_section_header(5, "System Info")
@@ -2004,6 +2070,9 @@ def _render_system_info():
 
     else:
         st.info("No screening logs found yet.")
+
+    render_labeled_divider("Model Explainability")
+    _render_feature_importance()
 
     render_labeled_divider("Database Summary")
 
