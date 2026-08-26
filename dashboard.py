@@ -298,16 +298,18 @@ def main():
         st.stop()
 
     # ── Command center — single at-a-glance read before drilling into a tab ──
-    try:
-        from command_center import render_command_center
-        render_command_center(label, dot_cls)
-        st.markdown('<hr style="margin:18px 0 22px;">', unsafe_allow_html=True)
-    except Exception as e:
-        try:
-            from db import log_debug_error
-            log_debug_error("command_center", e)
-        except Exception:
-            pass
+    # IMPORTANT: this block's structure must render identically (same number
+    # of elements, every run) regardless of data/errors — st.tabs() below
+    # loses track of which tab is active if the DOM structure preceding it
+    # shifts between reruns (streamlit/streamlit#5069), and since Streamlit
+    # reruns the whole script top-to-bottom for ANY widget interaction in
+    # ANY tab, an unstable block here was resetting users to the first tab
+    # every time they touched a control elsewhere. So: no conditional
+    # try/except that can skip rendering, and the strip itself always
+    # renders the same three columns every run.
+    from command_center import render_command_center
+    render_command_center(label, dot_cls)
+    st.markdown('<hr style="margin:18px 0 22px;">', unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs([
         "Today's Picks",
