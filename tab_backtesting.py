@@ -329,6 +329,125 @@ def _render_trade_log_download(trade_log: pd.DataFrame, key: str):
     )
 
 
+def _run_monte_carlo(daily_returns: pd.Series, start_capital: float, n_sims: int = 500, seed: int = 42):
+    """
+    Bootstrap-resamples the simulation's own day-over-day portfolio returns
+    (with replacement) into `n_sims` alternate equity-curve paths of the
+    same length as the actual run. This reshuffles the order/combination of
+    days that already happened — it does not invent new trades, edges, or
+    signals — so it answers "how much did realized path order matter to
+    this specific outcome", not "what if the strategy were different."
+
+    Returns an (n_sims, n_days+1) array of portfolio values (column 0 is
+    always start_capital), or None if there aren't enough daily
+    observations (~5) to resample meaningfully.
+    """
+    returns = np.asarray(daily_returns.dropna(), dtype=float)
+    if len(returns) < 5:
+        return None
+    rng = np.random.default_rng(seed)
+    n_days = len(returns)
+    sampled = rng.choice(returns, size=(n_sims, n_days), replace=True)
+    growth = np.cumprod(1 + sampled, axis=1)
+    paths = start_capital * np.hstack([np.ones((n_sims, 1)), growth])
+    return paths
+
+
+def _render_monte_carlo(sim_result: pd.DataFrame, start_capital: float, key_prefix: str,
+                          show_divider: bool = True, chart_title: str | None = None):
+    """Renders the Monte Carlo controls + fan chart + final-value histogram
+    for one simulation result. Safe to call multiple times with different
+    key_prefix values (e.g. once per side in comparison mode)."""
+    if show_divider:
+        render_labeled_divider("Monte Carlo Resampling")
+        _info_card(
+            "Resamples this run's own day-over-day returns with replacement to build alternate "
+            "equity-curve paths of the same length — a distribution of plausible outcomes from the "
+            "same edge and trade cadence, rather than the single deterministic path that actually "
+            "occurred over this date range. It reshuffles day order/magnitude; it does not invent "
+            "new trades or a different edge, and (like the deterministic run above) still assumes "
+            "every trade fills at its resolved gain with no slippage.",
+            muted=True,
+        )
+
+    run_mc = st.checkbox(
+        "Run Monte Carlo resampling" if not chart_title else f"Run Monte Carlo resampling — {chart_title}",
+        key=f"{key_prefix}_run_mc",
+    )
+    if not run_mc:
+        return
+
+    n_sims = st.slider(
+        "Number of simulated paths", min_value=100, max_value=2000, value=500, step=100,
+        key=f"{key_prefix}_mc_n_sims",
+    )
+
+    daily_returns = sim_result["portfolio_value"].pct_change()
+    paths = _run_monte_carlo(daily_returns, start_capital, n_sims=n_sims)
+    if paths is None:
+        st.info("Not enough daily observations (need at least ~5 trading days) to run a meaningful resampling.")
+        return
+
+    pct = {p: np.percentile(paths, p, axis=0) for p in [5, 25, 50, 75, 95]}
+    x_idx = list(range(paths.shape[1]))
+    title = chart_title or f"Monte Carlo Fan Chart — {n_sims} resampled paths"
+
+    fig = go.Figure()
+    # Outer band (5th–95th pct) — two invisible-line traces with a fill
+    # between them, the standard Plotly pattern for a shaded percentile band.
+    fig.add_trace(go.Scatter(x=x_idx, y=pct[95], mode="lines", line=dict(width=0),
+                              showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x_idx, y=pct[5], mode="lines", line=dict(width=0),
+                              fill="tonexty", fillcolor="rgba(224,168,60,0.08)",
+                              name="5th–95th percentile", hoverinfo="skip"))
+    # Inner band (25th–75th pct), drawn darker so the interquartile range
+    # reads as the "likely" zone against the wider tail band underneath.
+    fig.add_trace(go.Scatter(x=x_idx, y=pct[75], mode="lines", line=dict(width=0),
+                              showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x_idx, y=pct[25], mode="lines", line=dict(width=0),
+                              fill="tonexty", fillcolor="rgba(224,168,60,0.20)",
+                              name="25th–75th percentile", hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x_idx, y=pct[50], mode="lines",
+                              line=dict(color=COLORS["primary"], width=2.2), name="Median path"))
+    fig.add_trace(go.Scatter(x=x_idx, y=[start_capital] * len(x_idx), mode="lines",
+                              line=dict(color="rgba(255,255,255,0.18)", width=1, dash="dash"),
+                              name="Starting capital", hoverinfo="skip"))
+    fig.update_layout(
+        title=title, xaxis_title="Trading day #", yaxis_title="Portfolio Value ($)",
+        height=380, hovermode="x unified", **LAYOUT,
+    )
+    fig.update_xaxes(**AXIS_STYLE)
+    fig.update_yaxes(**AXIS_STYLE)
+    st.plotly_chart(fig, use_container_width=True)
+
+    finals = paths[:, -1]
+    prob_loss = float((finals < start_capital).mean() * 100)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Median Final Value", f"${np.median(finals):,.2f}")
+    m2.metric("5th Percentile", f"${np.percentile(finals, 5):,.2f}",
+              help="Worst-ish plausible outcome across resampled paths — 5% of paths finished below this.")
+    m3.metric("95th Percentile", f"${np.percentile(finals, 95):,.2f}",
+              help="Best-ish plausible outcome across resampled paths — 5% of paths finished above this.")
+    m4.metric("P(Loss)", f"{prob_loss:.1f}%",
+              help="Share of resampled paths that ended below starting capital.")
+
+    hist_fig = go.Figure(go.Histogram(
+        x=finals, nbinsx=40, marker=dict(color=COLORS["primary"]),
+        hovertemplate="$%{x:,.0f}<br>Paths: %{y}<extra></extra>",
+    ))
+    hist_fig.add_vline(
+        x=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.3)",
+        annotation_text="Starting capital", annotation_font_size=10,
+    )
+    hist_fig.update_layout(
+        title="Distribution of Resampled Final Portfolio Values",
+        xaxis_title="Final Portfolio Value ($)", yaxis_title="Paths", height=280, **LAYOUT,
+    )
+    hist_fig.update_xaxes(**AXIS_STYLE)
+    hist_fig.update_yaxes(**AXIS_STYLE)
+    st.plotly_chart(hist_fig, use_container_width=True)
+
+
 def _threshold_segments(x, y, threshold: float):
     """
     Split an (x, y) line into contiguous segments, each tagged 'above' or
@@ -696,6 +815,8 @@ def render_backtesting_tab():
         with st.expander(f"View all {len(trade_log)} simulated trades"):
             st.dataframe(trade_log, use_container_width=True, hide_index=True)
 
+        _render_monte_carlo(sim_result, start_capital, "sim")
+
         _info_card(
             "Note: results still assume every simulated trade could actually "
             "be filled at the resolved gain, with no slippage, no "
@@ -800,6 +921,19 @@ def render_backtesting_tab():
         with dl_col_b:
             st.markdown("**Configuration B**")
             _render_trade_log_download(trade_log_b, key="sim_b_trade_log_dl")
+
+        render_labeled_divider("Monte Carlo Resampling")
+        _info_card(
+            "Resamples each configuration's own day-over-day returns with replacement into alternate "
+            "equity-curve paths of the same length — a distribution of plausible outcomes from each "
+            "run's own edge and cadence, not a different strategy. Run independently per side below.",
+            muted=True,
+        )
+        mc_col_a, mc_col_b = st.columns(2)
+        with mc_col_a:
+            _render_monte_carlo(result_a, start_capital, "sim_a", show_divider=False, chart_title="Configuration A")
+        with mc_col_b:
+            _render_monte_carlo(result_b, start_capital, "sim_b", show_divider=False, chart_title="Configuration B")
 
         _info_card(
             "Note: both runs share the same starting capital, commission, and "
