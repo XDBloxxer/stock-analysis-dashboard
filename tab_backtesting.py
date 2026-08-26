@@ -10,6 +10,7 @@ v3: Replaced the old strategy-creation / GitHub-Actions backtesting system
 in its entirety from the Performance Trends sub-tab of ML Predictions.
 """
 
+import hashlib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -654,8 +655,26 @@ def _render_stats(stats: dict, key_prefix: str = ""):
     """Headline number rendered as a hero metric (matching Today's Picks /
     Daily Winners' visual weight) with the supporting numbers underneath as
     a regular metric grid — instead of every number competing at the same
-    plain st.metric weight."""
+    plain st.metric weight.
+
+    Each st.metric below is given an explicit `key` derived from a hash of
+    `stats` itself (plus key_prefix, to keep the A/B panels from colliding
+    with each other). This is a defensive fix for a class of Streamlit
+    frontend desync where a metric widget's rendered value can lag behind
+    the value Python actually computed for it on a given rerun (confirmed
+    NOT a bug in this function — the debug expander above reads the exact
+    same `stats` dict one line before this is called, in the same script
+    run, so the two can never actually disagree in the backend). Hashing
+    the content into the key forces Streamlit to treat a materially
+    different result as a brand-new widget instance instead of reusing
+    the previous one in place, which sidesteps the desync entirely rather
+    than relying on a same-position value update landing correctly."""
     sharpe_display = f"{stats['sharpe_like']:.2f}" if stats["sharpe_like"] is not None else "N/A"
+
+    stats_fingerprint = hashlib.md5(
+        repr(sorted(stats.items(), key=lambda kv: kv[0])).encode("utf-8")
+    ).hexdigest()[:10]
+    widget_key = f"{key_prefix}_{stats_fingerprint}"
 
     accent = "green" if stats["total_return"] >= 0 else "red"
     render_hero_metric(
@@ -665,15 +684,20 @@ def _render_stats(stats: dict, key_prefix: str = ""):
     )
 
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Total Fees Paid", f"${stats['total_fees']:,.2f}")
+    m1.metric("Total Fees Paid", f"${stats['total_fees']:,.2f}",
+              key=f"{widget_key}_fees")
     m2.metric("Est. Slippage Cost", f"${stats.get('total_slippage', 0.0):,.2f}",
-              help="Estimated spread/market-impact cost from the slippage (bps) setting, on top of commission.")
+              help="Estimated spread/market-impact cost from the slippage (bps) setting, on top of commission.",
+              key=f"{widget_key}_slippage")
     m3.metric("Trade Win Rate", f"{stats['win_rate']:.1f}%",
-              help="% of individual simulated trades with a positive resolved gain.")
+              help="% of individual simulated trades with a positive resolved gain.",
+              key=f"{widget_key}_winrate")
     m4.metric("Sharpe-like Ratio (annualized)", sharpe_display,
-              help="Mean ÷ std. dev. of day-over-day portfolio returns, annualized using this run's own observed trading frequency (not a flat 252). A rough risk-adjusted-return signal, not a textbook Sharpe ratio.")
+              help="Mean ÷ std. dev. of day-over-day portfolio returns, annualized using this run's own observed trading frequency (not a flat 252). A rough risk-adjusted-return signal, not a textbook Sharpe ratio.",
+              key=f"{widget_key}_sharpe")
     m5.metric("Max Drawdown", f"{stats['max_drawdown']:.1f}%",
-              help="Largest peak-to-trough decline in the simulated portfolio value over the run.")
+              help="Largest peak-to-trough decline in the simulated portfolio value over the run.",
+              key=f"{widget_key}_drawdown")
     if stats.get("stop_loss_uses_real_low"):
         st.caption("✅ Stop-loss checked against actual intraday lows for this run.")
 
@@ -901,7 +925,7 @@ def render_backtesting_tab():
                 "Cache', which only clears the data fetch, not the app code)."
             )
 
-        _render_stats(stats)
+        _render_stats(stats, key_prefix="sim")
         if use_stop_loss:
             if stats.get("stop_loss_uses_real_low"):
                 _info_card(
@@ -1037,10 +1061,10 @@ def render_backtesting_tab():
         stat_a_col, stat_b_col = st.columns(2)
         with stat_a_col:
             st.markdown(f"**Configuration A** — {', '.join(signals_a)}")
-            _render_stats(stats_a)
+            _render_stats(stats_a, key_prefix="sim_a")
         with stat_b_col:
             st.markdown(f"**Configuration B** — {', '.join(signals_b)}")
-            _render_stats(stats_b)
+            _render_stats(stats_b, key_prefix="sim_b")
 
         show_benchmark_cmp = st.checkbox(
             "Show SPY buy & hold benchmark", value=True, key="sim_cmp_show_benchmark",
