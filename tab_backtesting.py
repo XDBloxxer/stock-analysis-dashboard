@@ -31,6 +31,13 @@ _SELECT = (
     "predicted_target_gain,became_winner,actual_gain_pct,actual_high_pct,"
     "actual_price,prediction_correct,gain_error_pct"
 )
+# Optional column: if the underlying table carries an intraday-low figure,
+# stop-loss simulation can check whether price actually touched the stop
+# during the day instead of only approximating off the day's resolved gain
+# (see _simulate's use_stop_loss branch). Requested opportunistically —
+# _get_table_all() falls back to _SELECT without it if the column doesn't
+# exist on this deployment's table.
+_SELECT_WITH_LOW = _SELECT + ",actual_low_pct"
 
 _ALL_SIGNALS = ["STRONG BUY", "BUY", "HOLD", "AVOID"]
 
@@ -44,7 +51,7 @@ def _info_card(text: str, muted: bool = False) -> None:
 # ── Cached DB fetcher (paginates the full table — used for full-history sim) ──
 @st.cache_data(show_spinner=False)
 def _get_table_all() -> pd.DataFrame:
-    try:
+    def _fetch(select_clause: str) -> pd.DataFrame:
         client    = get_supabase_client()
         page_size = 1000
         offset    = 0
@@ -53,7 +60,7 @@ def _get_table_all() -> pd.DataFrame:
             def _run(offset=offset):
                 query = (
                     client.table(_TABLE_NAME)
-                    .select(_SELECT)
+                    .select(select_clause)
                     .order(_DATE_COL, desc=False)
                 )
                 return query.range(offset, offset + page_size - 1).execute()
@@ -67,6 +74,18 @@ def _get_table_all() -> pd.DataFrame:
                 break
             offset += page_size
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    # Try to pull actual_low_pct first (enables a real stop-loss simulation
+    # instead of the resolved-gain approximation) and quietly fall back to
+    # the base column set if that column doesn't exist on this deployment's
+    # table — a single bad-column 400 from Supabase shouldn't take down the
+    # whole tab.
+    try:
+        return _fetch(_SELECT_WITH_LOW)
+    except Exception:
+        pass
+    try:
+        return _fetch(_SELECT)
     except Exception as e:
         log_debug_error(f"_get_table_all({_TABLE_NAME})", e)
         st.warning(f"Could not load full history for `{_TABLE_NAME}`: {e}")
@@ -159,24 +178,50 @@ def _simulate(
     use_stop_loss: bool = False,
     stop_loss_pct: float = 8.0,
     weight_by_confidence: bool = False,
+    slippage_bps: float = 0.0,
+    max_deploy_pct: float = 100.0,
 ):
     """
     Runs the per-trade cumulative-gain simulation for one configuration.
     Returns (sim_result_df, stats_dict, trade_log_df) or (None, None, None)
     if no trades match.
 
-    use_stop_loss: caps the resolved loss on any trade at -stop_loss_pct.
-    NOTE: the underlying `ml_prediction_accuracy` table only carries the
-    day's realized/high gain (actual_gain_pct, actual_high_pct) — there is
-    no intraday-low column to check whether price actually touched the stop
-    before recovering. So this is applied symmetrically to take-profit but
-    as an approximation on the *resolved* gain (if the day's final gain
-    would have been worse than -stop_loss_pct, the trade is capped there)
-    rather than a true bar-by-bar stop simulation. Flagged in the UI.
+    Every trade here is a same-day round trip (entry and exit resolve
+    within `prediction_date`), so day-to-day capital reuse is valid — there
+    is no multi-day holding-period overlap to account for.
+
+    use_stop_loss: caps the loss on any trade at -stop_loss_pct.
+    If `actual_low_pct` is present in `pos_signals` (an intraday-low column,
+    fetched opportunistically — see _get_table_all), the stop is checked
+    against whether price actually traded down to the stop level during the
+    day: any trade whose low reached -stop_loss_pct or worse is resolved at
+    exactly -stop_loss_pct, regardless of where it closed. This correctly
+    catches "dipped through the stop, then recovered by close" trades that
+    a close-only approximation would silently record as winners.
+    If `actual_low_pct` is NOT available, this falls back to capping the
+    day's resolved gain at -stop_loss_pct — which only ever helps trades
+    that already closed negative and can never catch a trade that
+    intraday-dipped below the stop and recovered to close positive. That
+    fallback is therefore optimistically biased (understates how often and
+    how often the stop would really trigger); this is called out in the UI.
+    When both stop-loss and take-profit are enabled and low data isn't
+    available to sequence the day, the stop is checked first (the more
+    conservative assumption) before the take-profit target is applied.
 
     weight_by_confidence: position size is proportional to
     predicted_probability among the trades taken that day, instead of an
     equal split.
+
+    slippage_bps: an estimated round-trip cost (entry + exit), in basis
+    points of position size, applied on top of the flat commission_fee —
+    approximates spread/market-impact cost that a flat per-trade commission
+    doesn't capture, especially for thinner names.
+
+    max_deploy_pct: the share of available capital actually put to work
+    each day (0-100). The remainder is held as idle cash (0% return) and
+    carried to the next day rather than force-deployed into every signal
+    that happens to fire — a more realistic model than always being 100%
+    invested regardless of conviction or number of signals.
     """
     sim_df = pos_signals[
         (pos_signals["predicted_signal"].isin(signals))
@@ -191,16 +236,37 @@ def _simulate(
     if "predicted_probability" in sim_df.columns:
         sim_df = sim_df.sort_values("predicted_probability", ascending=False)
 
+    has_low = "actual_low_pct" in sim_df.columns and sim_df["actual_low_pct"].notna().any()
+    stopped_out = pd.Series(False, index=sim_df.index)
+
+    if use_stop_loss and has_low:
+        # Real check: did price actually trade down to the stop level
+        # during the day? Applied before take-profit resolution below —
+        # a trade that got stopped out never lives to hit its target.
+        low = pd.to_numeric(sim_df["actual_low_pct"], errors="coerce")
+        stopped_out = low.notna() & (low <= -abs(stop_loss_pct))
+
     if use_take_profit and "actual_high_pct" in sim_df.columns and "predicted_target_gain" in sim_df.columns:
         target = pd.to_numeric(sim_df["predicted_target_gain"], errors="coerce")
         high   = pd.to_numeric(sim_df["actual_high_pct"], errors="coerce")
-        hit_target = target.notna() & high.notna() & (high >= target)
+        hit_target = target.notna() & high.notna() & (high >= target) & ~stopped_out
         sim_df["resolved_gain_pct"] = np.where(hit_target, target, sim_df["actual_gain_pct"])
     else:
         sim_df["resolved_gain_pct"] = sim_df["actual_gain_pct"]
 
     if use_stop_loss:
-        sim_df["resolved_gain_pct"] = np.maximum(sim_df["resolved_gain_pct"], -abs(stop_loss_pct))
+        if has_low:
+            # Exact stop level for any trade whose low actually reached it;
+            # everything else keeps its take-profit/close resolution above.
+            sim_df["resolved_gain_pct"] = np.where(
+                stopped_out, -abs(stop_loss_pct), sim_df["resolved_gain_pct"]
+            )
+        else:
+            # Approximation fallback (no intraday-low data available) — see
+            # docstring above for the optimistic-bias caveat.
+            sim_df["resolved_gain_pct"] = np.maximum(sim_df["resolved_gain_pct"], -abs(stop_loss_pct))
+
+    invested_frac = max(0.0, min(1.0, max_deploy_pct / 100.0))
 
     trade_rows = []
     records = []
@@ -220,10 +286,12 @@ def _simulate(
         else:
             weights = pd.Series([1.0 / n] * n, index=trades.index)
 
-        day_end_capital = 0.0
+        idle_cash = capital * (1 - invested_frac)
+        day_end_capital = idle_cash
         for idx, gain in trades["resolved_gain_pct"].items():
-            position_size = capital * weights.loc[idx]
-            pnl_dollars = position_size * (gain / 100) - commission_fee
+            position_size = capital * weights.loc[idx] * invested_frac
+            slippage_cost = position_size * (slippage_bps / 10000.0)
+            pnl_dollars = position_size * (gain / 100) - commission_fee - slippage_cost
             resolved = max(position_size + pnl_dollars, 0.0)
             day_end_capital += resolved
             trade_rows.append({
@@ -233,8 +301,10 @@ def _simulate(
                 "predicted_probability": trades.loc[idx].get("predicted_probability") if hasattr(trades.loc[idx], "get") else None,
                 "position_size": position_size,
                 "resolved_gain_pct": gain,
+                "stopped_out": bool(stopped_out.loc[idx]) if idx in stopped_out.index else False,
                 "pnl_dollars": pnl_dollars,
                 "commission_fee": commission_fee,
+                "slippage_cost": slippage_cost,
             })
         capital = day_end_capital
         records.append({
@@ -253,16 +323,26 @@ def _simulate(
     total_return = (final_value - start_capital) / start_capital * 100
     n_trades     = int(sim_result["trades_taken"].sum())
     n_days       = len(sim_result)
-    total_fees   = n_trades * commission_fee
+    total_fees      = n_trades * commission_fee
+    total_slippage  = float(trade_log["slippage_cost"].sum()) if not trade_log.empty else 0.0
     win_rate     = (sim_df["resolved_gain_pct"] > 0).mean() * 100
 
     # Sharpe-like ratio on the day-over-day portfolio return series — "-like"
     # because these are simulated per-day compounding steps, not literal
     # daily market returns, so treat it as a rough risk-adjusted-return
-    # signal rather than a textbook Sharpe ratio.
+    # signal rather than a textbook Sharpe ratio. Annualized using the
+    # simulation's own observed trading cadence (return-observations per
+    # calendar year over the actual date span) rather than a flat 252 —
+    # a strategy that only trades a handful of days a year shouldn't get
+    # scaled up as if it traded every session.
     daily_returns = sim_result["portfolio_value"].pct_change().dropna()
     if len(daily_returns) >= 2 and daily_returns.std() > 0:
-        sharpe_like = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252)
+        date_span_days = (sim_result["prediction_date"].iloc[-1] - sim_result["prediction_date"].iloc[0]).days
+        if date_span_days > 0:
+            periods_per_year = len(daily_returns) / date_span_days * 365.25
+        else:
+            periods_per_year = 252.0
+        sharpe_like = (daily_returns.mean() / daily_returns.std()) * np.sqrt(periods_per_year)
     else:
         sharpe_like = None
 
@@ -279,9 +359,11 @@ def _simulate(
         "n_trades": n_trades,
         "n_days": n_days,
         "total_fees": total_fees,
+        "total_slippage": total_slippage,
         "win_rate": win_rate,
         "sharpe_like": sharpe_like,
         "max_drawdown": max_drawdown,
+        "stop_loss_uses_real_low": bool(use_stop_loss and has_low),
     }
     return sim_result, stats, trade_log
 
@@ -582,14 +664,18 @@ def _render_stats(stats: dict, key_prefix: str = ""):
         accent=accent,
     )
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total Fees Paid", f"${stats['total_fees']:,.2f}")
-    m2.metric("Trade Win Rate", f"{stats['win_rate']:.1f}%",
+    m2.metric("Est. Slippage Cost", f"${stats.get('total_slippage', 0.0):,.2f}",
+              help="Estimated spread/market-impact cost from the slippage (bps) setting, on top of commission.")
+    m3.metric("Trade Win Rate", f"{stats['win_rate']:.1f}%",
               help="% of individual simulated trades with a positive resolved gain.")
-    m3.metric("Sharpe-like Ratio (annualized)", sharpe_display,
-              help="Mean ÷ std. dev. of day-over-day portfolio returns, annualized by √252. A rough risk-adjusted-return signal, not a textbook Sharpe ratio.")
-    m4.metric("Max Drawdown", f"{stats['max_drawdown']:.1f}%",
+    m4.metric("Sharpe-like Ratio (annualized)", sharpe_display,
+              help="Mean ÷ std. dev. of day-over-day portfolio returns, annualized using this run's own observed trading frequency (not a flat 252). A rough risk-adjusted-return signal, not a textbook Sharpe ratio.")
+    m5.metric("Max Drawdown", f"{stats['max_drawdown']:.1f}%",
               help="Largest peak-to-trough decline in the simulated portfolio value over the run.")
+    if stats.get("stop_loss_uses_real_low"):
+        st.caption("✅ Stop-loss checked against actual intraday lows for this run.")
 
 
 def _config_controls(label: str, key_prefix: str, min_date, max_date, default_signals):
@@ -681,6 +767,8 @@ def render_backtesting_tab():
     all_acc["prediction_correct"]    = all_acc["prediction_correct"].astype(bool)
     all_acc["actual_gain_pct"]       = pd.to_numeric(all_acc["actual_gain_pct"],       errors="coerce")
     all_acc["predicted_probability"] = pd.to_numeric(all_acc["predicted_probability"], errors="coerce")
+    if "actual_low_pct" in all_acc.columns:
+        all_acc["actual_low_pct"] = pd.to_numeric(all_acc["actual_low_pct"], errors="coerce")
 
     pos_signals = all_acc[all_acc["predicted_signal"].isin(_ALL_SIGNALS)].copy()
     pos_signals["prediction_date"] = pd.to_datetime(pos_signals["prediction_date"])
@@ -692,15 +780,17 @@ def render_backtesting_tab():
     # ── Cumulative Gain Simulator ──────────────────────────────────────────
     st.markdown("#### Cumulative Gain Simulator")
     _info_card(
-        "Simulates trading each individual signal as its own position — capital "
-        "is split equally across every signal that fires on a given day, each "
-        "position resolves on its own resolved gain, and commission is charged "
-        "per trade. Positions are closed out and capital is pooled back together "
-        "at the end of each day before being redistributed the next day. This "
-        "avoids inflating results by averaging gains before compounding, but "
-        "still simplifies real trading (no slippage, no partial fills, "
-        "equal-weight sizing only, and outcomes are based on this system's own "
-        "historical gain data, not independently verified fills).",
+        "Simulates trading each individual signal as its own same-day position — "
+        "capital is split across every signal that fires on a given day (equally, "
+        "or by model confidence if selected), each position resolves within that "
+        "day, and commission plus an estimated slippage cost are charged per "
+        "trade. Positions are closed out and capital is pooled back together at "
+        "the end of each day before being redistributed the next. This avoids "
+        "inflating results by averaging gains before compounding, but still "
+        "simplifies real trading (slippage here is a flat estimate, not modeled "
+        "per-symbol from actual spreads; no partial fills; and outcomes are based "
+        "on this system's own historical gain data, not independently verified "
+        "fills).",
         muted=True,
     )
 
@@ -727,6 +817,28 @@ def render_backtesting_tab():
                 min_value=min_date, max_value=max_date,
                 key="sim_date_range",
             )
+        cost_c1, cost_c2 = st.columns(2)
+        with cost_c1:
+            slippage_bps = st.number_input(
+                "Est. slippage (bps, round-trip)", min_value=0.0,
+                value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
+                key="sim_slippage_bps",
+                help="Estimated spread/market-impact cost per trade, in basis points of position size — "
+                     "on top of the flat commission. A flat dollar commission doesn't capture this, and it "
+                     "matters most for thinner/less-liquid names. 10 bps (0.10%) is a reasonable starting "
+                     "point for liquid large-caps; use more for small-caps.",
+            )
+            user_state.persist(slippage_bps=slippage_bps)
+        with cost_c2:
+            max_deploy_pct = st.slider(
+                "Capital deployed per day (%)", min_value=10, max_value=100,
+                value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
+                key="sim_max_deploy_pct",
+                help="Share of available capital actually put into that day's signals. The remainder is held "
+                     "as idle cash (0% return) and carried to the next day, instead of always being 100% "
+                     "invested regardless of conviction or how many signals fired.",
+            )
+            user_state.persist(max_deploy_pct=max_deploy_pct)
 
     if isinstance(date_range, tuple) and len(date_range) == 2:
         sim_start, sim_end = date_range
@@ -754,6 +866,7 @@ def render_backtesting_tab():
             start_capital, commission_fee, max_positions, use_take_profit,
             use_stop_loss=use_stop_loss, stop_loss_pct=stop_loss_pct,
             weight_by_confidence=weight_by_confidence,
+            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
         )
 
         if sim_result is None:
@@ -762,13 +875,27 @@ def render_backtesting_tab():
 
         _render_stats(stats)
         if use_stop_loss:
-            _info_card(
-                f"Stop-loss ({stop_loss_pct:.1f}%) is applied to each trade's resolved gain, since the "
-                "underlying data doesn't carry an intraday-low column to check whether price actually "
-                "touched the stop mid-day before recovering. Treat it as a same-day damage cap, not a "
-                "true bar-by-bar stop simulation.",
-                muted=True,
-            )
+            if stats.get("stop_loss_uses_real_low"):
+                _info_card(
+                    f"Stop-loss ({stop_loss_pct:.1f}%) is checked against each trade's actual intraday low — "
+                    "any trade whose low reached the stop level is resolved at exactly -"
+                    f"{stop_loss_pct:.1f}%, even if it recovered by close. When a trade could have hit both "
+                    "the stop and the take-profit target on the same day, the stop is assumed to trigger "
+                    "first (the conservative read, since exact intraday sequencing isn't available).",
+                    muted=True,
+                )
+            else:
+                _info_card(
+                    f"⚠️ Stop-loss ({stop_loss_pct:.1f}%) is applied as an approximation on each trade's "
+                    "resolved (close-based) gain, because this deployment's data doesn't carry an "
+                    "intraday-low column. This can only cap trades that already closed worse than the "
+                    "stop — it can NOT catch a trade that dipped through the stop intraday and recovered "
+                    "to close positive, since that never shows up in the close-based gain. In other words, "
+                    "this approximation is optimistically biased: a real stop-loss would very likely "
+                    "trigger on more trades, and different trades, than this chart shows. Treat the "
+                    "stop-loss results here as a soft upper bound, not a realistic simulation.",
+                    muted=True,
+                )
 
         show_benchmark = st.checkbox(
             "Show SPY buy & hold benchmark", value=True, key="sim_show_benchmark",
@@ -819,10 +946,12 @@ def render_backtesting_tab():
 
         _info_card(
             "Note: results still assume every simulated trade could actually "
-            "be filled at the resolved gain, with no slippage, no "
-            "market-impact cost, and unlimited liquidity — treat this as a "
-            "best-case illustration of the model's signal quality, not a "
-            "guarantee of real-world tradeable returns.",
+            "be filled at the resolved gain, with only a flat estimated "
+            "slippage figure (not real per-symbol spread/market-impact "
+            "data) and unlimited liquidity — treat this as an "
+            "illustration of the model's signal quality under a "
+            "reasonable cost assumption, not a guarantee of real-world "
+            "tradeable returns.",
             muted=True,
         )
 
@@ -847,11 +976,13 @@ def render_backtesting_tab():
             pos_signals, signals_a, sim_start, sim_end,
             start_capital, commission_fee, max_pos_a, take_profit_a,
             use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
+            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
         )
         result_b, stats_b, trade_log_b = _simulate(
             pos_signals, signals_b, sim_start, sim_end,
             start_capital, commission_fee, max_pos_b, take_profit_b,
             use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
+            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
         )
 
         if result_a is None or result_b is None:
