@@ -83,9 +83,26 @@ def _get_recent_edge(lookback_days: int = 30):
 
 def render_command_center(market_label: str, market_dot_cls: str):
     """Slim 3-up hero-metric row: today's top signal, recent backtest edge,
-    market status — followed by the global watchlist bar if it's non-empty."""
-    top = _get_top_signal()
-    edge = _get_recent_edge()
+    market status — followed by the global watchlist bar.
+
+    Structural stability matters here more than usual: this renders just
+    above st.tabs() in dashboard.py, and Streamlit's tab-selection state can
+    be lost if the DOM structure preceding the tabs changes shape between
+    reruns (see the comment in dashboard.py). So every code path below
+    renders the same three columns and the same watchlist container every
+    single run — failures degrade to placeholder text/values, never to a
+    skipped element.
+    """
+    try:
+        top = _get_top_signal()
+    except Exception as e:
+        log_debug_error("command_center.render_command_center(top_signal)", e)
+        top = None
+    try:
+        edge = _get_recent_edge()
+    except Exception as e:
+        log_debug_error("command_center.render_command_center(recent_edge)", e)
+        edge = None
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -118,22 +135,37 @@ def render_command_center(market_label: str, market_dot_cls: str):
 def render_watchlist_bar():
     """Compact chip strip of every starred symbol — visible regardless of
     which tab is active, since starring itself happens inside individual
-    tabs (Today's Picks live table, Daily Winners symbol search)."""
-    wl = user_state.get_watchlist()
-    if not wl:
-        return
-    chips = "".join(
-        '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;'
-        'margin:0 6px 6px 0;background:var(--bg-2);border:1px solid var(--border-mid);'
-        'border-radius:999px;font-family:\'DM Mono\',monospace;font-size:0.68rem;'
-        f'letter-spacing:0.04em;color:var(--text-0);">★ {sym}</span>'
-        for sym in sorted(wl)
-    )
-    st.markdown(
-        '<div style="display:flex;align-items:center;flex-wrap:wrap;margin:14px 0 4px;">'
-        '<span style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.18em;'
-        'text-transform:uppercase;color:var(--text-2);margin-right:10px;white-space:nowrap;">Watchlist</span>'
-        f'{chips}'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    tabs (Today's Picks live table, Daily Winners symbol search).
+
+    Always renders the same single wrapper <div>, whether or not there are
+    any starred symbols — an empty watchlist collapses to zero height via
+    CSS rather than skipping the element entirely, so this block's element
+    count never changes between reruns (see the stability note on
+    render_command_center above)."""
+    try:
+        wl = user_state.get_watchlist()
+    except Exception as e:
+        log_debug_error("command_center.render_watchlist_bar", e)
+        wl = []
+
+    if wl:
+        chips = "".join(
+            '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;'
+            'margin:0 6px 6px 0;background:var(--bg-2);border:1px solid var(--border-mid);'
+            'border-radius:999px;font-family:\'DM Mono\',monospace;font-size:0.68rem;'
+            f'letter-spacing:0.04em;color:var(--text-0);">★ {sym}</span>'
+            for sym in sorted(wl)
+        )
+        label_html = (
+            '<span style="font-family:\'DM Mono\',monospace;font-size:0.58rem;letter-spacing:0.18em;'
+            'text-transform:uppercase;color:var(--text-2);margin-right:10px;white-space:nowrap;">Watchlist</span>'
+        )
+        inner = f'{label_html}{chips}'
+        wrap_style = "display:flex;align-items:center;flex-wrap:wrap;margin:14px 0 4px;"
+    else:
+        # Same wrapper element, just visually collapsed — keeps the DOM
+        # shape identical to the non-empty case instead of omitting it.
+        inner = ""
+        wrap_style = "display:block;height:0;margin:0;overflow:hidden;"
+
+    st.markdown(f'<div style="{wrap_style}">{inner}</div>', unsafe_allow_html=True)
