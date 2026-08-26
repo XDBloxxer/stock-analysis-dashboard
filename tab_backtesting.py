@@ -874,15 +874,24 @@ def render_backtesting_tab():
             return
 
         with st.expander("🔧 Debug: parameters used in this run", expanded=False):
-            st.caption(
-                f"signals={sim_signals} · date_range=({sim_start} → {sim_end}) · "
-                f"start_capital=${start_capital:,.2f} · commission_fee=${commission_fee:,.2f} · "
-                f"slippage_bps={slippage_bps:g} · max_deploy_pct={max_deploy_pct:g}% · "
-                f"max_positions={max_positions} · use_take_profit={use_take_profit} · "
-                f"use_stop_loss={use_stop_loss} · stop_loss_pct={stop_loss_pct:g}% · "
-                f"weight_by_confidence={weight_by_confidence} · "
-                f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')} · "
-                f"rows_in_sim_df={stats['n_trades']} trades over {stats['n_days']} day(s)"
+            st.code(
+                f"signals={sim_signals}\n"
+                f"date_range=({sim_start} -> {sim_end})\n"
+                f"start_capital={start_capital:,.2f}\n"
+                f"commission_fee={commission_fee:,.2f}\n"
+                f"slippage_bps={slippage_bps:g}\n"
+                f"max_deploy_pct={max_deploy_pct:g}\n"
+                f"max_positions={max_positions}\n"
+                f"use_take_profit={use_take_profit}\n"
+                f"use_stop_loss={use_stop_loss}\n"
+                f"stop_loss_pct={stop_loss_pct:g}\n"
+                f"weight_by_confidence={weight_by_confidence}\n"
+                f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')}\n"
+                f"n_trades={stats['n_trades']}\n"
+                f"n_days={stats['n_days']}\n"
+                f"total_fees={stats['total_fees']:,.2f}\n"
+                f"total_slippage={stats.get('total_slippage', 0.0):,.2f}",
+                language="text",
             )
             st.caption(
                 "If you change a setting above and these values don't change here too, "
@@ -1009,20 +1018,19 @@ def render_backtesting_tab():
             return
 
         with st.expander("🔧 Debug: parameters used in this run", expanded=False):
-            st.caption(
-                f"shared: start_capital=${start_capital:,.2f} · commission_fee=${commission_fee:,.2f} · "
-                f"slippage_bps={slippage_bps:g} · max_deploy_pct={max_deploy_pct:g}% · "
-                f"date_range=({sim_start} → {sim_end})"
-            )
-            st.caption(
-                f"A: signals={signals_a} · max_positions={max_pos_a} · take_profit={take_profit_a} · "
-                f"stop_loss={sl_a} ({sl_pct_a:g}%) · weight_by_confidence={wbc_a} · "
-                f"{stats_a['n_trades']} trades over {stats_a['n_days']} day(s)"
-            )
-            st.caption(
-                f"B: signals={signals_b} · max_positions={max_pos_b} · take_profit={take_profit_b} · "
-                f"stop_loss={sl_b} ({sl_pct_b:g}%) · weight_by_confidence={wbc_b} · "
-                f"{stats_b['n_trades']} trades over {stats_b['n_days']} day(s)"
+            st.code(
+                f"shared: start_capital={start_capital:,.2f}, commission_fee={commission_fee:,.2f}, "
+                f"slippage_bps={slippage_bps:g}, max_deploy_pct={max_deploy_pct:g}, "
+                f"date_range=({sim_start} -> {sim_end})\n"
+                f"A: signals={signals_a}, max_positions={max_pos_a}, take_profit={take_profit_a}, "
+                f"stop_loss={sl_a} ({sl_pct_a:g}%), weight_by_confidence={wbc_a}, "
+                f"n_trades={stats_a['n_trades']}, n_days={stats_a['n_days']}, "
+                f"total_fees={stats_a['total_fees']:,.2f}, total_slippage={stats_a.get('total_slippage', 0.0):,.2f}\n"
+                f"B: signals={signals_b}, max_positions={max_pos_b}, take_profit={take_profit_b}, "
+                f"stop_loss={sl_b} ({sl_pct_b:g}%), weight_by_confidence={wbc_b}, "
+                f"n_trades={stats_b['n_trades']}, n_days={stats_b['n_days']}, "
+                f"total_fees={stats_b['total_fees']:,.2f}, total_slippage={stats_b.get('total_slippage', 0.0):,.2f}",
+                language="text",
             )
 
         render_labeled_divider("Results")
