@@ -140,6 +140,8 @@ st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def main():
+    import user_state
+    user_state.load_into_session_state()
     render_boot_sequence()
     inject_count_up_script()
     inject_mouse_glow_script()
@@ -272,6 +274,8 @@ def main():
             "Compact", value=st.session_state.get("compact_mode", False),
             key="compact_mode", help="Tighter spacing — more rows/charts visible per screen.",
         )
+    if compact != user_state._read_store().get("compact_mode", False):
+        user_state.persist(compact_mode=compact)
     if compact:
         st.markdown(COMPACT_CSS, unsafe_allow_html=True)
 
@@ -292,6 +296,18 @@ def main():
     except ImportError as e:
         st.error(f"Error importing tab modules: {e}")
         st.stop()
+
+    # ── Command center — single at-a-glance read before drilling into a tab ──
+    try:
+        from command_center import render_command_center
+        render_command_center(label, dot_cls)
+        st.markdown('<hr style="margin:18px 0 22px;">', unsafe_allow_html=True)
+    except Exception as e:
+        try:
+            from db import log_debug_error
+            log_debug_error("command_center", e)
+        except Exception:
+            pass
 
     tab1, tab2, tab3 = st.tabs([
         "Today's Picks",
