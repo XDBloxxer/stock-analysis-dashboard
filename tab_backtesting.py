@@ -326,7 +326,14 @@ def _simulate(
     n_days       = len(sim_result)
     total_fees      = n_trades * commission_fee
     total_slippage  = float(trade_log["slippage_cost"].sum()) if not trade_log.empty else 0.0
-    win_rate     = (sim_df["resolved_gain_pct"] > 0).mean() * 100
+    # Win rate must be computed from the trades actually taken (trade_log),
+    # not the full signal-matched set (sim_df) — sim_df still includes rows
+    # that got cut by the max_positions-per-day cap (the lowest-confidence
+    # signals, since sim_df is pre-sorted by predicted_probability desc
+    # before the groupby/head()). Using sim_df here silently mixed in
+    # never-executed trades and skewed the displayed win rate away from
+    # what the simulated capital actually experienced.
+    win_rate     = (trade_log["resolved_gain_pct"] > 0).mean() * 100 if not trade_log.empty else 0.0
 
     # Sharpe-like ratio on the day-over-day portfolio return series — "-like"
     # because these are simulated per-day compounding steps, not literal
