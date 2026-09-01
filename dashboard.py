@@ -306,15 +306,28 @@ def main():
     render_watchlist_bar()
     st.markdown('<hr style="margin:18px 0 22px;">', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs([
-        "Today's Picks",
-        "Daily Winners",
-        "Strategy Backtesting",
-    ])
+    # st.tabs() keeps its active-tab selection purely on the frontend, with
+    # nothing mirrored into session_state. That's what causes the jump back
+    # to "Today's Picks": any rerun triggered from inside a non-first tab —
+    # like the Backtesting tab's "Interrogate the candles" form submit —
+    # remounts the tabs component and it resets to index 0
+    # (streamlit/streamlit#5069). st.segmented_control, unlike st.tabs, is a
+    # normal controlled widget backed by session_state via `key=`, so its
+    # selection survives reruns from anywhere on the page.
+    tab_labels = ["Today's Picks", "Daily Winners", "Strategy Backtesting"]
+    active_tab = st.segmented_control(
+        "Section", tab_labels, default=tab_labels[0],
+        key="active_main_tab", label_visibility="collapsed",
+    )
+    if active_tab is None:  # user can deselect a segmented_control; treat as "stay put"
+        active_tab = st.session_state.get("active_main_tab") or tab_labels[0]
 
-    with tab1: render_ml_predictions_tab()
-    with tab2: render_daily_winners_tab()
-    with tab3: render_backtesting_tab()
+    if active_tab == tab_labels[0]:
+        render_ml_predictions_tab()
+    elif active_tab == tab_labels[1]:
+        render_daily_winners_tab()
+    else:
+        render_backtesting_tab()
 
     st.markdown(
         '<div class="app-footer">'
