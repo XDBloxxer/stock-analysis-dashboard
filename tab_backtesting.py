@@ -348,20 +348,6 @@ def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
     return precise_map, stats
 
 
-def _precise_cache_key(symbols: tuple, sim_start: _date, sim_end: _date,
-                        signals: list, use_stop_loss: bool, stop_loss_pct: float,
-                        use_take_profit: bool) -> str:
-    """Fingerprint of everything that would change the result of a fetch, so
-    a stale cached result (from before the user tweaked a setting) is never
-    silently applied — the button has to be pressed again instead."""
-    raw = repr((
-        symbols, sim_start, sim_end, tuple(sorted(signals)),
-        use_stop_loss, round(stop_loss_pct, 2) if use_stop_loss else None,
-        use_take_profit,
-    ))
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
-
-
 def _run_config_key(symbols: tuple, sim_start: _date, sim_end: _date, signals: list,
                      start_capital: float, commission_fee: float, max_positions: int,
                      use_take_profit: bool, use_stop_loss: bool, stop_loss_pct: float,
@@ -436,25 +422,6 @@ def _render_precise_fetch_panel(
 
     cache_bucket = f"{key_prefix}_run_cache"
     cached = st.session_state.get(cache_bucket)
-    is_fresh = cached is not None and cached.get("config_key") == current_key
-
-    if eligible_trades.empty:
-        st.caption("No trades match this signal/date selection yet.")
-    elif cached is None:
-        st.caption("Set your conditions above, then click \"🕵️ Interrogate the candles\" to run the simulation.")
-    elif is_fresh:
-        precise_stats = cached["precise_stats"]
-        dropped = precise_stats["eligible"] - precise_stats["resolved"]
-        drop_note = f", {dropped} dropped (no bars)" if dropped else ""
-        st.caption(
-            f"✅ {precise_stats['resolved']} of {precise_stats['eligible']} trades resolved from real "
-            f"5-min bars across {precise_stats['symbols_fetched']} symbol(s){drop_note}."
-        )
-    else:
-        st.caption(
-            "⏸️ Showing results from the last run — a setting has changed since then. "
-            "Click \"🕵️ Interrogate the candles\" again to fetch and re-run with the current settings."
-        )
 
     if submitted and not eligible_trades.empty:
         with st.spinner(f"Fetching 5-minute bars for {len(symbols)} symbol(s)..."):
@@ -487,6 +454,29 @@ def _render_precise_fetch_panel(
         }
         st.toast(f"✅ Resolved {precise_stats['resolved']} of {precise_stats['eligible']} trades from real 5-min bars.")
         cached = st.session_state[cache_bucket]
+
+    # Caption reflects the *post-run* state (computed above, if this was a
+    # submit run) rather than the state from before the click — otherwise a
+    # first-ever click would show "not yet run" above results that just
+    # rendered successfully underneath it.
+    is_fresh = cached is not None and cached.get("config_key") == current_key
+    if eligible_trades.empty:
+        st.caption("No trades match this signal/date selection yet.")
+    elif cached is None:
+        st.caption("Set your conditions above, then click \"🕵️ Interrogate the candles\" to run the simulation.")
+    elif is_fresh:
+        precise_stats = cached["precise_stats"]
+        dropped = precise_stats["eligible"] - precise_stats["resolved"]
+        drop_note = f", {dropped} dropped (no bars)" if dropped else ""
+        st.caption(
+            f"✅ {precise_stats['resolved']} of {precise_stats['eligible']} trades resolved from real "
+            f"5-min bars across {precise_stats['symbols_fetched']} symbol(s){drop_note}."
+        )
+    else:
+        st.caption(
+            "⏸️ Showing results from the last run — a setting has changed since then. "
+            "Click \"🕵️ Interrogate the candles\" again to fetch and re-run with the current settings."
+        )
 
     return cached
 
