@@ -361,6 +361,110 @@ def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
     return precise_map, stats
 
 
+def _precise_cache_key(symbols: tuple, effective_start: _date, sim_end: _date,
+                        signals: list, use_stop_loss: bool, stop_loss_pct: float,
+                        use_take_profit: bool) -> str:
+    """Fingerprint of everything that would change the result of a fetch, so
+    a stale cached result (from before the user tweaked a setting) is never
+    silently applied — the button has to be pressed again instead."""
+    raw = repr((
+        symbols, effective_start, sim_end, tuple(sorted(signals)),
+        use_stop_loss, round(stop_loss_pct, 2) if use_stop_loss else None,
+        use_take_profit,
+    ))
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _render_precise_sequencing_section(
+    pos_signals: pd.DataFrame, sim_signals: list, sim_start: _date, sim_end: _date,
+    use_stop_loss: bool, stop_loss_pct: float, use_take_profit: bool,
+) -> dict | None:
+    """
+    Opt-in "Precise Sequencing (5-min)" panel. Off by default and never runs
+    anything on its own — fetching only happens when the button is clicked,
+    so changing other widgets on this page never triggers a re-fetch.
+
+    Returns the precise_map to feed into `_simulate` (or None if the toggle
+    is off, or the cached result no longer matches the current config).
+    """
+    cache_bucket = "precise_seq_cache"
+
+    with st.container(border=True):
+        enabled = st.checkbox(
+            "🕵️ Precise Sequencing (5-min)",
+            key="sim_precise_seq_enabled",
+            help="Instead of approximating stop/target order from the day's closing gain, fetch real "
+                 "5-minute bars (via yfinance) and walk them forward to see whichever level actually got "
+                 "touched first. Only covers roughly the last 60 days — yfinance doesn't serve 5-minute "
+                 "history further back than that — so older trades in the date range keep using the "
+                 "existing daily approximation.",
+        )
+
+        if not enabled:
+            return None
+
+        cutoff = _five_min_cutoff_date()
+        effective_start = max(sim_start, cutoff)
+
+        if effective_start > sim_end:
+            st.caption(
+                f"⚠️ The selected date range ends before the ~60-day 5-min data window begins "
+                f"({cutoff:%b %d, %Y}). No trades are eligible for precise sequencing here — "
+                "everything will use the daily approximation."
+            )
+            return None
+
+        st.caption(
+            f"Window: **{effective_start:%b %d, %Y} → {sim_end:%b %d, %Y}** "
+            f"(clamped to the last {_FIVE_MIN_MAX_DAYS} days — yfinance's 5-min limit — "
+            f"even if the simulation's date range starts earlier)."
+        )
+
+        eligible_trades = _filter_sim_trades(pos_signals, sim_signals, effective_start, sim_end)
+        symbols = tuple(sorted(eligible_trades["symbol"].dropna().unique()))
+        current_key = _precise_cache_key(
+            symbols, effective_start, sim_end, sim_signals,
+            use_stop_loss, stop_loss_pct, use_take_profit,
+        )
+
+        cached = st.session_state.get(cache_bucket)
+        is_fresh = cached is not None and cached.get("key") == current_key
+
+        btn_c1, btn_c2 = st.columns([1, 3])
+        with btn_c1:
+            clicked = st.button(
+                "🕵️ Interrogate the candles",
+                key="sim_precise_seq_button",
+                disabled=eligible_trades.empty,
+                use_container_width=True,
+            )
+        with btn_c2:
+            if eligible_trades.empty:
+                st.caption("No trades in the eligible window yet.")
+            elif is_fresh:
+                stats = cached["stats"]
+                st.caption(
+                    f"✅ Last run: {stats['resolved']} of {stats['eligible']} eligible trades resolved "
+                    f"from real bars, across {stats['symbols_fetched']} symbol(s)."
+                )
+            else:
+                st.caption("Settings changed since the last fetch — click to (re)fetch 5-min bars.")
+
+        if clicked and not eligible_trades.empty:
+            with st.spinner(f"Fetching 5-minute bars for {len(symbols)} symbol(s)..."):
+                precise_map, stats = _build_precise_map(
+                    eligible_trades, use_stop_loss, stop_loss_pct, use_take_profit,
+                )
+            st.session_state[cache_bucket] = {"key": current_key, "map": precise_map, "stats": stats}
+            st.toast(f"✅ Resolved {stats['resolved']} of {stats['eligible']} trades from real 5-min bars.")
+            is_fresh = True
+            cached = st.session_state[cache_bucket]
+
+        if is_fresh:
+            return cached["map"]
+        return None
+
+
 # ── Simulation core (shared by single-run and comparison modes) ─────────────
 def _simulate(
     pos_signals: pd.DataFrame,
