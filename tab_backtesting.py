@@ -11,10 +11,12 @@ in its entirety from the Performance Trends sub-tab of ML Predictions.
 """
 
 import hashlib
+import datetime as _dt
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from db import get_supabase_client, run_with_retry, log_debug_error
 from datetime import date as _date
@@ -166,6 +168,199 @@ def _add_benchmark_trace(fig: go.Figure, sim_result: pd.DataFrame, start_capital
     return True
 
 
+# ── Precise Sequencing (5-min intraday walk-forward) ─────────────────────────
+# Opt-in, fetch-on-demand alternative to the daily close-based approximation
+# above. Instead of guessing stop/target order from the day's resolved gain
+# (or, at best, an intraday-low column if the table happens to carry one),
+# this walks actual 5-minute bars from yfinance for each trade and resolves
+# whichever level — stop or target — is actually touched first.
+#
+# Hard limit: yfinance only serves ~60 days of 5-minute history. Trades
+# older than that get no bars back at all and silently keep using the
+# existing daily approximation from _simulate — never blended invisibly,
+# always labeled per-trade via `resolution_method` in the trade log.
+_FIVE_MIN_MAX_DAYS = 60
+_FIVE_MIN_ET = "America/New_York"
+
+
+def _five_min_cutoff_date() -> _date:
+    """Oldest prediction_date still eligible for 5-min sequencing, as of today."""
+    return _date.today() - _dt.timedelta(days=_FIVE_MIN_MAX_DAYS)
+
+
+def _filter_sim_trades(pos_signals: pd.DataFrame, signals: list, sim_start, sim_end) -> pd.DataFrame:
+    """The exact trade-matching filter used at the top of `_simulate`, factored
+    out so the Precise Sequencing button can build its (symbol, date) work list
+    from the identical set of trades the simulation itself will use — the two
+    can never silently drift apart."""
+    return pos_signals[
+        (pos_signals["predicted_signal"].isin(signals))
+        & (pos_signals["prediction_date"].dt.date >= sim_start)
+        & (pos_signals["prediction_date"].dt.date <= sim_end)
+        & (pos_signals["actual_gain_pct"].notna())
+    ].copy()
+
+
+def _fetch_5min_bars_one(symbol: str, start: _date, end: _date):
+    """Worker: one symbol's 5-minute bars (incl. pre/post-market) spanning
+    `start`..`end`, tz-normalized to America/New_York so wall-clock session
+    boundaries (4:00 / 9:30 / 16:00 ET) can be compared directly against the
+    index. Returns (symbol, DataFrame | None) — None on any failure or empty
+    result, never raises, so one bad symbol can't take down the batch."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(symbol).history(
+            start=start, end=end + _dt.timedelta(days=1),
+            interval="5m", prepost=True, auto_adjust=True,
+        )
+        if hist is None or hist.empty:
+            return symbol, None
+        if hist.index.tz is None:
+            hist.index = hist.index.tz_localize(_FIVE_MIN_ET)
+        else:
+            hist.index = hist.index.tz_convert(_FIVE_MIN_ET)
+        return symbol, hist
+    except Exception as e:
+        log_debug_error(f"_fetch_5min_bars_one({symbol})", e)
+        return symbol, None
+
+
+def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
+    """One yfinance call per symbol (not per trade) spanning that symbol's
+    full needed date range, fanned out across a thread pool — keeps request
+    count proportional to the number of distinct tickers touched, not the
+    number of trades."""
+    result = {}
+    if not symbols:
+        return result
+    max_workers = min(8, len(symbols))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch_5min_bars_one, sym, start, end): sym for sym in symbols}
+        for future in as_completed(futures):
+            sym, hist = future.result()
+            result[sym] = hist
+    return result
+
+
+def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
+                              stop_loss_pct: float | None, target_pct: float | None) -> dict | None:
+    """
+    Resolves one trade against real 5-minute bars, or returns None if there
+    isn't enough data to do so (caller should fall back to the daily
+    approximation in that case).
+
+    Entry price: the last available bar's Close strictly before that day's
+    4:00 AM ET pre-market open — i.e. the prior session's after-hours close
+    if one exists, or the prior day's regular-session close if it doesn't.
+    Matches how entry price is already defined elsewhere in this dashboard.
+
+    Resolution: walks 5-minute bars from 9:30 AM to 4:00 PM ET on
+    `trade_date` in order. The first bar whose Low reaches the stop level
+    resolves the trade at exactly -stop_loss_pct; the first bar (that
+    didn't already stop out) whose High reaches the target resolves it at
+    exactly target_pct. If neither is ever touched, the trade resolves at
+    the last session bar's Close. Stop is checked before target within the
+    same bar — the conservative assumption when both could plausibly have
+    happened inside one 5-minute candle.
+    """
+    if bars is None or bars.empty or "Close" not in bars.columns:
+        return None
+
+    tz = bars.index.tz
+    pre_market_open = pd.Timestamp.combine(trade_date, _dt.time(4, 0)).tz_localize(tz)
+    market_open      = pd.Timestamp.combine(trade_date, _dt.time(9, 30)).tz_localize(tz)
+    market_close      = pd.Timestamp.combine(trade_date, _dt.time(16, 0)).tz_localize(tz)
+
+    pre_bars = bars[bars.index < pre_market_open]
+    if pre_bars.empty:
+        return None
+    entry_price = float(pre_bars["Close"].iloc[-1])
+    if not entry_price or entry_price <= 0:
+        return None
+
+    session = bars[(bars.index >= market_open) & (bars.index <= market_close)]
+    if session.empty or "High" not in session.columns or "Low" not in session.columns:
+        return None
+
+    resolved_gain_pct = None
+    method = None
+    for _, row in session.iterrows():
+        low_pct  = (float(row["Low"])  - entry_price) / entry_price * 100
+        high_pct = (float(row["High"]) - entry_price) / entry_price * 100
+        if stop_loss_pct is not None and low_pct <= -abs(stop_loss_pct):
+            resolved_gain_pct = -abs(stop_loss_pct)
+            method = "stop-loss hit (5-min)"
+            break
+        if target_pct is not None and high_pct >= target_pct:
+            resolved_gain_pct = target_pct
+            method = "target hit (5-min)"
+            break
+
+    if resolved_gain_pct is None:
+        last_close = float(session["Close"].iloc[-1])
+        resolved_gain_pct = (last_close - entry_price) / entry_price * 100
+        method = "closed at session end (5-min)"
+
+    return {
+        "resolved_gain_pct": resolved_gain_pct,
+        "resolution_method": method,
+        "entry_price": entry_price,
+    }
+
+
+def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
+                        stop_loss_pct: float, use_take_profit: bool) -> tuple[dict, dict]:
+    """
+    Fetches 5-min bars for every distinct symbol in `eligible_trades` (one
+    batched call per symbol) and resolves each trade against them.
+
+    Returns (precise_map, stats):
+      precise_map: {(symbol, trade_date): {resolved_gain_pct, resolution_method, entry_price}}
+                   only containing trades that were actually resolvable from
+                   real bars — callers should treat a missing key as "stays
+                   on the daily approximation".
+      stats: coverage counters for the UI (eligible / resolved / symbols_fetched).
+    """
+    if eligible_trades.empty:
+        return {}, {"eligible": 0, "resolved": 0, "symbols_fetched": 0}
+
+    symbols = tuple(sorted(eligible_trades["symbol"].dropna().unique()))
+    dates = eligible_trades["prediction_date"].dt.date
+    # A few extra days of lookback buffer so the very first eligible trade
+    # can still find a prior after-hours/close bar to use as its entry,
+    # even across a weekend or holiday.
+    fetch_start = dates.min() - _dt.timedelta(days=5)
+    fetch_end   = dates.max()
+
+    bars_by_symbol = _fetch_5min_bars_batch(symbols, fetch_start, fetch_end)
+
+    precise_map = {}
+    resolved = 0
+    for row in eligible_trades.itertuples():
+        symbol = row.symbol
+        trade_date = row.prediction_date.date()
+        target_pct = None
+        if use_take_profit:
+            raw_target = getattr(row, "predicted_target_gain", None)
+            if raw_target is not None and not pd.isna(raw_target):
+                target_pct = float(raw_target)
+        info = _resolve_trade_from_bars(
+            bars_by_symbol.get(symbol), trade_date,
+            stop_loss_pct if use_stop_loss else None, target_pct,
+        )
+        if info is not None:
+            precise_map[(symbol, trade_date)] = info
+            resolved += 1
+
+    stats = {
+        "eligible": len(eligible_trades),
+        "resolved": resolved,
+        "symbols_fetched": len(symbols),
+        "date_range": (fetch_start, fetch_end),
+    }
+    return precise_map, stats
+
+
 # ── Simulation core (shared by single-run and comparison modes) ─────────────
 def _simulate(
     pos_signals: pd.DataFrame,
@@ -181,6 +376,7 @@ def _simulate(
     weight_by_confidence: bool = False,
     slippage_bps: float = 0.0,
     max_deploy_pct: float = 100.0,
+    precise_map: dict | None = None,
 ):
     """
     Runs the per-trade cumulative-gain simulation for one configuration.
@@ -223,13 +419,18 @@ def _simulate(
     carried to the next day rather than force-deployed into every signal
     that happens to fire — a more realistic model than always being 100%
     invested regardless of conviction or number of signals.
+
+    precise_map: optional {(symbol, trade_date): {resolved_gain_pct,
+    resolution_method, entry_price}} from _build_precise_map, produced by
+    the Precise Sequencing (5-min) button. Where a trade has an entry, its
+    resolved_gain_pct/method OVERRIDE whatever the approximation logic
+    above computed for it (real intraday sequencing beats a same-day-close
+    guess). Trades with no matching entry — outside yfinance's ~60-day
+    5-min window, or a fetch miss — silently keep their approximated
+    resolution; nothing is blended, every trade is labeled either way via
+    the `resolution_method` column added to the trade log below.
     """
-    sim_df = pos_signals[
-        (pos_signals["predicted_signal"].isin(signals))
-        & (pos_signals["prediction_date"].dt.date >= sim_start)
-        & (pos_signals["prediction_date"].dt.date <= sim_end)
-        & (pos_signals["actual_gain_pct"].notna())
-    ].copy()
+    sim_df = _filter_sim_trades(pos_signals, signals, sim_start, sim_end)
 
     if sim_df.empty:
         return None, None, None
@@ -267,6 +468,18 @@ def _simulate(
             # docstring above for the optimistic-bias caveat.
             sim_df["resolved_gain_pct"] = np.maximum(sim_df["resolved_gain_pct"], -abs(stop_loss_pct))
 
+    sim_df["resolution_method"] = (
+        "approximated (daily, real low)" if has_low else "approximated (daily)"
+    )
+
+    if precise_map:
+        for idx in sim_df.index:
+            key = (sim_df.at[idx, "symbol"], sim_df.at[idx, "prediction_date"].date())
+            info = precise_map.get(key)
+            if info is not None:
+                sim_df.at[idx, "resolved_gain_pct"]  = info["resolved_gain_pct"]
+                sim_df.at[idx, "resolution_method"]  = info["resolution_method"]
+
     invested_frac = max(0.0, min(1.0, max_deploy_pct / 100.0))
 
     trade_rows = []
@@ -302,6 +515,7 @@ def _simulate(
                 "predicted_probability": trades.loc[idx].get("predicted_probability") if hasattr(trades.loc[idx], "get") else None,
                 "position_size": position_size,
                 "resolved_gain_pct": gain,
+                "resolution_method": trades.loc[idx, "resolution_method"] if "resolution_method" in trades.columns else "approximated (daily)",
                 "stopped_out": bool(stopped_out.loc[idx]) if idx in stopped_out.index else False,
                 "pnl_dollars": pnl_dollars,
                 "commission_fee": commission_fee,
@@ -361,6 +575,10 @@ def _simulate(
     drawdown_pct = (sim_result["portfolio_value"] - running_peak) / running_peak * 100
     max_drawdown = drawdown_pct.min() if not drawdown_pct.empty else 0.0
 
+    n_trades_precise = 0
+    if not trade_log.empty and "resolution_method" in trade_log.columns:
+        n_trades_precise = int(trade_log["resolution_method"].str.endswith("(5-min)").sum())
+
     stats = {
         "final_value": final_value,
         "total_return": total_return,
@@ -372,6 +590,7 @@ def _simulate(
         "sharpe_like": sharpe_like,
         "max_drawdown": max_drawdown,
         "stop_loss_uses_real_low": bool(use_stop_loss and has_low),
+        "n_trades_precise": n_trades_precise,
     }
     return sim_result, stats, trade_log
 
@@ -706,6 +925,12 @@ def _render_stats(stats: dict, key_prefix: str = ""):
                   help="Largest peak-to-trough decline in the simulated portfolio value over the run.")
     if stats.get("stop_loss_uses_real_low"):
         st.caption("✅ Stop-loss checked against actual intraday lows for this run.")
+    if stats.get("n_trades_precise", 0) > 0:
+        st.caption(
+            f"🕵️ {stats['n_trades_precise']} of {stats['n_trades']} trades resolved via real "
+            "5-minute intraday sequencing; the rest used the daily approximation (outside the "
+            "~60-day 5-min data window, or no bars available)."
+        )
 
 
 def _config_controls(label: str, key_prefix: str, min_date, max_date, default_signals):
@@ -891,12 +1116,18 @@ def render_backtesting_tab():
             st.info("Select at least one signal to run the simulation.")
             return
 
+        active_precise_map = _render_precise_sequencing_section(
+            pos_signals, sim_signals, sim_start, sim_end,
+            use_stop_loss, stop_loss_pct, use_take_profit,
+        )
+
         sim_result, stats, trade_log = _simulate(
             pos_signals, sim_signals, sim_start, sim_end,
             start_capital, commission_fee, max_positions, use_take_profit,
             use_stop_loss=use_stop_loss, stop_loss_pct=stop_loss_pct,
             weight_by_confidence=weight_by_confidence,
             slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+            precise_map=active_precise_map,
         )
 
         if sim_result is None:
