@@ -1181,7 +1181,7 @@ def render_backtesting_tab():
             st.info("Select at least one signal to run the simulation.")
             return
 
-        active_precise_map = _render_precise_sequencing_section(
+        active_precise_map = _render_precise_fetch_panel(
             pos_signals, sim_signals, sim_start, sim_end,
             use_stop_loss, stop_loss_pct, use_take_profit,
         )
