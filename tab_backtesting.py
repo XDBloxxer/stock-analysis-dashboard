@@ -362,32 +362,58 @@ def _precise_cache_key(symbols: tuple, sim_start: _date, sim_end: _date,
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
+def _run_config_key(symbols: tuple, sim_start: _date, sim_end: _date, signals: list,
+                     start_capital: float, commission_fee: float, max_positions: int,
+                     use_take_profit: bool, use_stop_loss: bool, stop_loss_pct: float,
+                     weight_by_confidence: bool, slippage_bps: float,
+                     max_deploy_pct: float) -> str:
+    """Fingerprint of every widget that feeds a run, so a stale cached
+    result (from before the user tweaked *anything*) is never silently
+    re-rendered as if it were current — the button has to be pressed again."""
+    raw = repr((
+        symbols, sim_start, sim_end, tuple(sorted(signals)),
+        round(start_capital, 2), round(commission_fee, 2), max_positions,
+        use_take_profit, use_stop_loss,
+        round(stop_loss_pct, 2) if use_stop_loss else None,
+        weight_by_confidence, round(slippage_bps, 2), round(max_deploy_pct, 2),
+    ))
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+
+
 def _render_precise_fetch_panel(
     pos_signals: pd.DataFrame, sim_signals: list, sim_start: _date, sim_end: _date,
-    use_stop_loss: bool, stop_loss_pct: float, use_take_profit: bool,
+    start_capital: float, commission_fee: float, max_positions: int,
+    use_take_profit: bool, use_stop_loss: bool, stop_loss_pct: float,
+    weight_by_confidence: bool, slippage_bps: float, max_deploy_pct: float,
     key_prefix: str = "sim",
 ) -> dict | None:
     """
     The button that actually runs the simulation. Nothing here runs on its
-    own — fetching 5-min bars only happens on click, cached in session state
-    and fingerprinted against the current config, so changing any other
-    widget never triggers a silent re-fetch or a rougher fallback result;
-    it just marks the last fetch stale until you click again.
+    own: fetching 5-min bars AND running `_simulate` only happens on click.
+    The entire result (precise map, portfolio series, stats, trade log) is
+    computed once and cached in session state, fingerprinted against every
+    widget that could change it. On any other rerun — including ones caused
+    by tweaking a slider, checkbox, or anything else on this page — this
+    function does no fetching, no simulating, and returns exactly the same
+    cached bundle it returned last time, so nothing on screen recomputes,
+    reflows, or flashes a spinner until you click the button again.
 
-    Returns the precise_map to feed into `_simulate`, or None if nothing
-    has been fetched yet (or the config changed since the last fetch) —
-    callers should treat None as "don't render results yet".
+    Returns the cached run bundle (dict with keys: config_key, map,
+    precise_stats, sim_result, stats, trade_log), or None if nothing has
+    been run yet — callers should treat None as "nothing to render yet".
     """
     eligible_trades = _filter_sim_trades(pos_signals, sim_signals, sim_start, sim_end)
     symbols = tuple(sorted(eligible_trades["symbol"].dropna().unique()))
-    current_key = _precise_cache_key(
+    current_key = _run_config_key(
         symbols, sim_start, sim_end, sim_signals,
-        use_stop_loss, stop_loss_pct, use_take_profit,
+        start_capital, commission_fee, max_positions, use_take_profit,
+        use_stop_loss, stop_loss_pct, weight_by_confidence,
+        slippage_bps, max_deploy_pct,
     )
 
-    cache_bucket = f"{key_prefix}_precise_cache"
+    cache_bucket = f"{key_prefix}_run_cache"
     cached = st.session_state.get(cache_bucket)
-    is_fresh = cached is not None and cached.get("key") == current_key
+    is_fresh = cached is not None and cached.get("config_key") == current_key
 
     btn_c1, btn_c2 = st.columns([1, 3])
     with btn_c1:
@@ -400,30 +426,55 @@ def _render_precise_fetch_panel(
     with btn_c2:
         if eligible_trades.empty:
             st.caption("No trades match this signal/date selection yet.")
+        elif cached is None:
+            st.caption("Set your conditions above, then click to run the simulation.")
         elif is_fresh:
-            stats = cached["stats"]
-            dropped = stats["eligible"] - stats["resolved"]
+            precise_stats = cached["precise_stats"]
+            dropped = precise_stats["eligible"] - precise_stats["resolved"]
             drop_note = f", {dropped} dropped (no bars)" if dropped else ""
             st.caption(
-                f"✅ {stats['resolved']} of {stats['eligible']} trades resolved from real 5-min bars "
-                f"across {stats['symbols_fetched']} symbol(s){drop_note}."
+                f"✅ {precise_stats['resolved']} of {precise_stats['eligible']} trades resolved from real "
+                f"5-min bars across {precise_stats['symbols_fetched']} symbol(s){drop_note}."
             )
         else:
-            st.caption("Click to fetch 5-min bars and run the simulation.")
+            st.caption(
+                "⏸️ Showing results from the last run — a setting has changed since then. "
+                "Click to fetch and re-run with the current settings."
+            )
 
     if clicked and not eligible_trades.empty:
         with st.spinner(f"Fetching 5-minute bars for {len(symbols)} symbol(s)..."):
-            precise_map, stats = _build_precise_map(
+            precise_map, precise_stats = _build_precise_map(
                 eligible_trades, use_stop_loss, stop_loss_pct, use_take_profit,
             )
-        st.session_state[cache_bucket] = {"key": current_key, "map": precise_map, "stats": stats}
-        st.toast(f"✅ Resolved {stats['resolved']} of {stats['eligible']} trades from real 5-min bars.")
-        is_fresh = True
+            sim_result, stats, trade_log = _simulate(
+                pos_signals, sim_signals, sim_start, sim_end,
+                start_capital, commission_fee, max_positions, use_take_profit,
+                use_stop_loss=use_stop_loss, stop_loss_pct=stop_loss_pct,
+                weight_by_confidence=weight_by_confidence,
+                slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+                precise_map=precise_map,
+            )
+        st.session_state[cache_bucket] = {
+            "config_key": current_key,
+            "map": precise_map,
+            "precise_stats": precise_stats,
+            "sim_result": sim_result,
+            "stats": stats,
+            "trade_log": trade_log,
+            "config": {
+                "signals": sim_signals, "sim_start": sim_start, "sim_end": sim_end,
+                "start_capital": start_capital, "commission_fee": commission_fee,
+                "max_positions": max_positions, "use_take_profit": use_take_profit,
+                "use_stop_loss": use_stop_loss, "stop_loss_pct": stop_loss_pct,
+                "weight_by_confidence": weight_by_confidence,
+                "slippage_bps": slippage_bps, "max_deploy_pct": max_deploy_pct,
+            },
+        }
+        st.toast(f"✅ Resolved {precise_stats['resolved']} of {precise_stats['eligible']} trades from real 5-min bars.")
         cached = st.session_state[cache_bucket]
 
-    if is_fresh:
-        return cached["map"]
-    return None
+    return cached
 
 
 # ── Simulation core (shared by single-run and comparison modes) ─────────────
@@ -1190,44 +1241,44 @@ def render_backtesting_tab():
             st.info("Select at least one signal to run the simulation.")
             return
 
-        active_precise_map = _render_precise_fetch_panel(
+        run = _render_precise_fetch_panel(
             pos_signals, sim_signals, sim_start, sim_end,
-            use_stop_loss, stop_loss_pct, use_take_profit,
+            start_capital, commission_fee, max_positions, use_take_profit,
+            use_stop_loss, stop_loss_pct, weight_by_confidence,
+            slippage_bps, max_deploy_pct,
         )
 
-        if active_precise_map is None:
+        if run is None:
             st.info(
                 "Set your conditions above, then click \"🕵️ Interrogate the candles\" "
-                "to run the simulation. Results won't update until you do."
+                "to run the simulation. Nothing below will appear until you do."
             )
             return
 
-        sim_result, stats, trade_log = _simulate(
-            pos_signals, sim_signals, sim_start, sim_end,
-            start_capital, commission_fee, max_positions, use_take_profit,
-            use_stop_loss=use_stop_loss, stop_loss_pct=stop_loss_pct,
-            weight_by_confidence=weight_by_confidence,
-            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-            precise_map=active_precise_map,
-        )
+        # Everything from here down is rendered from the frozen bundle
+        # captured at the last button click — NOT from the live widgets
+        # above, which may have moved on since then (see the "Showing
+        # results from the last run" caption in that case).
+        sim_result, stats, trade_log = run["sim_result"], run["stats"], run["trade_log"]
+        run_cfg = run["config"]
 
         if sim_result is None:
-            st.warning("No trades match the selected signals and date range.")
+            st.warning("No trades matched the selected signals and date range on the last run.")
             return
 
         with st.expander("🔧 Debug: parameters used in this run", expanded=False):
             st.code(
-                f"signals={sim_signals}\n"
-                f"date_range=({sim_start} -> {sim_end})\n"
-                f"start_capital={start_capital:,.2f}\n"
-                f"commission_fee={commission_fee:,.2f}\n"
-                f"slippage_bps={slippage_bps:g}\n"
-                f"max_deploy_pct={max_deploy_pct:g}\n"
-                f"max_positions={max_positions}\n"
-                f"use_take_profit={use_take_profit}\n"
-                f"use_stop_loss={use_stop_loss}\n"
-                f"stop_loss_pct={stop_loss_pct:g}\n"
-                f"weight_by_confidence={weight_by_confidence}\n"
+                f"signals={run_cfg['signals']}\n"
+                f"date_range=({run_cfg['sim_start']} -> {run_cfg['sim_end']})\n"
+                f"start_capital={run_cfg['start_capital']:,.2f}\n"
+                f"commission_fee={run_cfg['commission_fee']:,.2f}\n"
+                f"slippage_bps={run_cfg['slippage_bps']:g}\n"
+                f"max_deploy_pct={run_cfg['max_deploy_pct']:g}\n"
+                f"max_positions={run_cfg['max_positions']}\n"
+                f"use_take_profit={run_cfg['use_take_profit']}\n"
+                f"use_stop_loss={run_cfg['use_stop_loss']}\n"
+                f"stop_loss_pct={run_cfg['stop_loss_pct']:g}\n"
+                f"weight_by_confidence={run_cfg['weight_by_confidence']}\n"
                 f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')}\n"
                 f"n_trades={stats['n_trades']}\n"
                 f"n_days={stats['n_days']}\n"
@@ -1236,27 +1287,25 @@ def render_backtesting_tab():
                 language="text",
             )
             st.caption(
-                "If you change a setting above and these values don't change here too, "
-                "the app isn't picking up your edit (check that the deployed "
-                "tab_backtesting.py is actually the updated file, then do a full restart "
-                "of the Streamlit process and a hard browser refresh — not just 'Refresh "
-                "Cache', which only clears the data fetch, not the app code)."
+                "These reflect the settings as they were when you last clicked "
+                "\"🕵️ Interrogate the candles\", not necessarily the widgets above right now — "
+                "click it again to pick up any changes."
             )
 
         _render_stats(stats, key_prefix="sim")
-        if use_stop_loss:
+        if run_cfg["use_stop_loss"]:
             if stats.get("stop_loss_uses_real_low"):
                 _info_card(
-                    f"Stop-loss ({stop_loss_pct:.1f}%) is checked against each trade's actual intraday low — "
+                    f"Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is checked against each trade's actual intraday low — "
                     "any trade whose low reached the stop level is resolved at exactly -"
-                    f"{stop_loss_pct:.1f}%, even if it recovered by close. When a trade could have hit both "
+                    f"{run_cfg['stop_loss_pct']:.1f}%, even if it recovered by close. When a trade could have hit both "
                     "the stop and the take-profit target on the same day, the stop is assumed to trigger "
                     "first (the conservative read, since exact intraday sequencing isn't available).",
                     muted=True,
                 )
             else:
                 _info_card(
-                    f"⚠️ Stop-loss ({stop_loss_pct:.1f}%) is applied as an approximation on each trade's "
+                    f"⚠️ Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is applied as an approximation on each trade's "
                     "resolved (close-based) gain, because this deployment's data doesn't carry an "
                     "intraday-low column. This can only cap trades that already closed worse than the "
                     "stop — it can NOT catch a trade that dipped through the stop intraday and recovered "
@@ -1278,17 +1327,17 @@ def render_backtesting_tab():
         )
         _add_threshold_colored_trace(
             fig, sim_result["prediction_date"], sim_result["portfolio_value"],
-            threshold=start_capital, name="Portfolio Value",
+            threshold=run_cfg["start_capital"], name="Portfolio Value",
         )
         benchmark_shown = False
         if show_benchmark:
-            benchmark_shown = _add_benchmark_trace(fig, sim_result, start_capital)
+            benchmark_shown = _add_benchmark_trace(fig, sim_result, run_cfg["start_capital"])
         fig.add_hline(
-            y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
+            y=run_cfg["start_capital"], line_dash="dash", line_color="rgba(255,255,255,0.15)",
             annotation_text="Starting capital", annotation_font_size=10,
         )
         fig.update_layout(
-            title=f"Cumulative Portfolio Value — Per-Trade Simulation ({', '.join(sim_signals)})",
+            title=f"Cumulative Portfolio Value — Per-Trade Simulation ({', '.join(run_cfg['signals'])})",
             xaxis_title="Date", yaxis_title="Portfolio Value ($)",
             height=380, hovermode="x unified", **LAYOUT,
         )
@@ -1312,7 +1361,7 @@ def render_backtesting_tab():
         with st.expander(f"View all {len(trade_log)} simulated trades"):
             st.dataframe(trade_log, use_container_width=True, hide_index=True)
 
-        _render_monte_carlo(sim_result, start_capital, "sim")
+        _render_monte_carlo(sim_result, run_cfg["start_capital"], "sim")
 
         _info_card(
             "Note: results still assume every simulated trade could actually "
