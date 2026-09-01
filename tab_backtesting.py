@@ -19,6 +19,7 @@ in its entirety from the Performance Trends sub-tab of ML Predictions.
 """
 
 import hashlib
+import time
 import datetime as _dt
 import streamlit as st
 import pandas as pd
@@ -188,39 +189,68 @@ def _filter_sim_trades(pos_signals: pd.DataFrame, signals: list, sim_start, sim_
     ].copy()
 
 
-def _fetch_5min_bars_one(symbol: str, start: _date, end: _date):
+def _fetch_5min_bars_one(symbol: str, start: _date, end: _date, retries: int = 2):
     """Worker: one symbol's 5-minute bars (incl. pre/post-market) spanning
     `start`..`end`, tz-normalized to America/New_York so wall-clock session
     boundaries (4:00 / 9:30 / 16:00 ET) can be compared directly against the
     index. Returns (symbol, DataFrame | None) — None on any failure or empty
-    result, never raises, so one bad symbol can't take down the batch."""
-    try:
-        import yfinance as yf
-        hist = yf.Ticker(symbol).history(
-            start=start, end=end + _dt.timedelta(days=1),
-            interval="5m", prepost=True, auto_adjust=True,
-        )
-        if hist is None or hist.empty:
+    result, never raises, so one bad symbol can't take down the batch.
+
+    Retries a couple of times with backoff before giving up — Yahoo's
+    undocumented endpoint frequently rate-limits/blanks cloud-hosted
+    requests, and a retry after a short pause often succeeds where the
+    first attempt silently came back empty.
+
+    Every failure path — exception OR an empty-but-no-exception response —
+    is logged via log_debug_error so it's visible in the System Info tab's
+    Debug Log. Previously only exceptions were logged, so a rate-limited
+    "empty response, no error raised" case (the most common yfinance
+    cloud-IP failure mode) left literally no trace of why a symbol dropped.
+    """
+    import yfinance as yf
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            hist = yf.Ticker(symbol).history(
+                start=start, end=end + _dt.timedelta(days=1),
+                interval="5m", prepost=True, auto_adjust=True,
+            )
+            if hist is None or hist.empty:
+                last_err = "empty response (no exception) — likely rate-limited or no data for this symbol"
+                if attempt < retries:
+                    time.sleep(0.6 * (attempt + 1))
+                    continue
+                log_debug_error(f"_fetch_5min_bars_one({symbol})", RuntimeError(last_err))
+                return symbol, None
+            if hist.index.tz is None:
+                hist.index = hist.index.tz_localize(_FIVE_MIN_ET)
+            else:
+                hist.index = hist.index.tz_convert(_FIVE_MIN_ET)
+            return symbol, hist
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(0.6 * (attempt + 1))
+                continue
+            log_debug_error(f"_fetch_5min_bars_one({symbol})", e)
             return symbol, None
-        if hist.index.tz is None:
-            hist.index = hist.index.tz_localize(_FIVE_MIN_ET)
-        else:
-            hist.index = hist.index.tz_convert(_FIVE_MIN_ET)
-        return symbol, hist
-    except Exception as e:
-        log_debug_error(f"_fetch_5min_bars_one({symbol})", e)
-        return symbol, None
+    return symbol, None
 
 
 def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
     """One yfinance call per symbol (not per trade) spanning that symbol's
     full needed date range, fanned out across a thread pool — keeps request
     count proportional to the number of distinct tickers touched, not the
-    number of trades."""
+    number of trades.
+
+    Concurrency capped lower than before (4, was 8): hitting Yahoo's
+    endpoint with many simultaneous connections from one cloud IP is a
+    common trigger for the silent empty-response rate-limiting that was
+    causing most trades to drop with no visible error."""
     result = {}
     if not symbols:
         return result
-    max_workers = min(8, len(symbols))
+    max_workers = min(4, len(symbols))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_fetch_5min_bars_one, sym, start, end): sym for sym in symbols}
         for future in as_completed(futures):
@@ -230,11 +260,15 @@ def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
 
 
 def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
-                              stop_loss_pct: float | None, target_pct: float | None) -> dict | None:
+                              stop_loss_pct: float | None, target_pct: float | None) -> tuple[dict | None, str | None]:
     """
-    Resolves one trade against real 5-minute bars, or returns None if there
-    isn't enough data to do so (a delisting, a data gap, etc. — the caller
-    drops that trade from the simulation rather than guessing).
+    Resolves one trade against real 5-minute bars. Returns (info, reason):
+    info is None if there isn't enough data to resolve (a delisting, a data
+    gap, etc. — the caller drops that trade from the simulation rather than
+    guessing); reason is a short machine-stable string identifying *why*
+    when info is None (used to build a drop-reason breakdown for the UI —
+    "no bars at all" and "had bars but couldn't be resolved" look identical
+    to the user otherwise, and are usually different underlying problems).
 
     Entry price: the last available bar's Close strictly before that day's
     4:00 AM ET pre-market open — i.e. the prior session's after-hours close
@@ -251,7 +285,7 @@ def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
     happened inside one 5-minute candle.
     """
     if bars is None or bars.empty or "Close" not in bars.columns:
-        return None
+        return None, "no_bars_fetched"
 
     tz = bars.index.tz
     pre_market_open = pd.Timestamp.combine(trade_date, _dt.time(4, 0)).tz_localize(tz)
@@ -260,14 +294,14 @@ def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
 
     pre_bars = bars[bars.index < pre_market_open]
     if pre_bars.empty:
-        return None
+        return None, "no_prior_bar_for_entry_price"
     entry_price = float(pre_bars["Close"].iloc[-1])
     if not entry_price or entry_price <= 0:
-        return None
+        return None, "invalid_entry_price"
 
     session = bars[(bars.index >= market_open) & (bars.index <= market_close)]
     if session.empty or "High" not in session.columns or "Low" not in session.columns:
-        return None
+        return None, "no_session_bars_for_trade_date"
 
     resolved_gain_pct = None
     method = None
@@ -292,7 +326,7 @@ def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
         "resolved_gain_pct": resolved_gain_pct,
         "resolution_method": method,
         "entry_price": entry_price,
-    }
+    }, None
 
 
 def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
@@ -320,9 +354,11 @@ def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
     fetch_end   = dates.max()
 
     bars_by_symbol = _fetch_5min_bars_batch(symbols, fetch_start, fetch_end)
+    symbols_with_no_bars = sum(1 for sym in symbols if bars_by_symbol.get(sym) is None)
 
     precise_map = {}
     resolved = 0
+    drop_reasons: dict[str, int] = {}
     for row in eligible_trades.itertuples():
         symbol = row.symbol
         trade_date = row.prediction_date.date()
@@ -331,18 +367,22 @@ def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
             raw_target = getattr(row, "predicted_target_gain", None)
             if raw_target is not None and not pd.isna(raw_target):
                 target_pct = float(raw_target)
-        info = _resolve_trade_from_bars(
+        info, reason = _resolve_trade_from_bars(
             bars_by_symbol.get(symbol), trade_date,
             stop_loss_pct if use_stop_loss else None, target_pct,
         )
         if info is not None:
             precise_map[(symbol, trade_date)] = info
             resolved += 1
+        else:
+            drop_reasons[reason] = drop_reasons.get(reason, 0) + 1
 
     stats = {
         "eligible": len(eligible_trades),
         "resolved": resolved,
         "symbols_fetched": len(symbols),
+        "symbols_with_no_bars": symbols_with_no_bars,
+        "drop_reasons": drop_reasons,
         "date_range": (fetch_start, fetch_end),
     }
     return precise_map, stats
@@ -472,6 +512,29 @@ def _render_precise_fetch_panel(
             f"✅ {precise_stats['resolved']} of {precise_stats['eligible']} trades resolved from real "
             f"5-min bars across {precise_stats['symbols_fetched']} symbol(s){drop_note}."
         )
+        no_bars = precise_stats.get("symbols_with_no_bars", 0)
+        reasons = precise_stats.get("drop_reasons") or {}
+        if dropped:
+            reason_labels = {
+                "no_bars_fetched": "yfinance returned nothing for the symbol (rate-limited or no data)",
+                "no_prior_bar_for_entry_price": "no bar before market open to price the entry",
+                "invalid_entry_price": "entry price was zero/invalid",
+                "no_session_bars_for_trade_date": "no bars during the trade's session",
+            }
+            reason_lines = "\n".join(
+                f"- {reason_labels.get(r, r)}: {n}" for r, n in sorted(reasons.items(), key=lambda x: -x[1])
+            )
+            with st.expander(f"Why {dropped} trade(s) were dropped"):
+                st.markdown(reason_lines)
+                if no_bars:
+                    st.caption(
+                        f"{no_bars} of {precise_stats['symbols_fetched']} symbol(s) returned **zero** 5-min "
+                        "bars at all. If that's most of them, this is very likely Yahoo Finance "
+                        "rate-limiting/blocking requests from this server's IP rather than the symbols "
+                        "genuinely lacking data — check the Debug Log in System Info for "
+                        "\"empty response\" / rate-limit entries, and try again in a few minutes or with "
+                        "a smaller symbol set."
+                    )
     else:
         st.caption(
             "⏸️ Showing results from the last run — a setting has changed since then. "
