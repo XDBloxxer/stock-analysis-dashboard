@@ -1114,8 +1114,14 @@ def render_backtesting_tab():
         muted=True,
     )
 
-    min_date = pos_signals["prediction_date"].min().date()
+    data_min_date = pos_signals["prediction_date"].min().date()
     max_date = pos_signals["prediction_date"].max().date()
+    # yfinance's 5-min bar history only goes back ~60 days, and the precise
+    # sequencing simulation is now the only resolution method, so there's no
+    # point letting the picker default to or select a range further back
+    # than that — it would just get dropped ("no bars") when interrogated.
+    lookback_floor = _dt.date.today() - _dt.timedelta(days=60)
+    min_date = max(data_min_date, lookback_floor)
 
     with st.container(border=True):
         top_c1, top_c2, top_c3 = st.columns(3)
@@ -1136,6 +1142,9 @@ def render_backtesting_tab():
                 "Date range", value=(min_date, max_date),
                 min_value=min_date, max_value=max_date,
                 key="sim_date_range",
+                help="Limited to the last 60 days: yfinance's 5-minute bar "
+                     "history (used for precise stop/target sequencing) "
+                     "doesn't go back further than that.",
             )
         cost_c1, cost_c2 = st.columns(2)
         with cost_c1:
@@ -1185,6 +1194,13 @@ def render_backtesting_tab():
             pos_signals, sim_signals, sim_start, sim_end,
             use_stop_loss, stop_loss_pct, use_take_profit,
         )
+
+        if active_precise_map is None:
+            st.info(
+                "Set your conditions above, then click \"🕵️ Interrogate the candles\" "
+                "to run the simulation. Results won't update until you do."
+            )
+            return
 
         sim_result, stats, trade_log = _simulate(
             pos_signals, sim_signals, sim_start, sim_end,
