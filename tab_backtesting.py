@@ -380,28 +380,15 @@ def _run_config_key(symbols: tuple, sim_start: _date, sim_end: _date, signals: l
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def _render_precise_fetch_panel(
+def _eligible_trades_and_key(
     pos_signals: pd.DataFrame, sim_signals: list, sim_start: _date, sim_end: _date,
     start_capital: float, commission_fee: float, max_positions: int,
     use_take_profit: bool, use_stop_loss: bool, stop_loss_pct: float,
     weight_by_confidence: bool, slippage_bps: float, max_deploy_pct: float,
-    key_prefix: str = "sim",
-) -> dict | None:
-    """
-    The button that actually runs the simulation. Nothing here runs on its
-    own: fetching 5-min bars AND running `_simulate` only happens on click.
-    The entire result (precise map, portfolio series, stats, trade log) is
-    computed once and cached in session state, fingerprinted against every
-    widget that could change it. On any other rerun — including ones caused
-    by tweaking a slider, checkbox, or anything else on this page — this
-    function does no fetching, no simulating, and returns exactly the same
-    cached bundle it returned last time, so nothing on screen recomputes,
-    reflows, or flashes a spinner until you click the button again.
-
-    Returns the cached run bundle (dict with keys: config_key, map,
-    precise_stats, sim_result, stats, trade_log), or None if nothing has
-    been run yet — callers should treat None as "nothing to render yet".
-    """
+) -> tuple[pd.DataFrame, str]:
+    """Factored out so the submit-button `disabled=` check (computed before
+    the form's submit button is drawn) and the actual run use the identical
+    eligibility filter and fingerprint — see _render_precise_fetch_panel."""
     eligible_trades = _filter_sim_trades(pos_signals, sim_signals, sim_start, sim_end)
     symbols = tuple(sorted(eligible_trades["symbol"].dropna().unique()))
     current_key = _run_config_key(
@@ -410,39 +397,66 @@ def _render_precise_fetch_panel(
         use_stop_loss, stop_loss_pct, weight_by_confidence,
         slippage_bps, max_deploy_pct,
     )
+    return eligible_trades, current_key
+
+
+def _render_precise_fetch_panel(
+    pos_signals: pd.DataFrame, sim_signals: list, sim_start: _date, sim_end: _date,
+    start_capital: float, commission_fee: float, max_positions: int,
+    use_take_profit: bool, use_stop_loss: bool, stop_loss_pct: float,
+    weight_by_confidence: bool, slippage_bps: float, max_deploy_pct: float,
+    submitted: bool,
+    key_prefix: str = "sim",
+) -> dict | None:
+    """
+    Runs the simulation, but only when `submitted` is True (the caller's
+    `st.form_submit_button` was pressed this run). Fetching 5-min bars AND
+    running `_simulate` only happens on that click. The entire result
+    (precise map, portfolio series, stats, trade log) is computed once and
+    cached in session state, fingerprinted against every widget that could
+    change it. On any other rerun — including ones caused by tweaking a
+    slider, checkbox, or anything else on this page (all of which now live
+    inside an `st.form`, so they don't even trigger a rerun on their own) —
+    this function does no fetching, no simulating, and returns exactly the
+    same cached bundle it returned last time, so nothing on screen
+    recomputes, reflows, or flashes a spinner until you click the button
+    again.
+
+    Returns the cached run bundle (dict with keys: config_key, map,
+    precise_stats, sim_result, stats, trade_log), or None if nothing has
+    been run yet — callers should treat None as "nothing to render yet".
+    """
+    eligible_trades, current_key = _eligible_trades_and_key(
+        pos_signals, sim_signals, sim_start, sim_end,
+        start_capital, commission_fee, max_positions, use_take_profit,
+        use_stop_loss, stop_loss_pct, weight_by_confidence,
+        slippage_bps, max_deploy_pct,
+    )
+    symbols = tuple(sorted(eligible_trades["symbol"].dropna().unique()))
 
     cache_bucket = f"{key_prefix}_run_cache"
     cached = st.session_state.get(cache_bucket)
     is_fresh = cached is not None and cached.get("config_key") == current_key
 
-    btn_c1, btn_c2 = st.columns([1, 3])
-    with btn_c1:
-        clicked = st.button(
-            "🕵️ Interrogate the candles",
-            key=f"{key_prefix}_precise_button",
-            disabled=eligible_trades.empty,
-            use_container_width=True,
+    if eligible_trades.empty:
+        st.caption("No trades match this signal/date selection yet.")
+    elif cached is None:
+        st.caption("Set your conditions above, then click \"🕵️ Interrogate the candles\" to run the simulation.")
+    elif is_fresh:
+        precise_stats = cached["precise_stats"]
+        dropped = precise_stats["eligible"] - precise_stats["resolved"]
+        drop_note = f", {dropped} dropped (no bars)" if dropped else ""
+        st.caption(
+            f"✅ {precise_stats['resolved']} of {precise_stats['eligible']} trades resolved from real "
+            f"5-min bars across {precise_stats['symbols_fetched']} symbol(s){drop_note}."
         )
-    with btn_c2:
-        if eligible_trades.empty:
-            st.caption("No trades match this signal/date selection yet.")
-        elif cached is None:
-            st.caption("Set your conditions above, then click to run the simulation.")
-        elif is_fresh:
-            precise_stats = cached["precise_stats"]
-            dropped = precise_stats["eligible"] - precise_stats["resolved"]
-            drop_note = f", {dropped} dropped (no bars)" if dropped else ""
-            st.caption(
-                f"✅ {precise_stats['resolved']} of {precise_stats['eligible']} trades resolved from real "
-                f"5-min bars across {precise_stats['symbols_fetched']} symbol(s){drop_note}."
-            )
-        else:
-            st.caption(
-                "⏸️ Showing results from the last run — a setting has changed since then. "
-                "Click to fetch and re-run with the current settings."
-            )
+    else:
+        st.caption(
+            "⏸️ Showing results from the last run — a setting has changed since then. "
+            "Click \"🕵️ Interrogate the candles\" again to fetch and re-run with the current settings."
+        )
 
-    if clicked and not eligible_trades.empty:
+    if submitted and not eligible_trades.empty:
         with st.spinner(f"Fetching 5-minute bars for {len(symbols)} symbol(s)..."):
             precise_map, precise_stats = _build_precise_map(
                 eligible_trades, use_stop_loss, stop_loss_pct, use_take_profit,
@@ -1174,57 +1188,19 @@ def render_backtesting_tab():
     lookback_floor = _dt.date.today() - _dt.timedelta(days=60)
     min_date = max(data_min_date, lookback_floor)
 
-    with st.container(border=True):
-        top_c1, top_c2, top_c3 = st.columns(3)
-        with top_c1:
-            start_capital = st.number_input(
-                "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
-                key="sim_start_capital",
-            )
-        with top_c2:
-            commission_fee = st.number_input(
-                "Commission per trade ($)", min_value=0.0,
-                value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
-                key="sim_commission_fee",
-            )
-            user_state.persist(commission_fee=commission_fee)
-        with top_c3:
-            date_range = st.date_input(
-                "Date range", value=(min_date, max_date),
-                min_value=min_date, max_value=max_date,
-                key="sim_date_range",
-                help="Limited to the last 60 days: yfinance's 5-minute bar "
-                     "history (used for precise stop/target sequencing) "
-                     "doesn't go back further than that.",
-            )
-        cost_c1, cost_c2 = st.columns(2)
-        with cost_c1:
-            slippage_bps = st.number_input(
-                "Est. slippage (bps, round-trip)", min_value=0.0,
-                value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
-                key="sim_slippage_bps",
-                help="Estimated spread/market-impact cost per trade, in basis points of position size — "
-                     "on top of the flat commission. A flat dollar commission doesn't capture this, and it "
-                     "matters most for thinner/less-liquid names. 10 bps (0.10%) is a reasonable starting "
-                     "point for liquid large-caps; use more for small-caps.",
-            )
-            user_state.persist(slippage_bps=slippage_bps)
-        with cost_c2:
-            max_deploy_pct = st.slider(
-                "Capital deployed per day (%)", min_value=10, max_value=100,
-                value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
-                key="sim_max_deploy_pct",
-                help="Share of available capital actually put into that day's signals. The remainder is held "
-                     "as idle cash (0% return) and carried to the next day, instead of always being 100% "
-                     "invested regardless of conviction or how many signals fired.",
-            )
-            user_state.persist(max_deploy_pct=max_deploy_pct)
-
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        sim_start, sim_end = date_range
-    else:
-        sim_start, sim_end = min_date, max_date
-
+    # Everything the user can tune lives inside a single st.form now. Widgets
+    # inside a form do NOT trigger a script rerun (no spinner, no scroll-jump,
+    # no re-render of anything) when you type in a number field, drag a
+    # slider, or toggle a checkbox — Streamlit only reruns the app when the
+    # form's submit button is pressed. That's the actual fix for "why does
+    # it do anything before I click Interrogate": previously every one of
+    # these widgets lived directly on the page, and Streamlit reruns the
+    # *entire* script on every single widget interaction by design — that
+    # was never gated on the button, it just happened to not recompute
+    # anything expensive most of the time. Combined with a known Streamlit
+    # bug (streamlit/streamlit#5069) where a rerun triggered from inside a
+    # non-first st.tabs() tab can reset scroll position, that's what was
+    # producing the flash-to-loading / jump-to-"Today's Picks" behavior.
     compare_mode = st.checkbox(
         "Compare two configurations side-by-side",
         key="sim_compare_mode",
@@ -1232,10 +1208,70 @@ def render_backtesting_tab():
     )
 
     if not compare_mode:
-        with st.container(border=True):
+        with st.form("sim_config_form", border=True):
+            top_c1, top_c2, top_c3 = st.columns(3)
+            with top_c1:
+                start_capital = st.number_input(
+                    "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
+                    key="sim_start_capital",
+                )
+            with top_c2:
+                commission_fee = st.number_input(
+                    "Commission per trade ($)", min_value=0.0,
+                    value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
+                    key="sim_commission_fee",
+                )
+            with top_c3:
+                date_range = st.date_input(
+                    "Date range", value=(min_date, max_date),
+                    min_value=min_date, max_value=max_date,
+                    key="sim_date_range",
+                    help="Limited to the last 60 days: yfinance's 5-minute bar "
+                         "history (used for precise stop/target sequencing) "
+                         "doesn't go back further than that.",
+                )
+            cost_c1, cost_c2 = st.columns(2)
+            with cost_c1:
+                slippage_bps = st.number_input(
+                    "Est. slippage (bps, round-trip)", min_value=0.0,
+                    value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
+                    key="sim_slippage_bps",
+                    help="Estimated spread/market-impact cost per trade, in basis points of position size — "
+                         "on top of the flat commission. A flat dollar commission doesn't capture this, and it "
+                         "matters most for thinner/less-liquid names. 10 bps (0.10%) is a reasonable starting "
+                         "point for liquid large-caps; use more for small-caps.",
+                )
+            with cost_c2:
+                max_deploy_pct = st.slider(
+                    "Capital deployed per day (%)", min_value=10, max_value=100,
+                    value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
+                    key="sim_max_deploy_pct",
+                    help="Share of available capital actually put into that day's signals. The remainder is held "
+                         "as idle cash (0% return) and carried to the next day, instead of always being 100% "
+                         "invested regardless of conviction or how many signals fired.",
+                )
+
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                sim_start, sim_end = date_range
+            else:
+                sim_start, sim_end = min_date, max_date
+
             sim_signals, use_take_profit, max_positions, use_stop_loss, stop_loss_pct, weight_by_confidence = _config_controls(
                 "Configuration", "sim", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
             )
+
+            submitted = st.form_submit_button(
+                "🕵️ Interrogate the candles", use_container_width=True,
+            )
+
+        # Widget values above are read from session_state and are current as
+        # of *this* rerun regardless of whether that rerun was caused by the
+        # submit button or something else on the page — but nothing in this
+        # block runs expensive work unless `submitted` is True this run.
+        user_state.persist(
+            commission_fee=commission_fee, slippage_bps=slippage_bps,
+            max_deploy_pct=max_deploy_pct,
+        )
 
         if not sim_signals:
             st.info("Select at least one signal to run the simulation.")
@@ -1245,7 +1281,7 @@ def render_backtesting_tab():
             pos_signals, sim_signals, sim_start, sim_end,
             start_capital, commission_fee, max_positions, use_take_profit,
             use_stop_loss, stop_loss_pct, weight_by_confidence,
-            slippage_bps, max_deploy_pct,
+            slippage_bps, max_deploy_pct, submitted,
         )
 
         if run is None:
@@ -1375,34 +1411,111 @@ def render_backtesting_tab():
         )
 
     else:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            with st.container(border=True):
+        with st.form("sim_compare_form", border=True):
+            top_c1, top_c2, top_c3 = st.columns(3)
+            with top_c1:
+                start_capital = st.number_input(
+                    "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
+                    key="sim_start_capital",
+                )
+            with top_c2:
+                commission_fee = st.number_input(
+                    "Commission per trade ($)", min_value=0.0,
+                    value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
+                    key="sim_commission_fee",
+                )
+            with top_c3:
+                date_range = st.date_input(
+                    "Date range", value=(min_date, max_date),
+                    min_value=min_date, max_value=max_date,
+                    key="sim_date_range",
+                    help="Limited to the last 60 days: yfinance's 5-minute bar "
+                         "history (used for precise stop/target sequencing) "
+                         "doesn't go back further than that.",
+                )
+            cost_c1, cost_c2 = st.columns(2)
+            with cost_c1:
+                slippage_bps = st.number_input(
+                    "Est. slippage (bps, round-trip)", min_value=0.0,
+                    value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
+                    key="sim_slippage_bps",
+                )
+            with cost_c2:
+                max_deploy_pct = st.slider(
+                    "Capital deployed per day (%)", min_value=10, max_value=100,
+                    value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
+                    key="sim_max_deploy_pct",
+                )
+
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                sim_start, sim_end = date_range
+            else:
+                sim_start, sim_end = min_date, max_date
+
+            col_a, col_b = st.columns(2)
+            with col_a:
                 signals_a, take_profit_a, max_pos_a, sl_a, sl_pct_a, wbc_a = _config_controls(
                     "Configuration A", "sim_a", min_date, max_date, default_signals=["STRONG BUY"],
                 )
-        with col_b:
-            with st.container(border=True):
+            with col_b:
                 signals_b, take_profit_b, max_pos_b, sl_b, sl_pct_b, wbc_b = _config_controls(
                     "Configuration B", "sim_b", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
                 )
+
+            submitted = st.form_submit_button("▶️ Run comparison", use_container_width=True)
+
+        user_state.persist(
+            commission_fee=commission_fee, slippage_bps=slippage_bps,
+            max_deploy_pct=max_deploy_pct,
+        )
 
         if not signals_a or not signals_b:
             st.info("Select at least one signal for both configurations to run the comparison.")
             return
 
-        result_a, stats_a, trade_log_a = _simulate(
-            pos_signals, signals_a, sim_start, sim_end,
-            start_capital, commission_fee, max_pos_a, take_profit_a,
-            use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
-            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-        )
-        result_b, stats_b, trade_log_b = _simulate(
-            pos_signals, signals_b, sim_start, sim_end,
-            start_capital, commission_fee, max_pos_b, take_profit_b,
-            use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
-            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-        )
+        cmp_cache_key = repr((
+            tuple(sorted(signals_a)), tuple(sorted(signals_b)), sim_start, sim_end,
+            round(start_capital, 2), round(commission_fee, 2), max_pos_a, max_pos_b,
+            take_profit_a, take_profit_b, sl_a, sl_b,
+            round(sl_pct_a, 2) if sl_a else None, round(sl_pct_b, 2) if sl_b else None,
+            wbc_a, wbc_b, round(slippage_bps, 2), round(max_deploy_pct, 2),
+        ))
+        cached_cmp = st.session_state.get("sim_compare_run_cache")
+        if submitted:
+            with st.spinner("Running both configurations..."):
+                result_a, stats_a, trade_log_a = _simulate(
+                    pos_signals, signals_a, sim_start, sim_end,
+                    start_capital, commission_fee, max_pos_a, take_profit_a,
+                    use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
+                    slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+                )
+                result_b, stats_b, trade_log_b = _simulate(
+                    pos_signals, signals_b, sim_start, sim_end,
+                    start_capital, commission_fee, max_pos_b, take_profit_b,
+                    use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
+                    slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+                )
+            st.session_state["sim_compare_run_cache"] = {
+                "key": cmp_cache_key,
+                "result_a": result_a, "stats_a": stats_a, "trade_log_a": trade_log_a,
+                "result_b": result_b, "stats_b": stats_b, "trade_log_b": trade_log_b,
+            }
+            cached_cmp = st.session_state["sim_compare_run_cache"]
+        elif cached_cmp is not None and cached_cmp.get("key") != cmp_cache_key:
+            st.caption(
+                "⏸️ Showing results from the last run — a setting has changed since then. "
+                "Click \"▶️ Run comparison\" again to re-run with the current settings."
+            )
+
+        if cached_cmp is None:
+            st.info(
+                "Set your conditions above, then click \"▶️ Run comparison\" to run both "
+                "simulations. Nothing below will appear until you do."
+            )
+            return
+
+        result_a, stats_a, trade_log_a = cached_cmp["result_a"], cached_cmp["stats_a"], cached_cmp["trade_log_a"]
+        result_b, stats_b, trade_log_b = cached_cmp["result_b"], cached_cmp["stats_b"], cached_cmp["trade_log_b"]
 
         if result_a is None or result_b is None:
             st.warning("No trades match one or both configurations over the selected date range.")
