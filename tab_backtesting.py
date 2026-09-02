@@ -168,12 +168,19 @@ def _add_benchmark_trace(fig: go.Figure, sim_result: pd.DataFrame, start_capital
 # range picker below is locked to that window — there's nothing to fall back
 # to for older trades, so they're simply not offered as an option.
 _FIVE_MIN_MAX_DAYS = 60
+# yfinance enforces the 60-day limit against the exact instant the request
+# is made, not midnight of "today". A start date exactly 60 days back (at
+# 00:00) is already a few hours older than "60 days before right now" by
+# the time the request goes out, which is enough for Yahoo to reject the
+# whole call. This safety margin keeps the computed start comfortably
+# inside the real window regardless of what time of day it is.
+_FIVE_MIN_SAFETY_DAYS = 2
 _FIVE_MIN_ET = "America/New_York"
 
 
 def _five_min_cutoff_date() -> _date:
     """Oldest prediction_date still eligible for 5-min sequencing, as of today."""
-    return _date.today() - _dt.timedelta(days=_FIVE_MIN_MAX_DAYS)
+    return _date.today() - _dt.timedelta(days=_FIVE_MIN_MAX_DAYS - _FIVE_MIN_SAFETY_DAYS)
 
 
 def _filter_sim_trades(pos_signals: pd.DataFrame, signals: list, sim_start, sim_end) -> pd.DataFrame:
@@ -1261,7 +1268,7 @@ def render_backtesting_tab():
     # sequencing simulation is now the only resolution method, so there's no
     # point letting the picker default to or select a range further back
     # than that — it would just get dropped ("no bars") when interrogated.
-    lookback_floor = _dt.date.today() - _dt.timedelta(days=60)
+    lookback_floor = _five_min_cutoff_date()
     min_date = max(data_min_date, lookback_floor)
 
     # Everything the user can tune lives inside a single st.form now. Widgets
