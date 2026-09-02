@@ -1239,9 +1239,16 @@ def _config_controls(label: str, key_prefix: str, min_date, max_date, default_si
             help="Caps the resolved loss on any single trade at -X%. See note below the results for how this is approximated.",
         )
     with sl_c2:
+        # NOTE: this control lives inside a `st.form`, so ticking the checkbox
+        # above does not trigger a rerun until the form is submitted — the
+        # `disabled=not use_stop_loss` this used to have would therefore stay
+        # stuck at its state from the *previous* run and silently block the
+        # slider from being dragged at all. Left always-enabled instead; the
+        # value simply has no effect unless "Stop-loss" is checked.
         stop_loss_pct = st.slider(
             "Stop-loss %", min_value=1.0, max_value=30.0, value=8.0, step=0.5,
-            key=f"{key_prefix}_stop_loss_pct", disabled=not use_stop_loss,
+            key=f"{key_prefix}_stop_loss_pct",
+            help="Only applied when \"Stop-loss\" is checked.",
         )
 
     weight_by_confidence = st.checkbox(
