@@ -1,5 +1,15 @@
 """
-Backtesting Tab Module  (v5)
+Backtesting Tab Module  (v6)
+
+v6: Isolated the single-run and comparison panels (form, fetch/progress bar,
+results) inside their own `@st.fragment`. A form_submit_button click inside
+a fragment only reruns that fragment, not the whole script, so Streamlit's
+top-right "running man" indicator and the full-page dim — both tied to a
+*full* script rerun — no longer fire for "Interrogate the candles" / "Run
+comparison" clicks. A small fragment-scoped indicator appears in their place
+instead. Purely structural: caching, fingerprinting, and rendering logic are
+unchanged, just relocated into `_render_single_sim_panel` /
+`_render_compare_sim_panel`.
 
 v5: Replaced the daily close-based approximation with real 5-minute intraday
 sequencing as the only resolution method — every trade is walked against
@@ -1223,6 +1233,436 @@ def _config_controls(label: str, key_prefix: str, min_date, max_date, default_si
 
 
 # ── Main entry point ───────────────────────────────────────────────────────
+# ── Fragment-isolated panels ──────────────────────────────────────────────
+# Wrapping each mode's form + run + results in its own @st.fragment means a
+# form_submit_button click (or anything else inside here) only reruns this
+# fragment, not the whole script — so Streamlit's top-right "running man"
+# indicator and the full-page dim (both tied to a *full script* rerun) don't
+# fire for these clicks. What you get instead is a small in-place indicator
+# scoped to the fragment's own area while it recomputes. This is a bigger
+# structural change than the progress bar, so double check both modes still
+# behave (submit still only fires on the button, cached results still show
+# correctly on unrelated reruns) after this.
+@st.fragment
+def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> None:
+    with st.form("sim_config_form", border=True):
+        top_c1, top_c2, top_c3 = st.columns(3)
+        with top_c1:
+            start_capital = st.number_input(
+                "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
+                key="sim_start_capital",
+            )
+        with top_c2:
+            commission_fee = st.number_input(
+                "Commission per trade ($)", min_value=0.0,
+                value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
+                key="sim_commission_fee",
+            )
+        with top_c3:
+            date_range = st.date_input(
+                "Date range", value=(min_date, max_date),
+                min_value=min_date, max_value=max_date,
+                key="sim_date_range",
+                help="Limited to the last 60 days: yfinance's 5-minute bar "
+                     "history (used for precise stop/target sequencing) "
+                     "doesn't go back further than that.",
+            )
+        cost_c1, cost_c2 = st.columns(2)
+        with cost_c1:
+            slippage_bps = st.number_input(
+                "Est. slippage (bps, round-trip)", min_value=0.0,
+                value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
+                key="sim_slippage_bps",
+                help="Estimated spread/market-impact cost per trade, in basis points of position size — "
+                     "on top of the flat commission. A flat dollar commission doesn't capture this, and it "
+                     "matters most for thinner/less-liquid names. 10 bps (0.10%) is a reasonable starting "
+                     "point for liquid large-caps; use more for small-caps.",
+            )
+        with cost_c2:
+            max_deploy_pct = st.slider(
+                "Capital deployed per day (%)", min_value=10, max_value=100,
+                value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
+                key="sim_max_deploy_pct",
+                help="Share of available capital actually put into that day's signals. The remainder is held "
+                     "as idle cash (0% return) and carried to the next day, instead of always being 100% "
+                     "invested regardless of conviction or how many signals fired.",
+            )
+
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            sim_start, sim_end = date_range
+        else:
+            sim_start, sim_end = min_date, max_date
+
+        sim_signals, use_take_profit, max_positions, use_stop_loss, stop_loss_pct, weight_by_confidence = _config_controls(
+            "Configuration", "sim", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
+        )
+
+        submitted = st.form_submit_button(
+            "🕵️ Interrogate the candles", use_container_width=True,
+        )
+
+    # Widget values above are read from session_state and are current as
+    # of *this* rerun regardless of whether that rerun was caused by the
+    # submit button or something else on the page — but nothing in this
+    # block runs expensive work unless `submitted` is True this run.
+    user_state.persist(
+        commission_fee=commission_fee, slippage_bps=slippage_bps,
+        max_deploy_pct=max_deploy_pct,
+    )
+
+    if not sim_signals:
+        st.info("Select at least one signal to run the simulation.")
+        return
+
+    run = _render_precise_fetch_panel(
+        pos_signals, sim_signals, sim_start, sim_end,
+        start_capital, commission_fee, max_positions, use_take_profit,
+        use_stop_loss, stop_loss_pct, weight_by_confidence,
+        slippage_bps, max_deploy_pct, submitted,
+    )
+
+    if run is None:
+        st.info(
+            "Set your conditions above, then click \"🕵️ Interrogate the candles\" "
+            "to run the simulation. Nothing below will appear until you do."
+        )
+        return
+
+    # Everything from here down is rendered from the frozen bundle
+    # captured at the last button click — NOT from the live widgets
+    # above, which may have moved on since then (see the "Showing
+    # results from the last run" caption in that case).
+    sim_result, stats, trade_log = run["sim_result"], run["stats"], run["trade_log"]
+    run_cfg = run["config"]
+
+    if sim_result is None:
+        st.warning("No trades matched the selected signals and date range on the last run.")
+        return
+
+    with st.expander("🔧 Debug: parameters used in this run", expanded=False):
+        st.code(
+            f"signals={run_cfg['signals']}\n"
+            f"date_range=({run_cfg['sim_start']} -> {run_cfg['sim_end']})\n"
+            f"start_capital={run_cfg['start_capital']:,.2f}\n"
+            f"commission_fee={run_cfg['commission_fee']:,.2f}\n"
+            f"slippage_bps={run_cfg['slippage_bps']:g}\n"
+            f"max_deploy_pct={run_cfg['max_deploy_pct']:g}\n"
+            f"max_positions={run_cfg['max_positions']}\n"
+            f"use_take_profit={run_cfg['use_take_profit']}\n"
+            f"use_stop_loss={run_cfg['use_stop_loss']}\n"
+            f"stop_loss_pct={run_cfg['stop_loss_pct']:g}\n"
+            f"weight_by_confidence={run_cfg['weight_by_confidence']}\n"
+            f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')}\n"
+            f"n_trades={stats['n_trades']}\n"
+            f"n_days={stats['n_days']}\n"
+            f"total_fees={stats['total_fees']:,.2f}\n"
+            f"total_slippage={stats.get('total_slippage', 0.0):,.2f}",
+            language="text",
+        )
+        st.caption(
+            "These reflect the settings as they were when you last clicked "
+            "\"🕵️ Interrogate the candles\", not necessarily the widgets above right now — "
+            "click it again to pick up any changes."
+        )
+
+    _render_stats(stats, key_prefix="sim")
+    if run_cfg["use_stop_loss"]:
+        if stats.get("stop_loss_uses_real_low"):
+            _info_card(
+                f"Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is checked against each trade's actual intraday low — "
+                "any trade whose low reached the stop level is resolved at exactly -"
+                f"{run_cfg['stop_loss_pct']:.1f}%, even if it recovered by close. When a trade could have hit both "
+                "the stop and the take-profit target on the same day, the stop is assumed to trigger "
+                "first (the conservative read, since exact intraday sequencing isn't available).",
+                muted=True,
+            )
+        else:
+            _info_card(
+                f"⚠️ Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is applied as an approximation on each trade's "
+                "resolved (close-based) gain, because this deployment's data doesn't carry an "
+                "intraday-low column. This can only cap trades that already closed worse than the "
+                "stop — it can NOT catch a trade that dipped through the stop intraday and recovered "
+                "to close positive, since that never shows up in the close-based gain. In other words, "
+                "this approximation is optimistically biased: a real stop-loss would very likely "
+                "trigger on more trades, and different trades, than this chart shows. Treat the "
+                "stop-loss results here as a soft upper bound, not a realistic simulation.",
+                muted=True,
+            )
+
+    show_benchmark = st.checkbox(
+        "Show SPY buy & hold benchmark", value=True, key="sim_show_benchmark",
+        help="Overlays what the same starting capital would be worth just buy-and-holding SPY over the same date range — fetched live via yfinance.",
+    )
+
+    fig = go.Figure()
+    _add_drawdown_shading(
+        fig, sim_result["prediction_date"], sim_result["portfolio_value"],
+    )
+    _add_threshold_colored_trace(
+        fig, sim_result["prediction_date"], sim_result["portfolio_value"],
+        threshold=run_cfg["start_capital"], name="Portfolio Value",
+    )
+    benchmark_shown = False
+    if show_benchmark:
+        benchmark_shown = _add_benchmark_trace(fig, sim_result, run_cfg["start_capital"])
+    fig.add_hline(
+        y=run_cfg["start_capital"], line_dash="dash", line_color="rgba(255,255,255,0.15)",
+        annotation_text="Starting capital", annotation_font_size=10,
+    )
+    fig.update_layout(
+        title=f"Cumulative Portfolio Value — Per-Trade Simulation ({', '.join(run_cfg['signals'])})",
+        xaxis_title="Date", yaxis_title="Portfolio Value ($)",
+        height=380, hovermode="x unified", **LAYOUT,
+    )
+    fig.update_xaxes(**AXIS_STYLE)
+    fig.update_yaxes(**AXIS_STYLE)
+    st.plotly_chart(fig, use_container_width=True)
+    if show_benchmark and not benchmark_shown:
+        st.caption("⚠️ SPY benchmark unavailable right now (data fetch failed) — showing strategy only.")
+
+    render_labeled_divider("Return Attribution")
+    attrib_by = st.radio(
+        "Attribute return by", ["Signal type", "Symbol"], horizontal=True, key="sim_attrib_by",
+    )
+    _render_return_attribution(
+        trade_log, "signal" if attrib_by == "Signal type" else "symbol",
+        title=f"P&L Contribution by {attrib_by}",
+    )
+
+    render_labeled_divider("Trade Log")
+    _render_trade_log_download(trade_log, key="sim_trade_log_dl")
+    with st.expander(f"View all {len(trade_log)} simulated trades"):
+        st.dataframe(trade_log, use_container_width=True, hide_index=True)
+
+    _render_monte_carlo(sim_result, run_cfg["start_capital"], "sim")
+
+    _info_card(
+        "Note: results still assume every simulated trade could actually "
+        "be filled at the resolved gain, with only a flat estimated "
+        "slippage figure (not real per-symbol spread/market-impact "
+        "data) and unlimited liquidity — treat this as an "
+        "illustration of the model's signal quality under a "
+        "reasonable cost assumption, not a guarantee of real-world "
+        "tradeable returns.",
+        muted=True,
+    )
+
+
+
+@st.fragment
+def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> None:
+    with st.form("sim_compare_form", border=True):
+        top_c1, top_c2, top_c3 = st.columns(3)
+        with top_c1:
+            start_capital = st.number_input(
+                "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
+                key="sim_start_capital",
+            )
+        with top_c2:
+            commission_fee = st.number_input(
+                "Commission per trade ($)", min_value=0.0,
+                value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
+                key="sim_commission_fee",
+            )
+        with top_c3:
+            date_range = st.date_input(
+                "Date range", value=(min_date, max_date),
+                min_value=min_date, max_value=max_date,
+                key="sim_date_range",
+                help="Limited to the last 60 days: yfinance's 5-minute bar "
+                     "history (used for precise stop/target sequencing) "
+                     "doesn't go back further than that.",
+            )
+        cost_c1, cost_c2 = st.columns(2)
+        with cost_c1:
+            slippage_bps = st.number_input(
+                "Est. slippage (bps, round-trip)", min_value=0.0,
+                value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
+                key="sim_slippage_bps",
+            )
+        with cost_c2:
+            max_deploy_pct = st.slider(
+                "Capital deployed per day (%)", min_value=10, max_value=100,
+                value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
+                key="sim_max_deploy_pct",
+            )
+
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            sim_start, sim_end = date_range
+        else:
+            sim_start, sim_end = min_date, max_date
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            signals_a, take_profit_a, max_pos_a, sl_a, sl_pct_a, wbc_a = _config_controls(
+                "Configuration A", "sim_a", min_date, max_date, default_signals=["STRONG BUY"],
+            )
+        with col_b:
+            signals_b, take_profit_b, max_pos_b, sl_b, sl_pct_b, wbc_b = _config_controls(
+                "Configuration B", "sim_b", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
+            )
+
+        submitted = st.form_submit_button("▶️ Run comparison", use_container_width=True)
+
+    user_state.persist(
+        commission_fee=commission_fee, slippage_bps=slippage_bps,
+        max_deploy_pct=max_deploy_pct,
+    )
+
+    if not signals_a or not signals_b:
+        st.info("Select at least one signal for both configurations to run the comparison.")
+        return
+
+    cmp_cache_key = repr((
+        tuple(sorted(signals_a)), tuple(sorted(signals_b)), sim_start, sim_end,
+        round(start_capital, 2), round(commission_fee, 2), max_pos_a, max_pos_b,
+        take_profit_a, take_profit_b, sl_a, sl_b,
+        round(sl_pct_a, 2) if sl_a else None, round(sl_pct_b, 2) if sl_b else None,
+        wbc_a, wbc_b, round(slippage_bps, 2), round(max_deploy_pct, 2),
+    ))
+    cached_cmp = st.session_state.get("sim_compare_run_cache")
+    if submitted:
+        with st.spinner("Running both configurations..."):
+            result_a, stats_a, trade_log_a = _simulate(
+                pos_signals, signals_a, sim_start, sim_end,
+                start_capital, commission_fee, max_pos_a, take_profit_a,
+                use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
+                slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+            )
+            result_b, stats_b, trade_log_b = _simulate(
+                pos_signals, signals_b, sim_start, sim_end,
+                start_capital, commission_fee, max_pos_b, take_profit_b,
+                use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
+                slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+            )
+        st.session_state["sim_compare_run_cache"] = {
+            "key": cmp_cache_key,
+            "result_a": result_a, "stats_a": stats_a, "trade_log_a": trade_log_a,
+            "result_b": result_b, "stats_b": stats_b, "trade_log_b": trade_log_b,
+        }
+        cached_cmp = st.session_state["sim_compare_run_cache"]
+    elif cached_cmp is not None and cached_cmp.get("key") != cmp_cache_key:
+        st.caption(
+            "⏸️ Showing results from the last run — a setting has changed since then. "
+            "Click \"▶️ Run comparison\" again to re-run with the current settings."
+        )
+
+    if cached_cmp is None:
+        st.info(
+            "Set your conditions above, then click \"▶️ Run comparison\" to run both "
+            "simulations. Nothing below will appear until you do."
+        )
+        return
+
+    result_a, stats_a, trade_log_a = cached_cmp["result_a"], cached_cmp["stats_a"], cached_cmp["trade_log_a"]
+    result_b, stats_b, trade_log_b = cached_cmp["result_b"], cached_cmp["stats_b"], cached_cmp["trade_log_b"]
+
+    if result_a is None or result_b is None:
+        st.warning("No trades match one or both configurations over the selected date range.")
+        return
+
+    with st.expander("🔧 Debug: parameters used in this run", expanded=False):
+        st.code(
+            f"shared: start_capital={start_capital:,.2f}, commission_fee={commission_fee:,.2f}, "
+            f"slippage_bps={slippage_bps:g}, max_deploy_pct={max_deploy_pct:g}, "
+            f"date_range=({sim_start} -> {sim_end})\n"
+            f"A: signals={signals_a}, max_positions={max_pos_a}, take_profit={take_profit_a}, "
+            f"stop_loss={sl_a} ({sl_pct_a:g}%), weight_by_confidence={wbc_a}, "
+            f"n_trades={stats_a['n_trades']}, n_days={stats_a['n_days']}, "
+            f"total_fees={stats_a['total_fees']:,.2f}, total_slippage={stats_a.get('total_slippage', 0.0):,.2f}\n"
+            f"B: signals={signals_b}, max_positions={max_pos_b}, take_profit={take_profit_b}, "
+            f"stop_loss={sl_b} ({sl_pct_b:g}%), weight_by_confidence={wbc_b}, "
+            f"n_trades={stats_b['n_trades']}, n_days={stats_b['n_days']}, "
+            f"total_fees={stats_b['total_fees']:,.2f}, total_slippage={stats_b.get('total_slippage', 0.0):,.2f}",
+            language="text",
+        )
+
+    render_labeled_divider("Results")
+    stat_a_col, stat_b_col = st.columns(2)
+    with stat_a_col:
+        st.markdown(f"**Configuration A** — {', '.join(signals_a)}")
+        _render_stats(stats_a, key_prefix="sim_a")
+    with stat_b_col:
+        st.markdown(f"**Configuration B** — {', '.join(signals_b)}")
+        _render_stats(stats_b, key_prefix="sim_b")
+
+    show_benchmark_cmp = st.checkbox(
+        "Show SPY buy & hold benchmark", value=True, key="sim_cmp_show_benchmark",
+        help="Overlays what the same starting capital would be worth just buy-and-holding SPY over the same date range — fetched live via yfinance.",
+    )
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=result_a["prediction_date"], y=result_a["portfolio_value"],
+        mode="lines+markers", name=f"A: {', '.join(signals_a)}",
+        line=dict(color=COLORS["primary"], width=2),
+        marker=dict(size=5),
+    ))
+    fig.add_trace(go.Scatter(
+        x=result_b["prediction_date"], y=result_b["portfolio_value"],
+        mode="lines+markers", name=f"B: {', '.join(signals_b)}",
+        line=dict(color=COLORS["secondary"], width=2),
+        marker=dict(size=5),
+    ))
+    benchmark_shown_cmp = False
+    if show_benchmark_cmp:
+        # Widest shared window of the two runs, so the benchmark line
+        # doesn't stop short of whichever config's curve runs longer.
+        longer_result = result_a if len(result_a) >= len(result_b) else result_b
+        benchmark_shown_cmp = _add_benchmark_trace(fig, longer_result, start_capital)
+    fig.add_hline(
+        y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
+        annotation_text="Starting capital", annotation_font_size=10,
+    )
+    fig.update_layout(
+        title="Cumulative Portfolio Value — A vs B",
+        xaxis_title="Date", yaxis_title="Portfolio Value ($)",
+        height=420, hovermode="x unified", **LAYOUT,
+    )
+    fig.update_xaxes(**AXIS_STYLE)
+    fig.update_yaxes(**AXIS_STYLE)
+    st.plotly_chart(fig, use_container_width=True)
+    if show_benchmark_cmp and not benchmark_shown_cmp:
+        st.caption("⚠️ SPY benchmark unavailable right now (data fetch failed) — showing strategies only.")
+
+    render_labeled_divider("Return Attribution")
+    attrib_col_a, attrib_col_b = st.columns(2)
+    with attrib_col_a:
+        _render_return_attribution(trade_log_a, "signal", title="A — P&L by Signal Type")
+    with attrib_col_b:
+        _render_return_attribution(trade_log_b, "signal", title="B — P&L by Signal Type")
+
+    render_labeled_divider("Trade Logs")
+    dl_col_a, dl_col_b = st.columns(2)
+    with dl_col_a:
+        st.markdown("**Configuration A**")
+        _render_trade_log_download(trade_log_a, key="sim_a_trade_log_dl")
+    with dl_col_b:
+        st.markdown("**Configuration B**")
+        _render_trade_log_download(trade_log_b, key="sim_b_trade_log_dl")
+
+    render_labeled_divider("Monte Carlo Resampling")
+    _info_card(
+        "Resamples each configuration's own day-over-day returns with replacement into alternate "
+        "equity-curve paths of the same length — a distribution of plausible outcomes from each "
+        "run's own edge and cadence, not a different strategy. Run independently per side below.",
+        muted=True,
+    )
+    mc_col_a, mc_col_b = st.columns(2)
+    with mc_col_a:
+        _render_monte_carlo(result_a, start_capital, "sim_a", show_divider=False, chart_title="Configuration A")
+    with mc_col_b:
+        _render_monte_carlo(result_b, start_capital, "sim_b", show_divider=False, chart_title="Configuration B")
+
+    _info_card(
+        "Note: both runs share the same starting capital, commission, and "
+        "date range so the comparison isolates the effect of signal "
+        "selection, position cap, and exit strategy. Same best-case "
+        "caveats apply as the single-configuration view above.",
+        muted=True,
+    )
+
+
 def render_backtesting_tab():
     render_section_header(1, "Strategy Backtesting")
     st.markdown("Simulate cumulative portfolio performance from the model's historical signals")
@@ -1318,416 +1758,6 @@ def render_backtesting_tab():
     )
 
     if not compare_mode:
-        with st.form("sim_config_form", border=True):
-            top_c1, top_c2, top_c3 = st.columns(3)
-            with top_c1:
-                start_capital = st.number_input(
-                    "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
-                    key="sim_start_capital",
-                )
-            with top_c2:
-                commission_fee = st.number_input(
-                    "Commission per trade ($)", min_value=0.0,
-                    value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
-                    key="sim_commission_fee",
-                )
-            with top_c3:
-                date_range = st.date_input(
-                    "Date range", value=(min_date, max_date),
-                    min_value=min_date, max_value=max_date,
-                    key="sim_date_range",
-                    help="Limited to the last 60 days: yfinance's 5-minute bar "
-                         "history (used for precise stop/target sequencing) "
-                         "doesn't go back further than that.",
-                )
-            cost_c1, cost_c2 = st.columns(2)
-            with cost_c1:
-                slippage_bps = st.number_input(
-                    "Est. slippage (bps, round-trip)", min_value=0.0,
-                    value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
-                    key="sim_slippage_bps",
-                    help="Estimated spread/market-impact cost per trade, in basis points of position size — "
-                         "on top of the flat commission. A flat dollar commission doesn't capture this, and it "
-                         "matters most for thinner/less-liquid names. 10 bps (0.10%) is a reasonable starting "
-                         "point for liquid large-caps; use more for small-caps.",
-                )
-            with cost_c2:
-                max_deploy_pct = st.slider(
-                    "Capital deployed per day (%)", min_value=10, max_value=100,
-                    value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
-                    key="sim_max_deploy_pct",
-                    help="Share of available capital actually put into that day's signals. The remainder is held "
-                         "as idle cash (0% return) and carried to the next day, instead of always being 100% "
-                         "invested regardless of conviction or how many signals fired.",
-                )
-
-            if isinstance(date_range, tuple) and len(date_range) == 2:
-                sim_start, sim_end = date_range
-            else:
-                sim_start, sim_end = min_date, max_date
-
-            sim_signals, use_take_profit, max_positions, use_stop_loss, stop_loss_pct, weight_by_confidence = _config_controls(
-                "Configuration", "sim", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
-            )
-
-            submitted = st.form_submit_button(
-                "🕵️ Interrogate the candles", use_container_width=True,
-            )
-
-        # Widget values above are read from session_state and are current as
-        # of *this* rerun regardless of whether that rerun was caused by the
-        # submit button or something else on the page — but nothing in this
-        # block runs expensive work unless `submitted` is True this run.
-        user_state.persist(
-            commission_fee=commission_fee, slippage_bps=slippage_bps,
-            max_deploy_pct=max_deploy_pct,
-        )
-
-        if not sim_signals:
-            st.info("Select at least one signal to run the simulation.")
-            return
-
-        run = _render_precise_fetch_panel(
-            pos_signals, sim_signals, sim_start, sim_end,
-            start_capital, commission_fee, max_positions, use_take_profit,
-            use_stop_loss, stop_loss_pct, weight_by_confidence,
-            slippage_bps, max_deploy_pct, submitted,
-        )
-
-        if run is None:
-            st.info(
-                "Set your conditions above, then click \"🕵️ Interrogate the candles\" "
-                "to run the simulation. Nothing below will appear until you do."
-            )
-            return
-
-        # Everything from here down is rendered from the frozen bundle
-        # captured at the last button click — NOT from the live widgets
-        # above, which may have moved on since then (see the "Showing
-        # results from the last run" caption in that case).
-        sim_result, stats, trade_log = run["sim_result"], run["stats"], run["trade_log"]
-        run_cfg = run["config"]
-
-        if sim_result is None:
-            st.warning("No trades matched the selected signals and date range on the last run.")
-            return
-
-        with st.expander("🔧 Debug: parameters used in this run", expanded=False):
-            st.code(
-                f"signals={run_cfg['signals']}\n"
-                f"date_range=({run_cfg['sim_start']} -> {run_cfg['sim_end']})\n"
-                f"start_capital={run_cfg['start_capital']:,.2f}\n"
-                f"commission_fee={run_cfg['commission_fee']:,.2f}\n"
-                f"slippage_bps={run_cfg['slippage_bps']:g}\n"
-                f"max_deploy_pct={run_cfg['max_deploy_pct']:g}\n"
-                f"max_positions={run_cfg['max_positions']}\n"
-                f"use_take_profit={run_cfg['use_take_profit']}\n"
-                f"use_stop_loss={run_cfg['use_stop_loss']}\n"
-                f"stop_loss_pct={run_cfg['stop_loss_pct']:g}\n"
-                f"weight_by_confidence={run_cfg['weight_by_confidence']}\n"
-                f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')}\n"
-                f"n_trades={stats['n_trades']}\n"
-                f"n_days={stats['n_days']}\n"
-                f"total_fees={stats['total_fees']:,.2f}\n"
-                f"total_slippage={stats.get('total_slippage', 0.0):,.2f}",
-                language="text",
-            )
-            st.caption(
-                "These reflect the settings as they were when you last clicked "
-                "\"🕵️ Interrogate the candles\", not necessarily the widgets above right now — "
-                "click it again to pick up any changes."
-            )
-
-        _render_stats(stats, key_prefix="sim")
-        if run_cfg["use_stop_loss"]:
-            if stats.get("stop_loss_uses_real_low"):
-                _info_card(
-                    f"Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is checked against each trade's actual intraday low — "
-                    "any trade whose low reached the stop level is resolved at exactly -"
-                    f"{run_cfg['stop_loss_pct']:.1f}%, even if it recovered by close. When a trade could have hit both "
-                    "the stop and the take-profit target on the same day, the stop is assumed to trigger "
-                    "first (the conservative read, since exact intraday sequencing isn't available).",
-                    muted=True,
-                )
-            else:
-                _info_card(
-                    f"⚠️ Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is applied as an approximation on each trade's "
-                    "resolved (close-based) gain, because this deployment's data doesn't carry an "
-                    "intraday-low column. This can only cap trades that already closed worse than the "
-                    "stop — it can NOT catch a trade that dipped through the stop intraday and recovered "
-                    "to close positive, since that never shows up in the close-based gain. In other words, "
-                    "this approximation is optimistically biased: a real stop-loss would very likely "
-                    "trigger on more trades, and different trades, than this chart shows. Treat the "
-                    "stop-loss results here as a soft upper bound, not a realistic simulation.",
-                    muted=True,
-                )
-
-        show_benchmark = st.checkbox(
-            "Show SPY buy & hold benchmark", value=True, key="sim_show_benchmark",
-            help="Overlays what the same starting capital would be worth just buy-and-holding SPY over the same date range — fetched live via yfinance.",
-        )
-
-        fig = go.Figure()
-        _add_drawdown_shading(
-            fig, sim_result["prediction_date"], sim_result["portfolio_value"],
-        )
-        _add_threshold_colored_trace(
-            fig, sim_result["prediction_date"], sim_result["portfolio_value"],
-            threshold=run_cfg["start_capital"], name="Portfolio Value",
-        )
-        benchmark_shown = False
-        if show_benchmark:
-            benchmark_shown = _add_benchmark_trace(fig, sim_result, run_cfg["start_capital"])
-        fig.add_hline(
-            y=run_cfg["start_capital"], line_dash="dash", line_color="rgba(255,255,255,0.15)",
-            annotation_text="Starting capital", annotation_font_size=10,
-        )
-        fig.update_layout(
-            title=f"Cumulative Portfolio Value — Per-Trade Simulation ({', '.join(run_cfg['signals'])})",
-            xaxis_title="Date", yaxis_title="Portfolio Value ($)",
-            height=380, hovermode="x unified", **LAYOUT,
-        )
-        fig.update_xaxes(**AXIS_STYLE)
-        fig.update_yaxes(**AXIS_STYLE)
-        st.plotly_chart(fig, use_container_width=True)
-        if show_benchmark and not benchmark_shown:
-            st.caption("⚠️ SPY benchmark unavailable right now (data fetch failed) — showing strategy only.")
-
-        render_labeled_divider("Return Attribution")
-        attrib_by = st.radio(
-            "Attribute return by", ["Signal type", "Symbol"], horizontal=True, key="sim_attrib_by",
-        )
-        _render_return_attribution(
-            trade_log, "signal" if attrib_by == "Signal type" else "symbol",
-            title=f"P&L Contribution by {attrib_by}",
-        )
-
-        render_labeled_divider("Trade Log")
-        _render_trade_log_download(trade_log, key="sim_trade_log_dl")
-        with st.expander(f"View all {len(trade_log)} simulated trades"):
-            st.dataframe(trade_log, use_container_width=True, hide_index=True)
-
-        _render_monte_carlo(sim_result, run_cfg["start_capital"], "sim")
-
-        _info_card(
-            "Note: results still assume every simulated trade could actually "
-            "be filled at the resolved gain, with only a flat estimated "
-            "slippage figure (not real per-symbol spread/market-impact "
-            "data) and unlimited liquidity — treat this as an "
-            "illustration of the model's signal quality under a "
-            "reasonable cost assumption, not a guarantee of real-world "
-            "tradeable returns.",
-            muted=True,
-        )
-
+        _render_single_sim_panel(pos_signals, min_date, max_date)
     else:
-        with st.form("sim_compare_form", border=True):
-            top_c1, top_c2, top_c3 = st.columns(3)
-            with top_c1:
-                start_capital = st.number_input(
-                    "Starting capital ($)", min_value=1.0, value=10000.0, step=100.0,
-                    key="sim_start_capital",
-                )
-            with top_c2:
-                commission_fee = st.number_input(
-                    "Commission per trade ($)", min_value=0.0,
-                    value=float(st.session_state.get("commission_fee", 0.0)), step=0.5,
-                    key="sim_commission_fee",
-                )
-            with top_c3:
-                date_range = st.date_input(
-                    "Date range", value=(min_date, max_date),
-                    min_value=min_date, max_value=max_date,
-                    key="sim_date_range",
-                    help="Limited to the last 60 days: yfinance's 5-minute bar "
-                         "history (used for precise stop/target sequencing) "
-                         "doesn't go back further than that.",
-                )
-            cost_c1, cost_c2 = st.columns(2)
-            with cost_c1:
-                slippage_bps = st.number_input(
-                    "Est. slippage (bps, round-trip)", min_value=0.0,
-                    value=float(st.session_state.get("slippage_bps", 10.0)), step=1.0,
-                    key="sim_slippage_bps",
-                )
-            with cost_c2:
-                max_deploy_pct = st.slider(
-                    "Capital deployed per day (%)", min_value=10, max_value=100,
-                    value=int(st.session_state.get("max_deploy_pct", 100)), step=5,
-                    key="sim_max_deploy_pct",
-                )
-
-            if isinstance(date_range, tuple) and len(date_range) == 2:
-                sim_start, sim_end = date_range
-            else:
-                sim_start, sim_end = min_date, max_date
-
-            col_a, col_b = st.columns(2)
-            with col_a:
-                signals_a, take_profit_a, max_pos_a, sl_a, sl_pct_a, wbc_a = _config_controls(
-                    "Configuration A", "sim_a", min_date, max_date, default_signals=["STRONG BUY"],
-                )
-            with col_b:
-                signals_b, take_profit_b, max_pos_b, sl_b, sl_pct_b, wbc_b = _config_controls(
-                    "Configuration B", "sim_b", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
-                )
-
-            submitted = st.form_submit_button("▶️ Run comparison", use_container_width=True)
-
-        user_state.persist(
-            commission_fee=commission_fee, slippage_bps=slippage_bps,
-            max_deploy_pct=max_deploy_pct,
-        )
-
-        if not signals_a or not signals_b:
-            st.info("Select at least one signal for both configurations to run the comparison.")
-            return
-
-        cmp_cache_key = repr((
-            tuple(sorted(signals_a)), tuple(sorted(signals_b)), sim_start, sim_end,
-            round(start_capital, 2), round(commission_fee, 2), max_pos_a, max_pos_b,
-            take_profit_a, take_profit_b, sl_a, sl_b,
-            round(sl_pct_a, 2) if sl_a else None, round(sl_pct_b, 2) if sl_b else None,
-            wbc_a, wbc_b, round(slippage_bps, 2), round(max_deploy_pct, 2),
-        ))
-        cached_cmp = st.session_state.get("sim_compare_run_cache")
-        if submitted:
-            with st.spinner("Running both configurations..."):
-                result_a, stats_a, trade_log_a = _simulate(
-                    pos_signals, signals_a, sim_start, sim_end,
-                    start_capital, commission_fee, max_pos_a, take_profit_a,
-                    use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
-                    slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-                )
-                result_b, stats_b, trade_log_b = _simulate(
-                    pos_signals, signals_b, sim_start, sim_end,
-                    start_capital, commission_fee, max_pos_b, take_profit_b,
-                    use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
-                    slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-                )
-            st.session_state["sim_compare_run_cache"] = {
-                "key": cmp_cache_key,
-                "result_a": result_a, "stats_a": stats_a, "trade_log_a": trade_log_a,
-                "result_b": result_b, "stats_b": stats_b, "trade_log_b": trade_log_b,
-            }
-            cached_cmp = st.session_state["sim_compare_run_cache"]
-        elif cached_cmp is not None and cached_cmp.get("key") != cmp_cache_key:
-            st.caption(
-                "⏸️ Showing results from the last run — a setting has changed since then. "
-                "Click \"▶️ Run comparison\" again to re-run with the current settings."
-            )
-
-        if cached_cmp is None:
-            st.info(
-                "Set your conditions above, then click \"▶️ Run comparison\" to run both "
-                "simulations. Nothing below will appear until you do."
-            )
-            return
-
-        result_a, stats_a, trade_log_a = cached_cmp["result_a"], cached_cmp["stats_a"], cached_cmp["trade_log_a"]
-        result_b, stats_b, trade_log_b = cached_cmp["result_b"], cached_cmp["stats_b"], cached_cmp["trade_log_b"]
-
-        if result_a is None or result_b is None:
-            st.warning("No trades match one or both configurations over the selected date range.")
-            return
-
-        with st.expander("🔧 Debug: parameters used in this run", expanded=False):
-            st.code(
-                f"shared: start_capital={start_capital:,.2f}, commission_fee={commission_fee:,.2f}, "
-                f"slippage_bps={slippage_bps:g}, max_deploy_pct={max_deploy_pct:g}, "
-                f"date_range=({sim_start} -> {sim_end})\n"
-                f"A: signals={signals_a}, max_positions={max_pos_a}, take_profit={take_profit_a}, "
-                f"stop_loss={sl_a} ({sl_pct_a:g}%), weight_by_confidence={wbc_a}, "
-                f"n_trades={stats_a['n_trades']}, n_days={stats_a['n_days']}, "
-                f"total_fees={stats_a['total_fees']:,.2f}, total_slippage={stats_a.get('total_slippage', 0.0):,.2f}\n"
-                f"B: signals={signals_b}, max_positions={max_pos_b}, take_profit={take_profit_b}, "
-                f"stop_loss={sl_b} ({sl_pct_b:g}%), weight_by_confidence={wbc_b}, "
-                f"n_trades={stats_b['n_trades']}, n_days={stats_b['n_days']}, "
-                f"total_fees={stats_b['total_fees']:,.2f}, total_slippage={stats_b.get('total_slippage', 0.0):,.2f}",
-                language="text",
-            )
-
-        render_labeled_divider("Results")
-        stat_a_col, stat_b_col = st.columns(2)
-        with stat_a_col:
-            st.markdown(f"**Configuration A** — {', '.join(signals_a)}")
-            _render_stats(stats_a, key_prefix="sim_a")
-        with stat_b_col:
-            st.markdown(f"**Configuration B** — {', '.join(signals_b)}")
-            _render_stats(stats_b, key_prefix="sim_b")
-
-        show_benchmark_cmp = st.checkbox(
-            "Show SPY buy & hold benchmark", value=True, key="sim_cmp_show_benchmark",
-            help="Overlays what the same starting capital would be worth just buy-and-holding SPY over the same date range — fetched live via yfinance.",
-        )
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=result_a["prediction_date"], y=result_a["portfolio_value"],
-            mode="lines+markers", name=f"A: {', '.join(signals_a)}",
-            line=dict(color=COLORS["primary"], width=2),
-            marker=dict(size=5),
-        ))
-        fig.add_trace(go.Scatter(
-            x=result_b["prediction_date"], y=result_b["portfolio_value"],
-            mode="lines+markers", name=f"B: {', '.join(signals_b)}",
-            line=dict(color=COLORS["secondary"], width=2),
-            marker=dict(size=5),
-        ))
-        benchmark_shown_cmp = False
-        if show_benchmark_cmp:
-            # Widest shared window of the two runs, so the benchmark line
-            # doesn't stop short of whichever config's curve runs longer.
-            longer_result = result_a if len(result_a) >= len(result_b) else result_b
-            benchmark_shown_cmp = _add_benchmark_trace(fig, longer_result, start_capital)
-        fig.add_hline(
-            y=start_capital, line_dash="dash", line_color="rgba(255,255,255,0.15)",
-            annotation_text="Starting capital", annotation_font_size=10,
-        )
-        fig.update_layout(
-            title="Cumulative Portfolio Value — A vs B",
-            xaxis_title="Date", yaxis_title="Portfolio Value ($)",
-            height=420, hovermode="x unified", **LAYOUT,
-        )
-        fig.update_xaxes(**AXIS_STYLE)
-        fig.update_yaxes(**AXIS_STYLE)
-        st.plotly_chart(fig, use_container_width=True)
-        if show_benchmark_cmp and not benchmark_shown_cmp:
-            st.caption("⚠️ SPY benchmark unavailable right now (data fetch failed) — showing strategies only.")
-
-        render_labeled_divider("Return Attribution")
-        attrib_col_a, attrib_col_b = st.columns(2)
-        with attrib_col_a:
-            _render_return_attribution(trade_log_a, "signal", title="A — P&L by Signal Type")
-        with attrib_col_b:
-            _render_return_attribution(trade_log_b, "signal", title="B — P&L by Signal Type")
-
-        render_labeled_divider("Trade Logs")
-        dl_col_a, dl_col_b = st.columns(2)
-        with dl_col_a:
-            st.markdown("**Configuration A**")
-            _render_trade_log_download(trade_log_a, key="sim_a_trade_log_dl")
-        with dl_col_b:
-            st.markdown("**Configuration B**")
-            _render_trade_log_download(trade_log_b, key="sim_b_trade_log_dl")
-
-        render_labeled_divider("Monte Carlo Resampling")
-        _info_card(
-            "Resamples each configuration's own day-over-day returns with replacement into alternate "
-            "equity-curve paths of the same length — a distribution of plausible outcomes from each "
-            "run's own edge and cadence, not a different strategy. Run independently per side below.",
-            muted=True,
-        )
-        mc_col_a, mc_col_b = st.columns(2)
-        with mc_col_a:
-            _render_monte_carlo(result_a, start_capital, "sim_a", show_divider=False, chart_title="Configuration A")
-        with mc_col_b:
-            _render_monte_carlo(result_b, start_capital, "sim_b", show_divider=False, chart_title="Configuration B")
-
-        _info_card(
-            "Note: both runs share the same starting capital, commission, and "
-            "date range so the comparison isolates the effect of signal "
-            "selection, position cap, and exit strategy. Same best-case "
-            "caveats apply as the single-configuration view above.",
-            muted=True,
-        )
+        _render_compare_sim_panel(pos_signals, min_date, max_date)
