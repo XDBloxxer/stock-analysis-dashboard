@@ -924,8 +924,9 @@ def _render_monte_carlo(sim_result: pd.DataFrame, start_capital: float, key_pref
             "equity-curve paths of the same length — a distribution of plausible outcomes from the "
             "same edge and trade cadence, rather than the single deterministic path that actually "
             "occurred over this date range. It reshuffles day order/magnitude; it does not invent "
-            "new trades or a different edge, and (like the deterministic run above) still assumes "
-            "every trade fills at its resolved gain with no slippage.",
+            "new trades or a different edge. The day-over-day returns being resampled already have "
+            "this run's commission and estimated slippage baked in, but (like the deterministic run "
+            "above) still assume every trade fills at its resolved gain with unlimited liquidity.",
             muted=True,
         )
 
@@ -1173,14 +1174,30 @@ def _render_stats(stats: dict, key_prefix: str = ""):
                   help="Mean ÷ std. dev. of day-over-day portfolio returns, annualized using this run's own observed trading frequency (not a flat 252). A rough risk-adjusted-return signal, not a textbook Sharpe ratio.")
         m5.metric("Max Drawdown", f"{stats['max_drawdown']:.1f}%",
                   help="Largest peak-to-trough decline in the simulated portfolio value over the run.")
+
+def _stop_loss_note(use_stop_loss: bool, stop_loss_pct: float, stats: dict) -> str | None:
+    """One-line, compact summary of how the stop-loss was actually resolved
+    for a given run — real intraday-low column, real 5-min bars, a mix of
+    the two, or pure daily-close approximation. Returns None if the stop-
+    loss wasn't enabled. Kept short on purpose (used inline for the A/B
+    comparison view, which is tight on space); the single-run view below
+    has a fuller explanation in its own info card."""
+    if not use_stop_loss:
+        return None
     if stats.get("stop_loss_uses_real_low"):
-        st.caption("✅ Stop-loss checked against actual intraday lows for this run.")
-    if stats.get("n_trades_precise", 0) > 0:
-        st.caption(
-            f"🕵️ {stats['n_trades_precise']} of {stats['n_trades']} trades resolved via real "
-            "5-minute intraday sequencing; the rest used the daily approximation (outside the "
-            "~60-day 5-min data window, or no bars available)."
-        )
+        return f"✅ stop-loss ({stop_loss_pct:.1f}%) checked against actual intraday lows."
+    n_precise = stats.get("n_trades_precise", 0)
+    n_total = stats.get("n_trades", 0)
+    if n_total == 0:
+        return None
+    if n_precise == n_total:
+        return f"🕵️ stop-loss ({stop_loss_pct:.1f}%) resolved from real 5-min bars for all {n_total} trade(s)."
+    if n_precise == 0:
+        return f"⚠️ stop-loss ({stop_loss_pct:.1f}%) approximated from daily close for all {n_total} trade(s) — no 5-min bars fetched."
+    return (
+        f"⚠️ stop-loss ({stop_loss_pct:.1f}%): {n_precise} of {n_total} trade(s) resolved from real "
+        "5-min bars, the rest approximated from daily close."
+    )
 
 
 def _config_controls(label: str, key_prefix: str, min_date, max_date, default_signals):
@@ -1339,32 +1356,6 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
         st.warning("No trades matched the selected signals and date range on the last run.")
         return
 
-    with st.expander("🔧 Debug: parameters used in this run", expanded=False):
-        st.code(
-            f"signals={run_cfg['signals']}\n"
-            f"date_range=({run_cfg['sim_start']} -> {run_cfg['sim_end']})\n"
-            f"start_capital={run_cfg['start_capital']:,.2f}\n"
-            f"commission_fee={run_cfg['commission_fee']:,.2f}\n"
-            f"slippage_bps={run_cfg['slippage_bps']:g}\n"
-            f"max_deploy_pct={run_cfg['max_deploy_pct']:g}\n"
-            f"max_positions={run_cfg['max_positions']}\n"
-            f"use_take_profit={run_cfg['use_take_profit']}\n"
-            f"use_stop_loss={run_cfg['use_stop_loss']}\n"
-            f"stop_loss_pct={run_cfg['stop_loss_pct']:g}\n"
-            f"weight_by_confidence={run_cfg['weight_by_confidence']}\n"
-            f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')}\n"
-            f"n_trades={stats['n_trades']}\n"
-            f"n_days={stats['n_days']}\n"
-            f"total_fees={stats['total_fees']:,.2f}\n"
-            f"total_slippage={stats.get('total_slippage', 0.0):,.2f}",
-            language="text",
-        )
-        st.caption(
-            "These reflect the settings as they were when you last clicked "
-            "\"🕵️ Interrogate the candles\", not necessarily the widgets above right now — "
-            "click it again to pick up any changes."
-        )
-
     _render_stats(stats, key_prefix="sim")
     if run_cfg["use_stop_loss"]:
         if stats.get("stop_loss_uses_real_low"):
@@ -1463,6 +1454,32 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
         "tradeable returns.",
         muted=True,
     )
+
+    with st.expander("🔧 Debug: parameters used in this run", expanded=False):
+        st.code(
+            f"signals={run_cfg['signals']}\n"
+            f"date_range=({run_cfg['sim_start']} -> {run_cfg['sim_end']})\n"
+            f"start_capital={run_cfg['start_capital']:,.2f}\n"
+            f"commission_fee={run_cfg['commission_fee']:,.2f}\n"
+            f"slippage_bps={run_cfg['slippage_bps']:g}\n"
+            f"max_deploy_pct={run_cfg['max_deploy_pct']:g}\n"
+            f"max_positions={run_cfg['max_positions']}\n"
+            f"use_take_profit={run_cfg['use_take_profit']}\n"
+            f"use_stop_loss={run_cfg['use_stop_loss']}\n"
+            f"stop_loss_pct={run_cfg['stop_loss_pct']:g}\n"
+            f"weight_by_confidence={run_cfg['weight_by_confidence']}\n"
+            f"stop_loss_uses_real_low={stats.get('stop_loss_uses_real_low')}\n"
+            f"n_trades={stats['n_trades']}\n"
+            f"n_days={stats['n_days']}\n"
+            f"total_fees={stats['total_fees']:,.2f}\n"
+            f"total_slippage={stats.get('total_slippage', 0.0):,.2f}",
+            language="text",
+        )
+        st.caption(
+            "These reflect the settings as they were when you last clicked "
+            "\"🕵️ Interrogate the candles\", not necessarily the widgets above right now — "
+            "click it again to pick up any changes."
+        )
 
 
 
@@ -1578,22 +1595,6 @@ def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> 
         st.warning("No trades match one or both configurations over the selected date range.")
         return
 
-    with st.expander("🔧 Debug: parameters used in this run", expanded=False):
-        st.code(
-            f"shared: start_capital={start_capital:,.2f}, commission_fee={commission_fee:,.2f}, "
-            f"slippage_bps={slippage_bps:g}, max_deploy_pct={max_deploy_pct:g}, "
-            f"date_range=({sim_start} -> {sim_end})\n"
-            f"A: signals={signals_a}, max_positions={max_pos_a}, take_profit={take_profit_a}, "
-            f"stop_loss={sl_a} ({sl_pct_a:g}%), weight_by_confidence={wbc_a}, "
-            f"n_trades={stats_a['n_trades']}, n_days={stats_a['n_days']}, "
-            f"total_fees={stats_a['total_fees']:,.2f}, total_slippage={stats_a.get('total_slippage', 0.0):,.2f}\n"
-            f"B: signals={signals_b}, max_positions={max_pos_b}, take_profit={take_profit_b}, "
-            f"stop_loss={sl_b} ({sl_pct_b:g}%), weight_by_confidence={wbc_b}, "
-            f"n_trades={stats_b['n_trades']}, n_days={stats_b['n_days']}, "
-            f"total_fees={stats_b['total_fees']:,.2f}, total_slippage={stats_b.get('total_slippage', 0.0):,.2f}",
-            language="text",
-        )
-
     render_labeled_divider("Results")
     stat_a_col, stat_b_col = st.columns(2)
     with stat_a_col:
@@ -1602,6 +1603,16 @@ def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> 
     with stat_b_col:
         st.markdown(f"**Configuration B** — {', '.join(signals_b)}")
         _render_stats(stats_b, key_prefix="sim_b")
+
+    note_a = _stop_loss_note(sl_a, sl_pct_a, stats_a)
+    note_b = _stop_loss_note(sl_b, sl_pct_b, stats_b)
+    if note_a or note_b:
+        lines = []
+        if note_a:
+            lines.append(f"**A:** {note_a}")
+        if note_b:
+            lines.append(f"**B:** {note_b}")
+        _info_card("  \n".join(lines), muted=True)
 
     show_benchmark_cmp = st.checkbox(
         "Show SPY buy & hold benchmark", value=True, key="sim_cmp_show_benchmark",
@@ -1678,6 +1689,22 @@ def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> 
         "caveats apply as the single-configuration view above.",
         muted=True,
     )
+
+    with st.expander("🔧 Debug: parameters used in this run", expanded=False):
+        st.code(
+            f"shared: start_capital={start_capital:,.2f}, commission_fee={commission_fee:,.2f}, "
+            f"slippage_bps={slippage_bps:g}, max_deploy_pct={max_deploy_pct:g}, "
+            f"date_range=({sim_start} -> {sim_end})\n"
+            f"A: signals={signals_a}, max_positions={max_pos_a}, take_profit={take_profit_a}, "
+            f"stop_loss={sl_a} ({sl_pct_a:g}%), weight_by_confidence={wbc_a}, "
+            f"n_trades={stats_a['n_trades']}, n_days={stats_a['n_days']}, "
+            f"total_fees={stats_a['total_fees']:,.2f}, total_slippage={stats_a.get('total_slippage', 0.0):,.2f}\n"
+            f"B: signals={signals_b}, max_positions={max_pos_b}, take_profit={take_profit_b}, "
+            f"stop_loss={sl_b} ({sl_pct_b:g}%), weight_by_confidence={wbc_b}, "
+            f"n_trades={stats_b['n_trades']}, n_days={stats_b['n_days']}, "
+            f"total_fees={stats_b['total_fees']:,.2f}, total_slippage={stats_b.get('total_slippage', 0.0):,.2f}",
+            language="text",
+        )
 
 
 def render_backtesting_tab():
