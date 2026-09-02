@@ -1576,19 +1576,22 @@ def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> 
     ))
     cached_cmp = st.session_state.get("sim_compare_run_cache")
     if submitted:
-        with st.spinner("Running both configurations..."):
-            result_a, stats_a, trade_log_a = _simulate(
-                pos_signals, signals_a, sim_start, sim_end,
-                start_capital, commission_fee, max_pos_a, take_profit_a,
-                use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
-                slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-            )
-            result_b, stats_b, trade_log_b = _simulate(
-                pos_signals, signals_b, sim_start, sim_end,
-                start_capital, commission_fee, max_pos_b, take_profit_b,
-                use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
-                slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-            )
+        cmp_progress = st.progress(0, text="Running Configuration A…")
+        result_a, stats_a, trade_log_a = _simulate(
+            pos_signals, signals_a, sim_start, sim_end,
+            start_capital, commission_fee, max_pos_a, take_profit_a,
+            use_stop_loss=sl_a, stop_loss_pct=sl_pct_a, weight_by_confidence=wbc_a,
+            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+        )
+        cmp_progress.progress(0.55, text="Running Configuration B…")
+        result_b, stats_b, trade_log_b = _simulate(
+            pos_signals, signals_b, sim_start, sim_end,
+            start_capital, commission_fee, max_pos_b, take_profit_b,
+            use_stop_loss=sl_b, stop_loss_pct=sl_pct_b, weight_by_confidence=wbc_b,
+            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+        )
+        cmp_progress.progress(1.0, text="Done.")
+        cmp_progress.empty()
         st.session_state["sim_compare_run_cache"] = {
             "key": cmp_cache_key,
             "result_a": result_a, "stats_a": stats_a, "trade_log_a": trade_log_a,
