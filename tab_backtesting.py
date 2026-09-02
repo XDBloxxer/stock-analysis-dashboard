@@ -1331,11 +1331,10 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
             "Configuration", "sim", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
         )
 
-        st.markdown('<div class="cta-run-btn">', unsafe_allow_html=True)
-        submitted = st.form_submit_button(
-            "▶  Run Backtest", use_container_width=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(key="cta_run_backtest"):
+            submitted = st.form_submit_button(
+                "▶  Run Backtest", use_container_width=True,
+            )
 
     # Widget values above are read from session_state and are current as
     # of *this* rerun regardless of whether that rerun was caused by the
@@ -1556,9 +1555,8 @@ def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> 
                 "Configuration B", "sim_b", min_date, max_date, default_signals=["STRONG BUY", "BUY"],
             )
 
-        st.markdown('<div class="cta-run-btn">', unsafe_allow_html=True)
-        submitted = st.form_submit_button("Run the Comparison", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(key="cta_run_comparison"):
+            submitted = st.form_submit_button("Run the Comparison", use_container_width=True)
 
     user_state.persist(
         commission_fee=commission_fee, slippage_bps=slippage_bps,
