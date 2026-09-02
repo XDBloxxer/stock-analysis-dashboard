@@ -248,7 +248,7 @@ def _fetch_5min_bars_one(symbol: str, start: _date, end: _date, retries: int = 2
     return symbol, None, last_err
 
 
-def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
+def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date, progress_cb=None) -> dict:
     """One yfinance call per symbol (not per trade) spanning that symbol's
     full needed date range, fanned out across a thread pool — keeps request
     count proportional to the number of distinct tickers touched, not the
@@ -262,18 +262,28 @@ def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
     Errors are logged here, on the main thread, after each future resolves
     — not inside the worker — since log_debug_error touches
     st.session_state, which isn't safe to touch from a background thread
-    (see _fetch_5min_bars_one's docstring)."""
+    (see _fetch_5min_bars_one's docstring).
+
+    `progress_cb`, if given, is called on the main thread as
+    `progress_cb(done, total, symbol)` after each symbol's fetch resolves
+    (success or failure) — used to drive a real percentage progress bar
+    instead of an indeterminate spinner."""
     result = {}
     if not symbols:
         return result
-    max_workers = min(4, len(symbols))
+    total = len(symbols)
+    max_workers = min(4, total)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_fetch_5min_bars_one, sym, start, end): sym for sym in symbols}
+        done = 0
         for future in as_completed(futures):
             sym, hist, err = future.result()
             result[sym] = hist
             if err is not None:
                 log_debug_error(f"_fetch_5min_bars_one({sym})", err if isinstance(err, Exception) else RuntimeError(err))
+            done += 1
+            if progress_cb is not None:
+                progress_cb(done, total, sym)
     return result
 
 
@@ -348,7 +358,8 @@ def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
 
 
 def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
-                        stop_loss_pct: float, use_take_profit: bool) -> tuple[dict, dict]:
+                        stop_loss_pct: float, use_take_profit: bool,
+                        progress_cb=None) -> tuple[dict, dict]:
     """
     Fetches 5-min bars for every distinct symbol in `eligible_trades` (one
     batched call per symbol) and resolves each trade against them.
@@ -383,7 +394,7 @@ def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
     )
     fetch_end   = dates.max()
 
-    bars_by_symbol = _fetch_5min_bars_batch(symbols, fetch_start, fetch_end)
+    bars_by_symbol = _fetch_5min_bars_batch(symbols, fetch_start, fetch_end, progress_cb=progress_cb)
     symbols_with_no_bars = sum(1 for sym in symbols if bars_by_symbol.get(sym) is None)
 
     precise_map = {}
@@ -494,18 +505,34 @@ def _render_precise_fetch_panel(
     cached = st.session_state.get(cache_bucket)
 
     if submitted and not eligible_trades.empty:
-        with st.spinner(f"Fetching 5-minute bars for {len(symbols)} symbol(s)..."):
-            precise_map, precise_stats = _build_precise_map(
-                eligible_trades, use_stop_loss, stop_loss_pct, use_take_profit,
+        # Real percentage progress instead of an indeterminate spinner. The
+        # fetch phase (one yfinance call per symbol) is the slow part and is
+        # weighted 85% of the bar; the simulate phase (fast, in-memory) gets
+        # the remaining 15% as a single jump so the bar doesn't sit at 85%
+        # looking stalled while it runs.
+        progress_bar = st.progress(0, text=f"Fetching 5-minute bars for {len(symbols)} symbol(s)…")
+
+        def _on_symbol_done(done: int, total: int, sym: str) -> None:
+            frac = 0.85 * (done / total) if total else 0.85
+            progress_bar.progress(
+                frac, text=f"Fetching 5-minute bars… {done}/{total} symbols done (last: {sym})",
             )
-            sim_result, stats, trade_log = _simulate(
-                pos_signals, sim_signals, sim_start, sim_end,
-                start_capital, commission_fee, max_positions, use_take_profit,
-                use_stop_loss=use_stop_loss, stop_loss_pct=stop_loss_pct,
-                weight_by_confidence=weight_by_confidence,
-                slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
-                precise_map=precise_map,
-            )
+
+        precise_map, precise_stats = _build_precise_map(
+            eligible_trades, use_stop_loss, stop_loss_pct, use_take_profit,
+            progress_cb=_on_symbol_done,
+        )
+        progress_bar.progress(0.9, text="Running the simulation…")
+        sim_result, stats, trade_log = _simulate(
+            pos_signals, sim_signals, sim_start, sim_end,
+            start_capital, commission_fee, max_positions, use_take_profit,
+            use_stop_loss=use_stop_loss, stop_loss_pct=stop_loss_pct,
+            weight_by_confidence=weight_by_confidence,
+            slippage_bps=slippage_bps, max_deploy_pct=max_deploy_pct,
+            precise_map=precise_map,
+        )
+        progress_bar.progress(1.0, text="Done.")
+        progress_bar.empty()
         st.session_state[cache_bucket] = {
             "config_key": current_key,
             "map": precise_map,
