@@ -1751,11 +1751,11 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
 .st-key-cta_run_comparison .stFormSubmitButton > button {
     position: relative !important;
     overflow: hidden !important;
-    background: linear-gradient(115deg, #7c3aed 0%, #a855f7 32%, #e0a83c 68%, #f0c05e 100%) !important;
+    background: linear-gradient(115deg, #38bdf8 0%, #60d4fb 32%, #e0a83c 68%, #f0c05e 100%) !important;
     background-size: 220% 220% !important;
     background-position: 0% 50% !important;
-    border: 1px solid rgba(168, 85, 247, 0.55) !important;
-    color: #0a0710 !important;
+    border: 1px solid rgba(56, 189, 248, 0.55) !important;
+    color: #05131c !important;
     font-family: var(--font-display) !important;
     font-weight: 800 !important;
     font-size: 0.88rem !important;
@@ -1763,7 +1763,7 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
     padding: 13px 20px !important;
     border-radius: var(--radius-sm) !important;
     box-shadow: 0 1px 0 rgba(255,255,255,0.35) inset,
-                0 6px 20px -6px rgba(139, 92, 246, 0.55),
+                0 6px 20px -6px rgba(56, 189, 248, 0.55),
                 0 6px 20px -8px rgba(224, 168, 60, 0.4) !important;
     transition: background-position 0.4s ease, box-shadow 0.2s ease,
         transform 0.12s ease, border-color 0.15s ease !important;
@@ -1783,12 +1783,12 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
 .st-key-cta_run_comparison .stFormSubmitButton > button:hover {
     background-position: 100% 50% !important;
     border-color: rgba(224, 168, 60, 0.75) !important;
-    color: #0a0710 !important;
+    color: #05131c !important;
     box-shadow: 0 1px 0 rgba(255,255,255,0.45) inset,
                 0 0 0 1px rgba(224, 168, 60, 0.4),
-                0 10px 28px -6px rgba(139, 92, 246, 0.65),
+                0 10px 28px -6px rgba(56, 189, 248, 0.65),
                 0 10px 30px -8px rgba(224, 168, 60, 0.55),
-                0 0 40px rgba(168, 85, 247, 0.25) !important;
+                0 0 40px rgba(56, 189, 248, 0.25) !important;
     transform: translateY(-2px) scale(1.01) !important;
 }
 .st-key-cta_run_backtest .stFormSubmitButton > button:hover::before,
@@ -1799,11 +1799,11 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
 .st-key-cta_run_comparison .stFormSubmitButton > button:active {
     transform: translateY(0) scale(0.99) !important;
     box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
-                0 3px 12px -6px rgba(139, 92, 246, 0.5) !important;
+                0 3px 12px -6px rgba(56, 189, 248, 0.5) !important;
 }
 .st-key-cta_run_backtest .stFormSubmitButton > button:focus-visible,
 .st-key-cta_run_comparison .stFormSubmitButton > button:focus-visible {
-    outline: 2px solid rgba(168, 85, 247, 0.7) !important;
+    outline: 2px solid rgba(56, 189, 248, 0.7) !important;
     outline-offset: 2px !important;
 }
 
