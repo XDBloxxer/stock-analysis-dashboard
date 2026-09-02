@@ -202,10 +202,16 @@ def _fetch_5min_bars_one(symbol: str, start: _date, end: _date, retries: int = 2
     first attempt silently came back empty.
 
     Every failure path — exception OR an empty-but-no-exception response —
-    is logged via log_debug_error so it's visible in the System Info tab's
-    Debug Log. Previously only exceptions were logged, so a rate-limited
-    "empty response, no error raised" case (the most common yfinance
-    cloud-IP failure mode) left literally no trace of why a symbol dropped.
+    is returned as an error string alongside the (symbol, None) result so
+    the caller can log it via log_debug_error *on the main thread*. This
+    worker used to call log_debug_error directly, but that function touches
+    st.session_state, and Streamlit's session_state is only safe to touch
+    from the thread that owns the active ScriptRunContext — calling it from
+    a ThreadPoolExecutor worker doesn't raise, it just logs a noisy
+    "missing ScriptRunContext!" warning to the console for every failed
+    fetch and isn't guaranteed to actually persist. Returning the error and
+    logging it back on the main thread (in _fetch_5min_bars_batch) fixes
+    both: no more console spam, and the Debug Log entries are reliable.
     """
     import yfinance as yf
     last_err = None
@@ -220,21 +226,19 @@ def _fetch_5min_bars_one(symbol: str, start: _date, end: _date, retries: int = 2
                 if attempt < retries:
                     time.sleep(0.6 * (attempt + 1))
                     continue
-                log_debug_error(f"_fetch_5min_bars_one({symbol})", RuntimeError(last_err))
-                return symbol, None
+                return symbol, None, last_err
             if hist.index.tz is None:
                 hist.index = hist.index.tz_localize(_FIVE_MIN_ET)
             else:
                 hist.index = hist.index.tz_convert(_FIVE_MIN_ET)
-            return symbol, hist
+            return symbol, hist, None
         except Exception as e:
             last_err = e
             if attempt < retries:
                 time.sleep(0.6 * (attempt + 1))
                 continue
-            log_debug_error(f"_fetch_5min_bars_one({symbol})", e)
-            return symbol, None
-    return symbol, None
+            return symbol, None, e
+    return symbol, None, last_err
 
 
 def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
@@ -246,7 +250,12 @@ def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
     Concurrency capped lower than before (4, was 8): hitting Yahoo's
     endpoint with many simultaneous connections from one cloud IP is a
     common trigger for the silent empty-response rate-limiting that was
-    causing most trades to drop with no visible error."""
+    causing most trades to drop with no visible error.
+
+    Errors are logged here, on the main thread, after each future resolves
+    — not inside the worker — since log_debug_error touches
+    st.session_state, which isn't safe to touch from a background thread
+    (see _fetch_5min_bars_one's docstring)."""
     result = {}
     if not symbols:
         return result
@@ -254,8 +263,10 @@ def _fetch_5min_bars_batch(symbols: tuple, start: _date, end: _date) -> dict:
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_fetch_5min_bars_one, sym, start, end): sym for sym in symbols}
         for future in as_completed(futures):
-            sym, hist = future.result()
+            sym, hist, err = future.result()
             result[sym] = hist
+            if err is not None:
+                log_debug_error(f"_fetch_5min_bars_one({sym})", err if isinstance(err, Exception) else RuntimeError(err))
     return result
 
 
@@ -350,7 +361,19 @@ def _build_precise_map(eligible_trades: pd.DataFrame, use_stop_loss: bool,
     # A few extra days of lookback buffer so the very first eligible trade
     # can still find a prior after-hours/close bar to use as its entry,
     # even across a weekend or holiday.
-    fetch_start = dates.min() - _dt.timedelta(days=5)
+    #
+    # IMPORTANT: this buffer must never push fetch_start past yfinance's
+    # 60-day 5-minute history limit. The UI's date picker already clamps
+    # its minimum to (today - 60 days), so dates.min() can legitimately
+    # *be* that floor already — subtracting another 5 days from it used to
+    # send a >60-day range to yfinance, which silently returns an empty
+    # response for every symbol in the batch (not just the missing 5 days).
+    # That was the root cause of "356 of 363 symbols returned zero bars":
+    # it wasn't rate-limiting, it was every request being out of range.
+    fetch_start = max(
+        dates.min() - _dt.timedelta(days=5),
+        _five_min_cutoff_date(),
+    )
     fetch_end   = dates.max()
 
     bars_by_symbol = _fetch_5min_bars_batch(symbols, fetch_start, fetch_end)
