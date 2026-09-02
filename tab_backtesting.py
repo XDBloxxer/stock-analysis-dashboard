@@ -1377,17 +1377,34 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
                 muted=True,
             )
         else:
-            _info_card(
-                f"⚠️ Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is applied as an approximation on each trade's "
-                "resolved (close-based) gain, because this deployment's data doesn't carry an "
-                "intraday-low column. This can only cap trades that already closed worse than the "
-                "stop — it can NOT catch a trade that dipped through the stop intraday and recovered "
-                "to close positive, since that never shows up in the close-based gain. In other words, "
-                "this approximation is optimistically biased: a real stop-loss would very likely "
-                "trigger on more trades, and different trades, than this chart shows. Treat the "
-                "stop-loss results here as a soft upper bound, not a realistic simulation.",
-                muted=True,
-            )
+            n_precise = stats.get("n_trades_precise", 0)
+            n_total = stats.get("n_trades", 0)
+            n_fallback = max(n_total - n_precise, 0)
+            if n_fallback == 0:
+                _info_card(
+                    f"Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is checked against real 5-minute "
+                    "intraday bars for every trade in this run — this deployment's daily table doesn't "
+                    "carry an intraday-low column, but that's moot here since all "
+                    f"{n_total} trade(s) were resolved from actual bars fetched by \"🕵️ Interrogate the "
+                    "candles\" above, not from a daily-close approximation.",
+                    muted=True,
+                )
+            else:
+                _info_card(
+                    f"⚠️ Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is resolved two different ways in this "
+                    f"run: {n_precise} of {n_total} trade(s) were checked against real 5-minute intraday "
+                    "bars (fetched by \"🕵️ Interrogate the candles\" above), which correctly catches a "
+                    "trade that dipped through the stop and recovered by close. The remaining "
+                    f"{n_fallback} trade(s) — outside yfinance's ~60-day 5-min window, or not returned by "
+                    "the fetch — fall back to this deployment's daily close-based approximation instead, "
+                    "since it doesn't carry an intraday-low column either: that fallback can only cap a "
+                    "trade that already closed worse than the stop, and can NOT catch one that dipped "
+                    "through the stop intraday and recovered to close positive. Only that fallback slice "
+                    "is optimistically biased — look for `approximated (daily)` in the resolution method "
+                    "column of the trade log below to see which rows those are; the 5-min-resolved trades "
+                    "are the real numbers.",
+                    muted=True,
+                )
 
     show_benchmark = st.checkbox(
         "Show SPY buy & hold benchmark", value=True, key="sim_show_benchmark",
