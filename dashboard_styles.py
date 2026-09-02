@@ -1747,7 +1747,8 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
    deliberately avoids (see the tab-nav comment above). The glow only
    shows up on hover/focus, not at rest — emphasis you notice when you're
    about to press it, not a standing visual claim on the page. */
-.cta-run-btn .stFormSubmitButton > button {
+.st-key-cta_run_backtest .stFormSubmitButton > button,
+.st-key-cta_run_comparison .stFormSubmitButton > button {
     position: relative !important;
     overflow: hidden !important;
     background: linear-gradient(115deg, #7c3aed 0%, #a855f7 32%, #e0a83c 68%, #f0c05e 100%) !important;
@@ -1768,7 +1769,8 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
         transform 0.12s ease, border-color 0.15s ease !important;
 }
 /* subtle diagonal sheen that sweeps across on hover */
-.cta-run-btn .stFormSubmitButton > button::before {
+.st-key-cta_run_backtest .stFormSubmitButton > button::before,
+.st-key-cta_run_comparison .stFormSubmitButton > button::before {
     content: "" !important;
     position: absolute !important;
     top: 0; left: -60%; width: 40%; height: 100%;
@@ -1777,7 +1779,8 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
     transition: left 0.55s ease !important;
     pointer-events: none !important;
 }
-.cta-run-btn .stFormSubmitButton > button:hover {
+.st-key-cta_run_backtest .stFormSubmitButton > button:hover,
+.st-key-cta_run_comparison .stFormSubmitButton > button:hover {
     background-position: 100% 50% !important;
     border-color: rgba(224, 168, 60, 0.75) !important;
     color: #0a0710 !important;
@@ -1788,15 +1791,18 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
                 0 0 40px rgba(168, 85, 247, 0.25) !important;
     transform: translateY(-2px) scale(1.01) !important;
 }
-.cta-run-btn .stFormSubmitButton > button:hover::before {
+.st-key-cta_run_backtest .stFormSubmitButton > button:hover::before,
+.st-key-cta_run_comparison .stFormSubmitButton > button:hover::before {
     left: 120% !important;
 }
-.cta-run-btn .stFormSubmitButton > button:active {
+.st-key-cta_run_backtest .stFormSubmitButton > button:active,
+.st-key-cta_run_comparison .stFormSubmitButton > button:active {
     transform: translateY(0) scale(0.99) !important;
     box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
                 0 3px 12px -6px rgba(139, 92, 246, 0.5) !important;
 }
-.cta-run-btn .stFormSubmitButton > button:focus-visible {
+.st-key-cta_run_backtest .stFormSubmitButton > button:focus-visible,
+.st-key-cta_run_comparison .stFormSubmitButton > button:focus-visible {
     outline: 2px solid rgba(168, 85, 247, 0.7) !important;
     outline-offset: 2px !important;
 }
