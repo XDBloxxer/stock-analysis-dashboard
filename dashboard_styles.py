@@ -1587,6 +1587,27 @@ div[data-testid="stAlert"] {
     background: linear-gradient(90deg, var(--border-mid), transparent 90%);
 }
 
+/* ── Form section label — small tick + trailing rule ───────────────────────
+   Lighter-weight cousin of `.section-header-num` above, sized for labeling
+   a form rather than a whole tab section ("Configure your simulation"),
+   so the backtest form reads as a deliberately designed control panel
+   instead of a bare st.markdown("**bold text**"). */
+.form-section-label {
+    display: flex; align-items: center; gap: 10px;
+    margin: 2px 0 10px;
+    font-family: var(--font-body); font-size: 0.74rem; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2);
+}
+.form-section-label::before {
+    content: ""; width: 8px; height: 8px; flex-shrink: 0;
+    background: var(--cyan); border-radius: 2px; opacity: 0.85;
+    box-shadow: 0 0 8px var(--cyan-glow);
+}
+.form-section-label::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--border-mid), transparent 90%);
+}
+
 /* ── Data / search / warning cards ─────────────────────────────────────── */
 .data-card {
     background: var(--bg-2); border: 1px solid var(--border-mid);
@@ -1715,6 +1736,51 @@ div[data-testid="stVerticalBlockBorderWrapper"]::after {
     border-radius: var(--radius-sm) !important; transition: all 0.15s !important;
 }
 .stFormSubmitButton > button:hover { background: var(--cyan-dim) !important; }
+
+/* ── Primary CTA submit (e.g. "Run Backtest") ──────────────────────────────
+   The one submit button per form that actually kicks off real work
+   (fetching bars, running the simulation) — everything else on the page
+   is just shaping the config for this moment. Filled instead of ghost,
+   taller, and a size step up in weight/letter-spacing so it reads as
+   "the button" the instant you scan the form, without reaching for the
+   raised-chip/drop-shadow/saturated-glow combo the rest of this file
+   deliberately avoids (see the tab-nav comment above). The glow only
+   shows up on hover/focus, not at rest — emphasis you notice when you're
+   about to press it, not a standing visual claim on the page. */
+.cta-run-btn .stFormSubmitButton > button {
+    background: linear-gradient(180deg, rgba(224,168,60,0.16) 0%, rgba(224,168,60,0.09) 100%) !important;
+    border: 1px solid var(--cyan-border) !important;
+    color: var(--cyan) !important;
+    font-family: var(--font-display) !important;
+    font-weight: 700 !important;
+    font-size: 0.86rem !important;
+    letter-spacing: 0.09em !important;
+    padding: 13px 20px !important;
+    border-radius: var(--radius-sm) !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset,
+                0 6px 18px -8px rgba(224,168,60,0.35) !important;
+    transition: background 0.15s ease, border-color 0.15s ease,
+        box-shadow 0.2s ease, transform 0.12s ease !important;
+}
+.cta-run-btn .stFormSubmitButton > button:hover {
+    background: linear-gradient(180deg, rgba(224,168,60,0.26) 0%, rgba(224,168,60,0.14) 100%) !important;
+    border-color: var(--cyan) !important;
+    color: var(--text-0) !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset,
+                0 0 0 1px var(--cyan-border),
+                0 10px 26px -8px rgba(224,168,60,0.5),
+                0 0 34px var(--cyan-glow) !important;
+    transform: translateY(-1px) !important;
+}
+.cta-run-btn .stFormSubmitButton > button:active {
+    transform: translateY(0) !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset,
+                0 3px 10px -6px rgba(224,168,60,0.4) !important;
+}
+.cta-run-btn .stFormSubmitButton > button:focus-visible {
+    outline: 2px solid var(--cyan-border) !important;
+    outline-offset: 2px !important;
+}
 
 /* ── Plotly charts ──────────────────────────────────────────────────────── */
 div[data-testid="stPlotlyChart"] {
