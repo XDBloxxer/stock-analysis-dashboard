@@ -5,7 +5,7 @@ v6: Isolated the single-run and comparison panels (form, fetch/progress bar,
 results) inside their own `@st.fragment`. A form_submit_button click inside
 a fragment only reruns that fragment, not the whole script, so Streamlit's
 top-right "running man" indicator and the full-page dim — both tied to a
-*full* script rerun — no longer fire for "Interrogate the candles" / "Run
+*full* script rerun — no longer fire for "Run Backtest" / "Run
 comparison" clicks. A small fragment-scoped indicator appears in their place
 instead. Purely structural: caching, fingerprinting, and rendering logic are
 unchanged, just relocated into `_render_single_sim_panel` /
@@ -16,7 +16,7 @@ sequencing as the only resolution method — every trade is walked against
 actual yfinance bars to see whichever level (stop or target) was really
 touched first. Nothing runs automatically: the date range is locked to the
 last 60 days (yfinance's 5-min history limit), and results only appear
-after pressing "Run Backtest (Interrogate the Candles)", so tweaking a slider never
+after pressing "Run Backtest", so tweaking a slider never
 kicks off a silent recompute or a downgrade to a rougher estimate.
 
 v4: Added an optional side-by-side comparison mode (run two independently
@@ -579,7 +579,7 @@ def _render_precise_fetch_panel(
     if eligible_trades.empty:
         st.caption("No trades match this signal/date selection yet.")
     elif cached is None:
-        st.caption("Set your conditions above, then click \"Run Backtest (Interrogate the Candles)\" to run the simulation.")
+        st.caption("Set your conditions above, then click \"Run Backtest\" to run the simulation.")
     elif is_fresh:
         precise_stats = cached["precise_stats"]
         dropped = precise_stats["eligible"] - precise_stats["resolved"]
@@ -614,7 +614,7 @@ def _render_precise_fetch_panel(
     else:
         st.caption(
             "⏸️ Showing results from the last run — a setting has changed since then. "
-            "Click \"Run Backtest (Interrogate the Candles)\" again to fetch and re-run with the current settings."
+            "Click \"Run Backtest\" again to fetch and re-run with the current settings."
         )
 
     return cached
@@ -1200,7 +1200,7 @@ def _stop_loss_note(use_stop_loss: bool, stop_loss_pct: float, stats: dict) -> s
     if n_total == 0:
         return None
     if n_precise == n_total:
-        return f"🕵️ stop-loss ({stop_loss_pct:.1f}%) resolved from real 5-min bars for all {n_total} trade(s)."
+        return f"✓ stop-loss ({stop_loss_pct:.1f}%) resolved from real 5-min bars for all {n_total} trade(s)."
     if n_precise == 0:
         return f"⚠️ stop-loss ({stop_loss_pct:.1f}%) approximated from daily close for all {n_total} trade(s) — no 5-min bars fetched."
     return (
@@ -1326,7 +1326,7 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
 
         st.markdown('<div class="cta-run-btn">', unsafe_allow_html=True)
         submitted = st.form_submit_button(
-            "Run Backtest (Interrogate the Candles)", use_container_width=True,
+            "▶  Run Backtest", use_container_width=True,
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1352,7 +1352,7 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
 
     if run is None:
         st.info(
-            "Set your conditions above, then click \"Run Backtest (Interrogate the Candles)\" "
+            "Set your conditions above, then click \"Run Backtest\" "
             "to run the simulation. Nothing below will appear until you do."
         )
         return
@@ -1388,15 +1388,15 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
                     f"Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is checked against real 5-minute "
                     "intraday bars for every trade in this run — this deployment's daily table doesn't "
                     "carry an intraday-low column, but that's moot here since all "
-                    f"{n_total} trade(s) were resolved from actual bars fetched by \"🕵️ Interrogate the "
-                    "candles\" above, not from a daily-close approximation.",
+                    f"{n_total} trade(s) were resolved from actual bars fetched by \"Run Backtest\" "
+                    "above, not from a daily-close approximation.",
                     muted=True,
                 )
             else:
                 _info_card(
                     f"⚠️ Stop-loss ({run_cfg['stop_loss_pct']:.1f}%) is resolved two different ways in this "
                     f"run: {n_precise} of {n_total} trade(s) were checked against real 5-minute intraday "
-                    "bars (fetched by \"Run Backtest (Interrogate the Candles)\" above), which correctly catches a "
+                    "bars (fetched by \"Run Backtest\" above), which correctly catches a "
                     "trade that dipped through the stop and recovered by close. The remaining "
                     f"{n_fallback} trade(s) — outside yfinance's ~60-day 5-min window, or not returned by "
                     "the fetch — fall back to this deployment's daily close-based approximation instead, "
@@ -1489,7 +1489,7 @@ def _render_single_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> N
         )
         st.caption(
             "These reflect the settings as they were when you last clicked "
-            "\"Run Backtest (Interrogate the Candles)\", not necessarily the widgets above right now — "
+            "\"Run Backtest\", not necessarily the widgets above right now — "
             "click it again to pick up any changes."
         )
 
@@ -1810,7 +1810,7 @@ def render_backtesting_tab():
     # no re-render of anything) when you type in a number field, drag a
     # slider, or toggle a checkbox — Streamlit only reruns the app when the
     # form's submit button is pressed. That's the actual fix for "why does
-    # it do anything before I click Interrogate": previously every one of
+    # it do anything before I click Run Backtest": previously every one of
     # these widgets lived directly on the page, and Streamlit reruns the
     # *entire* script on every single widget interaction by design — that
     # was never gated on the button, it just happened to not recompute
