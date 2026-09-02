@@ -313,22 +313,27 @@ def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
     if one exists, or the prior day's regular-session close if it doesn't.
     Matches how entry price is already defined elsewhere in this dashboard.
 
-    Resolution: walks 5-minute bars from 9:30 AM to 4:00 PM ET on
-    `trade_date` in order. The first bar whose Low reaches the stop level
-    resolves the trade at exactly -stop_loss_pct; the first bar (that
-    didn't already stop out) whose High reaches the target resolves it at
-    exactly target_pct. If neither is ever touched, the trade resolves at
-    the last session bar's Close. Stop is checked before target within the
-    same bar — the conservative assumption when both could plausibly have
-    happened inside one 5-minute candle.
+    Resolution: walks 5-minute bars from 4:00 AM (pre-market open) to
+    4:00 PM ET on `trade_date` in order — not just the 9:30 regular
+    session. Predictions here are meant to be actionable pre-market, so a
+    stop or target that's touched at 6:15 AM has to count exactly like one
+    touched at 10:15 AM; starting the walk at 9:30 would silently ignore
+    two and a half hours of tradeable price action and misrepresent how
+    the strategy actually performs. The first bar whose Low reaches the
+    stop level resolves the trade at exactly -stop_loss_pct; the first bar
+    (that didn't already stop out) whose High reaches the target resolves
+    it at exactly target_pct. If neither is ever touched, the trade
+    resolves at the last bar's Close (still same-day, through 4:00 PM).
+    Stop is checked before target within the same bar — the conservative
+    assumption when both could plausibly have happened inside one
+    5-minute candle.
     """
     if bars is None or bars.empty or "Close" not in bars.columns:
         return None, "no_bars_fetched"
 
     tz = bars.index.tz
     pre_market_open = pd.Timestamp.combine(trade_date, _dt.time(4, 0)).tz_localize(tz)
-    market_open      = pd.Timestamp.combine(trade_date, _dt.time(9, 30)).tz_localize(tz)
-    market_close      = pd.Timestamp.combine(trade_date, _dt.time(16, 0)).tz_localize(tz)
+    market_close    = pd.Timestamp.combine(trade_date, _dt.time(16, 0)).tz_localize(tz)
 
     pre_bars = bars[bars.index < pre_market_open]
     if pre_bars.empty:
@@ -337,7 +342,11 @@ def _resolve_trade_from_bars(bars: pd.DataFrame | None, trade_date: _date,
     if not entry_price or entry_price <= 0:
         return None, "invalid_entry_price"
 
-    session = bars[(bars.index >= market_open) & (bars.index <= market_close)]
+    # Walk pre-market through regular session (4:00 AM - 4:00 PM ET), not
+    # just 9:30-16:00 — see docstring. `market_open` is kept around only
+    # because other parts of the dashboard may want the regular-open
+    # timestamp; it no longer bounds this walk.
+    session = bars[(bars.index >= pre_market_open) & (bars.index <= market_close)]
     if session.empty or "High" not in session.columns or "Low" not in session.columns:
         return None, "no_session_bars_for_trade_date"
 
