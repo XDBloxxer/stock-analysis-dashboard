@@ -1161,8 +1161,8 @@ div[data-testid="stAlert"] {
 
 /* ── Spinner ────────────────────────────────────────────────────────────── */
 .stSpinner > div {
-    border-top-color: var(--cyan) !important;
-    border-right-color: var(--cyan-glow) !important;
+    border-top-color: #10b981 !important;
+    border-right-color: var(--cyan) !important;
     border-bottom-color: transparent !important; border-left-color: transparent !important;
 }
 
@@ -1833,12 +1833,36 @@ div[data-testid="stPlotlyChart"] .nsewdrag {
     color: var(--text-1) !important;
 }
 
-/* ── Progress bar ───────────────────────────────────────────────────────── */
-div[data-testid="stProgressBar"] > div > div {
-    background: var(--cyan) !important;
-}
+/* ── Progress bar ────────────────────────────────────────────────────────
+   Real percentage bar (drives the 5-min-bar fetch / simulation progress),
+   so keep it informative — just give the fill some life: a two-tone
+   green→gold flow plus a soft diagonal stripe scroll, with a matching glow. */
 div[data-testid="stProgressBar"] > div {
-    background: var(--bg-4) !important; border-radius: 2px !important; height: 4px !important;
+    background: var(--bg-4) !important;
+    border-radius: 999px !important;
+    height: 9px !important;
+    overflow: hidden !important;
+    box-shadow: inset 0 1px 4px rgba(0,0,0,0.45) !important;
+}
+div[data-testid="stProgressBar"] > div > div {
+    position: relative !important;
+    border-radius: 999px !important;
+    background-image:
+        repeating-linear-gradient(115deg,
+            rgba(255,255,255,0.28) 0px, rgba(255,255,255,0.28) 9px,
+            transparent 9px, transparent 18px),
+        linear-gradient(90deg, #10b981 0%, #34d399 30%, #e0a83c 65%, #f0c05e 100%) !important;
+    background-size: 36px 36px, 200% 100% !important;
+    animation: bt-progress-move 1.4s linear infinite !important;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.55),
+                0 0 14px rgba(224, 168, 60, 0.4) !important;
+}
+@keyframes bt-progress-move {
+    0%   { background-position: 0px 0, 0% 50%; }
+    100% { background-position: 36px 0, 100% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    div[data-testid="stProgressBar"] > div > div { animation: none !important; }
 }
 
 /* ── Caption ────────────────────────────────────────────────────────────── */
