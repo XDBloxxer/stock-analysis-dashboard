@@ -1834,17 +1834,24 @@ div[data-testid="stPlotlyChart"] .nsewdrag {
 }
 
 /* ── Progress bar ────────────────────────────────────────────────────────
-   Real percentage bar (drives the 5-min-bar fetch / simulation progress),
-   so keep it informative — just give the fill some life: a two-tone
-   green→gold flow plus a soft diagonal stripe scroll, with a matching glow. */
-div[data-testid="stProgressBar"] > div {
+   Real percentage bar (drives the 5-min-bar fetch / simulation progress).
+   NOTE: Streamlit's actual test-id here is "stProgress" (not
+   "stProgressBar" — that never matched anything). The bar itself is a
+   baseweb ProgressBar: [data-testid="stProgress"] > ... > [role="progressbar"]
+   (container) > div (track) > div (filled portion). Target by role so this
+   doesn't depend on exact div depth around the label. */
+div[data-testid="stProgress"] [role="progressbar"] {
+    border-radius: 999px !important;
+    overflow: hidden !important;
+}
+div[data-testid="stProgress"] [role="progressbar"] > div {
     background: var(--bg-4) !important;
     border-radius: 999px !important;
     height: 9px !important;
     overflow: hidden !important;
     box-shadow: inset 0 1px 4px rgba(0,0,0,0.45) !important;
 }
-div[data-testid="stProgressBar"] > div > div {
+div[data-testid="stProgress"] [role="progressbar"] > div > div {
     position: relative !important;
     border-radius: 999px !important;
     background-image:
@@ -1862,7 +1869,7 @@ div[data-testid="stProgressBar"] > div > div {
     100% { background-position: 36px 0, 100% 50%; }
 }
 @media (prefers-reduced-motion: reduce) {
-    div[data-testid="stProgressBar"] > div > div { animation: none !important; }
+    div[data-testid="stProgress"] [role="progressbar"] > div > div { animation: none !important; }
 }
 
 /* ── Caption ────────────────────────────────────────────────────────────── */
