@@ -1894,14 +1894,26 @@ def _render_performance_trends():
     pos_signals = all_acc[all_acc["predicted_signal"].isin(["STRONG BUY", "BUY", "HOLD", "AVOID"])].copy()
     pos_signals["prediction_date"] = pd.to_datetime(pos_signals["prediction_date"])
 
-    # Auto pick daily vs weekly bucketing based on how much history is available —
-    # daily stays readable up to ~60 unique days, otherwise roll up to weekly.
     n_dates = pos_signals["prediction_date"].nunique()
-    use_weekly = n_dates > 60
 
-    if use_weekly:
+    # User picks granularity directly instead of it being auto-decided.
+    # Daily is always exact — no averaging across days — but with lots of
+    # history it gets long and tightly packed, so it's paired with a range
+    # slider below (and a sensible default zoom window) so it stays readable.
+    granularity = st.radio(
+        "Granularity",
+        options=["Daily", "Weekly", "Monthly"],
+        index=0,
+        horizontal=True,
+        key="gain_by_signal_granularity",
+    )
+
+    if granularity == "Weekly":
         pos_signals["bucket"] = pos_signals["prediction_date"].dt.to_period("W").apply(lambda p: p.start_time)
         bucket_label = "Week Of"
+    elif granularity == "Monthly":
+        pos_signals["bucket"] = pos_signals["prediction_date"].dt.to_period("M").apply(lambda p: p.start_time)
+        bucket_label = "Month Of"
     else:
         pos_signals["bucket"] = pos_signals["prediction_date"]
         bucket_label = "Date"
@@ -1914,10 +1926,12 @@ def _render_performance_trends():
         .sort_values("bucket")
     )
 
-    period_note = "weekly" if use_weekly else "daily"
+    period_note = granularity.lower()
     st.caption(
         f"Showing {period_note} average actual gain per signal, across all {n_dates} "
         f"day(s) of available history."
+        + (" Drag the slider below the chart, or scroll/zoom, to focus on a narrower range."
+           if granularity == "Daily" and n_dates > 60 else "")
     )
 
     fig = go.Figure()
@@ -1935,9 +1949,20 @@ def _render_performance_trends():
     fig.update_layout(
         title=f"Average Gain ({period_note.capitalize()}) by Signal",
         xaxis_title=bucket_label, yaxis_title="Avg Gain %",
-        height=380, hovermode="x unified", **LAYOUT,
+        height=380 if granularity != "Daily" else 460,
+        hovermode="x unified", **LAYOUT,
     )
-    fig.update_xaxes(**AXIS_STYLE)
+
+    # Range slider so long daily series stay navigable without losing
+    # per-day precision. Defaults to the most recent 60 days when there's
+    # more history than that; otherwise shows the full range.
+    xaxis_kwargs = dict(**AXIS_STYLE)
+    if granularity == "Daily":
+        all_dates = sorted(pos_signals["bucket"].unique())
+        xaxis_kwargs["rangeslider"] = dict(visible=True, thickness=0.08)
+        if len(all_dates) > 60:
+            xaxis_kwargs["range"] = [all_dates[-60], all_dates[-1]]
+    fig.update_xaxes(**xaxis_kwargs)
     fig.update_yaxes(**AXIS_STYLE)
     st.plotly_chart(fig, use_container_width=True)
 
