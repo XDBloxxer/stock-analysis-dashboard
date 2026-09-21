@@ -1699,6 +1699,7 @@ def _render_performance_trends():
     all_acc["became_winner"]         = all_acc["became_winner"].astype(bool)
     all_acc["prediction_correct"]    = all_acc["prediction_correct"].astype(bool)
     all_acc["actual_gain_pct"]       = pd.to_numeric(all_acc["actual_gain_pct"],       errors="coerce")
+    all_acc["actual_high_pct"]       = pd.to_numeric(all_acc["actual_high_pct"],       errors="coerce")
     all_acc["predicted_probability"] = pd.to_numeric(all_acc["predicted_probability"], errors="coerce")
 
     def _daily_agg(gdf):
@@ -1920,7 +1921,7 @@ def _render_performance_trends():
 
     gain_by_signal = (
         pos_signals[pos_signals["actual_high_pct"].notna()]
-        .groupby(["bucket", "predicted_signal"])["actual_gain_pct"]
+        .groupby(["bucket", "predicted_signal"])["actual_high_pct"]
         .mean()
         .reset_index()
         .sort_values("bucket")
@@ -1928,7 +1929,7 @@ def _render_performance_trends():
 
     period_note = granularity.lower()
     st.caption(
-        f"Showing {period_note} average actual gain per signal, across all {n_dates} "
+        f"Showing {period_note} average actual intraday high (actual_high_pct) per signal, across all {n_dates} "
         f"day(s) of available history."
         + (" Drag the slider below the chart, or scroll/zoom, to focus on a narrower range."
            if granularity == "Daily" and n_dates > 60 else "")
@@ -1947,8 +1948,8 @@ def _render_performance_trends():
         ))
     fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.12)")
     fig.update_layout(
-        title=f"Average Gain ({period_note.capitalize()}) by Signal",
-        xaxis_title=bucket_label, yaxis_title="Avg Gain %",
+        title=f"Average High Gain ({period_note.capitalize()}) by Signal",
+        xaxis_title=bucket_label, yaxis_title="Avg High %",
         height=380 if granularity != "Daily" else 460,
         hovermode="x unified", **LAYOUT,
     )
