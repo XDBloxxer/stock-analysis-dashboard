@@ -1919,7 +1919,7 @@ def _render_performance_trends():
         bucket_label = "Date"
 
     gain_by_signal = (
-        pos_signals[pos_signals["actual_gain_pct"].notna()]
+        pos_signals[pos_signals["actual_high_pct"].notna()]
         .groupby(["bucket", "predicted_signal"])["actual_gain_pct"]
         .mean()
         .reset_index()
@@ -1940,7 +1940,7 @@ def _render_performance_trends():
         if sdf.empty:
             continue
         fig.add_trace(go.Scatter(
-            x=sdf["bucket"], y=sdf["actual_gain_pct"],
+            x=sdf["bucket"], y=sdf["actual_high_pct"],
             mode="lines+markers", name=signal,
             line=dict(color=SIGNAL_COLORS.get(signal, "#999"), width=2),
             marker=dict(size=6),
