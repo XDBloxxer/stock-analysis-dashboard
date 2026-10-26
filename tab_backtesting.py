@@ -1,5 +1,10 @@
 """
-Backtesting Tab Module  (v6)
+Backtesting Tab Module  (v7)
+
+v7: Added a Parameter Optimizer mode (backtest_optimizer.py) that fetches 5-min
+bars once and sweeps stop type/%, targets, max positions, sizing and deployment
+in memory, with train/test validation and plateau scoring against overfitting.
+The single-run/compare checkbox became a three-way mode selector.
 
 v6: Isolated the single-run and comparison panels (form, fetch/progress bar,
 results) inside their own `@st.fragment`. A form_submit_button click inside
@@ -1730,6 +1735,15 @@ def _render_compare_sim_panel(pos_signals: pd.DataFrame, min_date, max_date) -> 
         )
 
 
+@st.fragment
+def _render_optimizer_panel(pos_signals: pd.DataFrame, min_date, max_date) -> None:
+    """Parameter optimizer (see backtest_optimizer.py). Imported lazily so this
+    module and the optimizer can reference each other without a circular
+    import at load time."""
+    from backtest_optimizer import render_optimizer_panel
+    render_optimizer_panel(pos_signals, min_date, max_date)
+
+
 def render_backtesting_tab():
     render_section_header(1, "Strategy Backtesting")
     st.markdown("Simulate cumulative portfolio performance from the model's historical signals")
@@ -1826,13 +1840,20 @@ def render_backtesting_tab():
     # bug (streamlit/streamlit#5069) where a rerun triggered from inside a
     # non-first st.tabs() tab can reset scroll position, that's what was
     # producing the flash-to-loading / jump-to-"Today's Picks" behavior.
-    compare_mode = st.checkbox(
-        "Compare two configurations side-by-side",
-        key="sim_compare_mode",
-        help="Run two independently configured simulations over the same capital and date range, and overlay both portfolio curves.",
+    # Previously a "Compare two configurations" checkbox; now a three-way mode
+    # so the parameter optimizer sits alongside the single run and A/B compare.
+    # The legacy `sim_compare_mode` key is no longer used.
+    mode = st.radio(
+        "Mode",
+        ["Single backtest", "Compare two configs", "🎯 Parameter optimizer"],
+        horizontal=True, key="sim_mode",
+        help="Single: run one configuration. Compare: overlay two. Optimizer: search stop-loss, "
+             "max-positions and sizing settings automatically, with out-of-sample validation.",
     )
 
-    if not compare_mode:
+    if mode == "Single backtest":
         _render_single_sim_panel(pos_signals, min_date, max_date)
-    else:
+    elif mode == "Compare two configs":
         _render_compare_sim_panel(pos_signals, min_date, max_date)
+    else:
+        _render_optimizer_panel(pos_signals, min_date, max_date)
